@@ -34,6 +34,7 @@ LlmResponses AS (
     attributes as response_attributes,
     error_message,
     status,
+    event_type,
     -- Extract Metadata from Response Attributes
     JSON_VALUE(attributes, '$.model_version') AS model_version,
     JSON_VALUE(attributes, '$.root_agent_name') AS root_agent_name,

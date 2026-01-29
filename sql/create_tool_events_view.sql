@@ -1,93 +1,87 @@
 /*
- * LLM Events View
- * ---------------
- * Isolates LLM interactions (requests and responses) from the raw event stream.
- * Aggregates request configuration, response metadata, token usage, and latency
- * into a single row per LLM call (matched by span_id and trace_id).
+ * Tool Events View
+ * ----------------
+ * Specialized view for tool execution events (STARTING, COMPLETED, ERROR).
+ * Normalizing for easier analysis of tool performance and reliability.
+ * Joins TOOL_STARTING with corresponding TOOL_COMPLETED/TOOL_ERROR via span_id
+ * to provide a consolidated view of latency, args, and results.
  *
  * Key Event Types:
- * - LLM_REQUEST: The input prompt and configuration sent to the model.
- * - LLM_RESPONSE: The success response from the model.
- * - LLM_ERROR: The failure response/exception from the model.
+ * - TOOL_STARTING: The invocation of a tool with specific arguments.
+ * - TOOL_COMPLETED: The successful return of a tool execution.
+ * - TOOL_ERROR: The failure/exception from a tool execution.
  */
-CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.llm_events_view` AS
-WITH LlmRequests AS (
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.tool_events_view` AS
+WITH ToolStarts AS (
   SELECT
     trace_id,
     span_id,
-    parent_span_id,
     timestamp as start_timestamp,
-    JSON_VALUE(attributes, '$.model') as model,
-    JSON_QUERY(attributes, '$.llm_config') as llm_config,
-    content as request_content,
-    attributes as request_attributes
+    agent as agent_name,
+    parent_span_id,
+    JSON_VALUE(attributes, '$.root_agent_name') as root_agent_name,
+    -- Extract tool name and args from Start event
+    COALESCE(
+        JSON_VALUE(content, '$.tool'),
+        JSON_VALUE(attributes, '$.tool_name')
+    ) as tool_name,
+    JSON_QUERY(content, '$.args') as tool_args,
+    attributes as start_attributes
   FROM `{project_id}.{dataset_id}.{table_id}`
-  WHERE event_type = 'LLM_REQUEST'
+  WHERE event_type = 'TOOL_STARTING'
 ),
-LlmResponses AS (
+ToolEnds AS (
   SELECT
     trace_id,
     span_id,
-    parent_span_id,
     timestamp as end_timestamp,
-    content as response_content,
-    attributes as response_attributes,
+    event_type,
+    SAFE_CAST(JSON_VALUE(latency_ms, '$.total_ms') AS INT64) as duration_ms,
+    -- Extract result from End event
+    JSON_QUERY(content, '$.result') as tool_result,
     error_message,
     status,
-    -- Extract Metadata from Response Attributes
-    JSON_VALUE(attributes, '$.model_version') AS model_version,
-    JSON_VALUE(attributes, '$.root_agent_name') AS root_agent_name,
-    JSON_QUERY(attributes, '$.usage_metadata') as usage_metadata,
-    agent AS agent_name,
-    SAFE_CAST(JSON_VALUE(TO_JSON_STRING(latency_ms), '$.total_ms') AS FLOAT64) AS duration_ms,
-    SAFE_CAST(JSON_VALUE(TO_JSON_STRING(latency_ms), '$.time_to_first_token_ms') AS FLOAT64) AS time_to_first_token_ms,
-    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.prompt_token_count') AS INT64) AS prompt_token_count,
-    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.candidates_token_count') AS INT64) AS candidates_token_count,
-    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.total_token_count') AS INT64) AS total_token_count,
-    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.thoughts_token_count') AS INT64) AS thoughts_token_count,
-    event_type
+    -- Extract tool_name to help match errors logged on parent span
+    COALESCE(
+        JSON_VALUE(content, '$.tool'),
+        JSON_VALUE(attributes, '$.tool_name')
+    ) as tool_name
   FROM `{project_id}.{dataset_id}.{table_id}`
-  WHERE event_type IN ('LLM_RESPONSE', 'LLM_ERROR')
+  WHERE event_type IN ('TOOL_COMPLETED', 'TOOL_ERROR')
 )
 SELECT
-    Req.start_timestamp as timestamp,
-    R.root_agent_name,
-    R.agent_name,
+    S.start_timestamp as timestamp,
+    S.root_agent_name,
+    S.agent_name,
 
-    Req.llm_config,
-    R.usage_metadata,
+    S.tool_name,
+    S.tool_args,
+    E.tool_result,
 
-    -- Coalesce model version (from response) with requested model (from request)
-    -- This ensures we have a model name even if the call failed (LLM_ERROR)
-    COALESCE(R.model_version, Req.model) AS model_name,
-    Req.model AS requested_model,
-    R.model_version AS response_model,
-
-    R.duration_ms,
-    R.time_to_first_token_ms,
-    R.error_message,
-    CASE
-        WHEN R.event_type = 'LLM_ERROR' THEN 'ERROR'
-        ELSE R.status
+    E.duration_ms,
+    E.error_message,
+      CASE
+        WHEN E.event_type = 'TOOL_ERROR' THEN 'ERROR'
+        WHEN E.status IS NOT NULL THEN E.status
+        ELSE 'PENDING'
     END as status,
 
-    R.prompt_token_count,
-    R.candidates_token_count,
-    R.total_token_count,
-    R.thoughts_token_count,
+    S.span_id,
+    S.trace_id,
+    S.parent_span_id,
 
-    Req.request_content as full_request,
-    R.response_content as full_response,
-
-    R.span_id,
-    R.trace_id,
-    R.parent_span_id,
-
-    Req.start_timestamp,
-    R.end_timestamp,
+    S.start_timestamp,
+    E.end_timestamp,
 
 
-
-
-FROM LlmResponses R
-    LEFT JOIN LlmRequests Req ON R.span_id = Req.span_id AND R.trace_id = Req.trace_id;
+FROM ToolStarts S
+    LEFT JOIN ToolEnds E
+ON S.trace_id = E.trace_id
+    AND (
+    -- Normal case: spans match (Completed or correctly logged Error)
+    S.span_id = E.span_id
+    OR
+    -- "Parent Logged" Error case: Error logged on parent span
+    -- This happens because on_tool_error_callback pops the span but doesn't override span_id in the log
+    (E.event_type = 'TOOL_ERROR' AND S.parent_span_id = E.span_id AND S.tool_name = E.tool_name)
+    );
