@@ -1,8 +1,9 @@
 import asyncio
+import datetime
 import logging
 import os
 import sys
-import datetime
+
 from dotenv import load_dotenv
 
 # Setup path to import agents
@@ -90,20 +91,29 @@ async def main():
             session_id="test_session_001", 
             app_name="observability_analyst_app"
         )
-        
-        # Initialize BigQuery Plugin
+
         bq_config = BigQueryLoggerConfig(
+            enabled=True,
+            # event_allowlist=["LLM_REQUEST", "LLM_RESPONSE"], # Only log these events
+            max_content_length=500 * 1024, # 500 KB limit for inline text
+            batch_size=1, # Default is 1 for low latency, increase for high throughput
+            shutdown_timeout=10.0
+        )
+
+
+        bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
             project_id=PROJECT_ID,
             dataset_id=DATASET_ID,
-            table_id=AGENT_EVENTS_TABLE_ID
+            table_id=AGENT_EVENTS_TABLE_ID, # default table name is agent_events_v2
+            config=bq_config,
+            location="us"
         )
-        bq_plugin = BigQueryAgentAnalyticsPlugin(config=bq_config)
         
         runner = Runner(
             agent=analyst_agent, 
             session_service=session_service, 
             app_name="observability_analyst_app",
-            plugins=[bq_plugin]
+            plugins=[bq_logging_plugin]
         )
         
         # Create Content object

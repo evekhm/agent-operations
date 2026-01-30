@@ -26,7 +26,7 @@ TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
 
 AGENT_EVENTS_TABLE_ID = os.getenv('AGENT_EVENTS_TABLE_ID', 'agent_events_v2')
-
+CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 LOCATION = os.getenv('LOCATION', "us")
 
 # Set env vars for Google generic libs

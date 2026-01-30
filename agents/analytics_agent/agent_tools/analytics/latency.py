@@ -14,9 +14,8 @@ import logging
 from typing import Optional
 
 import pandas as pd
-from google.cloud import bigquery
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE
+from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -372,7 +371,8 @@ async def analyze_latency_grouped(
     logger.info(f"[TOOL CALL-analyze_latency_grouped] group_by='{group_by}', time_range='{time_range}', "
                 f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
     
-    allowed_groups = ["agent_name", "root_agent_name", "model_name"]
+    # Updated allowed_groups to include tool_name
+    allowed_groups = ["agent_name", "root_agent_name", "model_name", "tool_name"]
     if group_by not in allowed_groups:
         return json.dumps({"error": f"Invalid group_by: {group_by}. Must be one of {allowed_groups}"})
 
@@ -509,7 +509,7 @@ async def analyze_root_cause(
     
     try:
         # Generate connection ID
-        connection_id = f"{PROJECT_ID}.us.bqml_connection"
+        connection_id = f"{PROJECT_ID}.us.{CONNECTION_ID}"
         model_endpoint = "gemini-1.5-pro"
         
         query = f"""
