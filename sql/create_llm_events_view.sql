@@ -20,7 +20,9 @@ WITH LlmRequests AS (
     JSON_VALUE(attributes, '$.model') as model,
     JSON_QUERY(attributes, '$.llm_config') as llm_config,
     content as request_content,
-    attributes as request_attributes
+    attributes as request_attributes,
+    user_id,
+    session_id,
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type = 'LLM_REQUEST'
 ),
@@ -83,6 +85,8 @@ SELECT
     R.span_id,
     R.trace_id,
     R.parent_span_id,
+    Req.user_id,
+    Req.session_id,
 
     Req.start_timestamp,
     R.end_timestamp,

@@ -26,7 +26,9 @@ WITH ToolStarts AS (
         JSON_VALUE(attributes, '$.tool_name')
     ) as tool_name,
     JSON_QUERY(content, '$.args') as tool_args,
-    attributes as start_attributes
+    attributes as start_attributes,
+    user_id,
+    session_id
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type = 'TOOL_STARTING'
 ),
@@ -69,6 +71,8 @@ SELECT
     S.span_id,
     S.trace_id,
     S.parent_span_id,
+    S.user_id,
+    S.session_id,
 
     S.start_timestamp,
     E.end_timestamp,

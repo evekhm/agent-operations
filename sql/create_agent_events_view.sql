@@ -20,7 +20,9 @@ WITH AgentStarts AS (
     parent_span_id,
     JSON_VALUE(attributes, '$.root_agent_name') as root_agent_name,
     content as instruction,
-    attributes as start_attributes
+    attributes as start_attributes,
+    user_id,
+    session_id
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type = 'AGENT_STARTING'
 ),
@@ -47,12 +49,15 @@ SELECT
     COALESCE(E.status, 'PENDING') as status,
     E.error_message,
 
-    S.start_timestamp,
-    E.end_timestamp,
-
     S.span_id,
     S.trace_id,
     S.parent_span_id,
+    S.user_id,
+    S.session_id,
+
+    S.start_timestamp,
+    E.end_timestamp
+
 
 FROM AgentStarts S
     LEFT JOIN AgentEnds E
