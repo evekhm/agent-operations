@@ -510,7 +510,7 @@ async def analyze_root_cause(
     try:
         # Generate connection ID
         connection_id = f"{PROJECT_ID}.us.{CONNECTION_ID}"
-        model_endpoint = "gemini-1.5-pro"
+        model_endpoint = "gemini-2.0-flash"
         
         query = f"""
         SELECT

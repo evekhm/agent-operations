@@ -29,6 +29,9 @@ AGENT_EVENTS_TABLE_ID = os.getenv('AGENT_EVENTS_TABLE_ID', 'agent_events_v2')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 LOCATION = os.getenv('LOCATION', "us")
 
+MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
+assert MODEL_ID, "AGENT_MODEL_ID is not set"
+
 # Set env vars for Google generic libs
 if PROJECT_ID:
     os.environ['GOOGLE_CLOUD_PROJECT'] = PROJECT_ID
