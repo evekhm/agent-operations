@@ -1,12 +1,12 @@
 {
   "kpis": {
     "agent": {
-      "mean_latency_target_ms": 1000,
-      "p95_latency_target_ms": 3000
+      "mean_latency_target_ms": 5000,
+      "p95_latency_target_ms": 6000
     },
     "llm": {
-      "mean_latency_target_ms": 500,
-      "p95_latency_target_ms": 1500
+      "mean_latency_target_ms": 2000,
+      "p95_latency_target_ms": 3500
     },
     "tool": {
       "mean_latency_target_ms": 200,

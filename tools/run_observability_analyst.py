@@ -47,17 +47,20 @@ async def main():
     llm_kpis = kpis.get("llm", {})
     tool_kpis = kpis.get("tool", {})
     
-    time_period = config.get("time_period", "24h")
+    time_period = config.get("time_period", "all")
     
     # Hydrate Prompt
     hydrated_prompt = OBSERVABILITY_ANALYST_PROMPT_TEMPLATE.format(
         time_period=time_period,
+        #AGENT
         agent_mean=agent_kpis.get("mean_latency_target_ms", 1000),
         agent_p95=agent_kpis.get("p95_latency_target_ms", 3000),
         agent_view=agent_kpis.get("view_id", "agent_events_view"),
+        #MODEL
         llm_mean=llm_kpis.get("mean_latency_target_ms", 500),
         llm_p95=llm_kpis.get("p95_latency_target_ms", 1500),
         llm_view=llm_kpis.get("view_id", "llm_events_view"),
+        #TOOLS
         tool_mean=tool_kpis.get("mean_latency_target_ms", 200),
         tool_p95=tool_kpis.get("p95_latency_target_ms", 1000),
         tool_view=tool_kpis.get("view_id", "tool_events_view")
