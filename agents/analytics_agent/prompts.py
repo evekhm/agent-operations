@@ -30,7 +30,7 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
     *   Call `get_active_metadata(time_range="{time_period}")` to identify active components.
 
 2.  **ANALYZE (Multi-Level)**:
-    *   **CRITICAL**: You MUST perform ALL three sub-steps below (Agents, Models, Tools) *before* moving to Step 3.
+    *   **CRITICAL**: You MUST perform ALL three sub-steps below (Agents, Models, Tools) *before* moving to Step 3. Compare findings against the provided targets.
     *   **2a. AGENTS**: Run `analyze_latency_grouped(group_by="agent_name", time_range="{time_period}", view_id="agent_events_view")`.
         *   Targets: Mean > {agent_mean}ms, P95 > {agent_p95}ms.
     *   **2b. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
@@ -39,15 +39,15 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
         *   Targets: Mean > {tool_mean}ms, P95 > {tool_p95}ms.
 
 3.  **INVESTIGATE (Deep Dive)**:
-    *   AFTER completing Step 2, pick the worst performing component (Agent, Model, or Tool).
-    *   Call `get_slowest_queries(..., view_id=...)` using the **correct view** for that component.
-    *   **Root Cause**: Run `analyze_root_cause(span_id=...)` for critical outliers.
+    *   AFTER completing Step 2, pick the WORST performing components (can be one Agent, one Model, and one Tool if all are bad).
+    *   Call `get_slowest_queries(..., view_id=...)` using the **correct view** for those components to get specific `span_id`s.
+    *   **Root Cause**: Run `analyze_root_cause(span_id=...)` for the top 2-3 most critical outliers (highest latency `span_id`s).
 
 4.  **REPORT**:
-    *   Summarize your findings in a concise Markdown report.
-    *   Structure the report by Level: **Agents**, **Models**, **Tools**.
-    *   Highlight any "Red Flags" (High Latency, High Error Rates).
-    *   Provide actionable recommendations.
+    *   Summarize your findings in a highly detailed, professional Markdown report.
+    *   Structure the report cleanly by Level: **Executive Summary**, **Agent KPI Analysis**, **Model KPI Analysis**, **Tool KPI Analysis**, and **Deep Dive / Root Cause Insights**.
+    *   Highlight any "Red Flags" (High Latency, High Error Rates, Missed Targets).
+    *   Include actionable, specific recommendations based on the root cause analyses. If a tool like `get_active_metadata` is the bottleneck, point it out.
 
 **Tools Available:**
 - `get_active_metadata`: Discover who is active.
@@ -57,5 +57,6 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
 
 **Constraints:**
 - Always specify `time_range="{time_period}"`.
-- Be concise and data-driven.
+- Provide a detailed root cause explanation for the selected spans in the report.
+- Don't just list the data, explain *why* it matters.
 """
