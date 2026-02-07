@@ -148,20 +148,6 @@ def load_analyst_config() -> dict:
     # 3. Default Fallback
     logger.warning("No config found, using defaults.")
     return {
-        "kpis": {
-            "agent": {
-                "mean_latency_target_ms": 1000,
-                "p95_latency_target_ms": 3000,
-            },
-            "llm": {
-                "mean_latency_target_ms": 500,
-                "p95_latency_target_ms": 1500,
-            },
-            "tool": {
-                "mean_latency_target_ms": 200,
-                "p95_latency_target_ms": 1000,
-            }
-        },
         "time_period": "7d"
     }
 

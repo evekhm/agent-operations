@@ -15,6 +15,7 @@ from typing import Optional
 
 from google.api_core import exceptions
 from google.cloud import bigquery_connection_v1
+from google.cloud.bigquery_connection_v1 import Connection, CloudResourceProperties
 from google.cloud import resourcemanager_v3
 from google.iam.v1 import policy_pb2
 
@@ -42,7 +43,7 @@ def _create_connection(client: bigquery_connection_v1.ConnectionServiceClient, p
     parent = f"projects/{project_id}/locations/{location}"
     
     connection = bigquery_connection_v1.Connection(
-        cloud_resource=bigquery_connection_v1.CloudResource()
+        cloud_resource=bigquery_connection_v1.CloudResourceProperties()
     )
     
     try:

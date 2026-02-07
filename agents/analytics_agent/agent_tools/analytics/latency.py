@@ -451,34 +451,35 @@ async def get_active_metadata(
     
     try:
         where_clause = build_standard_where_clause(time_range=time_range)
+        import asyncio
         
-        query = f"""
-        SELECT
-          APPROX_TOP_COUNT(agent_name, 100) as agents,
-          APPROX_TOP_COUNT(root_agent_name, 100) as root_agents,
-          APPROX_TOP_COUNT(model_name, 100) as models
-        FROM
-          `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE
-          {where_clause}
-        """
-        
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({"message": "No metadata found", "metadata": {"view_id": target_table}})
+        async def fetch_distinct(column_name: str, limit: int = 50) -> list[str]:
+            query = f"""
+            SELECT DISTINCT {column_name}
+            FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+            WHERE {where_clause} AND {column_name} IS NOT NULL
+            LIMIT {limit}
+            """
             
-        row = df.iloc[0]
+            df = await execute_bigquery(query)
+            if df.empty:
+                return []
+            return df[column_name].tolist()
+
+        agents, root_agents, models = await asyncio.gather(
+            fetch_distinct("agent_name"),
+            fetch_distinct("root_agent_name"),
+            fetch_distinct("model_name")
+        )
         
-        def extract_values(data):
-            if data is None: return []
-            return [item['value'] for item in data if item['value'] is not None]
+        if not agents and not root_agents and not models:
+            return json.dumps({"message": "No metadata found", "metadata": {"view_id": target_table}})
 
         result = {
             "metadata": {"time_range": time_range, "view_id": target_table},
-            "agents": extract_values(row['agents']),
-            "root_agents": extract_values(row['root_agents']),
-            "models": extract_values(row['models'])
+            "agents": agents,
+            "root_agents": root_agents,
+            "models": models
         }
         
         return json.dumps(result, cls=AnalysisEncoder)
@@ -541,3 +542,169 @@ async def analyze_root_cause(
     except Exception as e:
         logger.error(f"Error in analyze_root_cause: {str(e)}")
         return json.dumps({"error": str(e)})
+
+@trace_span()
+@cached_tool()
+async def get_fastest_queries(
+    time_range: str = "7d",
+    limit: int = 10,
+    agent_name: Optional[str] = None,
+    root_agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    view_id: Optional[str] = None,
+    latency_col: str = "duration_ms"
+) -> str:
+    """
+    Fetch the fastest successful queries.
+    
+    Args:
+        time_range (str): Time range to analyze (e.g., "24h", "7d", "all").
+        limit (int): Number of requests to return.
+        agent_name (str): Optional. Filter by specific agent name.
+        root_agent_name (str): Optional. Filter by root agent name.
+        model_name (str): Optional. Filter by model version.
+        view_id (str): Optional. BigQuery table/view ID to query. Defaults to LLM_EVENTS_VIEW_ID.
+        latency_col (str): Column name for latency/duration (default: "duration_ms").
+
+    Returns:
+        str: JSON string containing a list of fastest requests with details.
+    """
+    target_table = view_id or LLM_EVENTS_VIEW_ID
+    logger.info(f"[TOOL CALL-get_fastest_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
+                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "model_name": (model_name, "=")
+        }
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+        
+        # Filter out 0ms or negative latencies as they might be errors/artifacts
+        query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+        WHERE {where_clause} AND {latency_col} > 0
+        ORDER BY {latency_col} ASC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({
+                "message": "No data found for fastest requests.", 
+                "metadata": {"view_id": target_table}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name,
+                         "model_name": model_name, "view_id": target_table},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_fastest_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+@trace_span()
+@cached_tool()
+async def get_baseline_performance_metrics(
+    group_by: str = "agent_name",
+    time_range: str = "7d",
+    limit_percentile: float = 0.1,
+    model_name: Optional[str] = None,
+    view_id: Optional[str] = None,
+    latency_col: str = "duration_ms"
+) -> str:
+    """
+    Establish a dynamic performance baseline by analyzing the fastest queries (e.g., top 10%).
+    
+    Args:
+        group_by (str): Dimension to group by. One of: "agent_name", "model_name", "tool_name".
+        time_range (str): Time range to analyze (e.g., "7d", "all").
+        limit_percentile (float): The top percentile of fastest queries to use for the baseline (e.g., 0.1 for top 10%).
+        model_name (str): Optional. Filter by specific model.
+        view_id (str): Optional. BigQuery table/view ID to query.
+        latency_col (str): Column name for latency/duration (default: "duration_ms").
+
+    Returns:
+        str: JSON string containing baseline metrics (mean, p95) for the best performing percentage of queries.
+    """
+    target_table = view_id or LLM_EVENTS_VIEW_ID
+    logger.info(f"[TOOL CALL-get_baseline_performance_metrics] group_by='{group_by}', time_range='{time_range}', "
+                f"limit_percentile={limit_percentile}, model_name='{model_name}', "
+                f"view_id='{target_table}', latency_col='{latency_col}'")
+    
+    allowed_groups = ["agent_name", "model_name", "tool_name"]
+    if group_by not in allowed_groups:
+        return json.dumps({"error": f"Invalid group_by: {group_by}. Must be one of {allowed_groups}"})
+
+    try:
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config={"model_name": (model_name, "=")}
+        )
+        
+        query = f"""
+        WITH RankedData AS (
+            SELECT
+                {group_by} as group_key,
+                {latency_col} as latency_ms,
+                PERCENT_RANK() OVER (PARTITION BY {group_by} ORDER BY {latency_col} ASC) as percentile_rank
+            FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+            WHERE {where_clause} AND {latency_col} > 0
+        ),
+        FilteredBaseline AS (
+            SELECT group_key, latency_ms
+            FROM RankedData
+            WHERE percentile_rank <= {limit_percentile}
+        )
+        SELECT
+            group_key,
+            COUNT(*) as baseline_sample_size,
+            AVG(latency_ms) as target_mean_ms,
+            APPROX_QUANTILES(latency_ms, 100)[OFFSET(95)] as target_p95_ms
+        FROM FilteredBaseline
+        GROUP BY group_key
+        ORDER BY target_mean_ms ASC
+        """
+        
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({
+                "message": "No data found for baseline creation.",
+                "metadata": {"view_id": target_table, "group_by": group_by}
+            })
+            
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                group_by: row['group_key'],
+                "baseline_sample_size": int(row['baseline_sample_size']),
+                "target_mean_ms": float(row['target_mean_ms']) if pd.notna(row['target_mean_ms']) else None,
+                "target_p95_ms": float(row['target_p95_ms']) if pd.notna(row['target_p95_ms']) else None
+            })
+            
+        result = {
+            "metadata": {"time_range": time_range, "view_id": target_table, "group_by": group_by, "limit_percentile": limit_percentile},
+            "baseline": records
+        }
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_baseline_performance_metrics: {str(e)}")
+        return json.dumps({"error": str(e)})
+
