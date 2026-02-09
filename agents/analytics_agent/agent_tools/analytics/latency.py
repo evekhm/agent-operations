@@ -708,3 +708,76 @@ async def get_baseline_performance_metrics(
         logger.error(f"Error in get_baseline_performance_metrics: {str(e)}")
         return json.dumps({"error": str(e)})
 
+
+@trace_span()
+@cached_tool()
+async def get_latest_queries(
+    time_range: str = DEFAULT_TIME_RANGE,
+    limit: int = 10,
+    agent_name: Optional[str] = None,
+    root_agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    view_id: Optional[str] = None,
+    latency_col: str = "duration_ms"
+) -> str:
+    """
+    Fetch the most recent queries to check for recent performance improvements.
+    
+    Args:
+        time_range (str): Time range to analyze (default is '24h' to keep it recent).
+        limit (int): Number of most recent requests to return.
+        agent_name (str): Optional. Filter by specific agent name.
+        root_agent_name (str): Optional. Filter by root agent name.
+        model_name (str): Optional. Filter by model version.
+        view_id (str): Optional. BigQuery table/view ID to query. Defaults to agent_events_view.
+        latency_col (str): Column name for latency/duration (default: "duration_ms").
+
+    Returns:
+        str: JSON string containing a list of the most recent requests with details.
+    """
+    target_table = view_id or "agent_events_view"
+    logger.info(f"[TOOL CALL-get_latest_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
+                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "model_name": (model_name, "=")
+        }
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+        
+        query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+        WHERE {where_clause} AND {latency_col} IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({
+                "message": "No recent data found for latest requests verification.", 
+                "metadata": {"view_id": target_table}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name,
+                         "model_name": model_name, "view_id": target_table},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_latest_queries: {str(e)}")
+        return json.dumps({"error": str(e)})

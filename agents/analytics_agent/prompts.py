@@ -36,21 +36,27 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
     *   **2b. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
     *   **2c. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
 
-3.  **INVESTIGATE (Deep Dive)**:
-    *   AFTER completing Step 2, pick the WORST performing components (can be one Agent, one Model, and one Tool if all are bad) compared to their baselines.
+3.  **VERIFY RECENT IMPROVEMENTS**:
+    *   Call `get_latest_queries` for the component(s) you are focusing on to fetch the most recent traces.
+    *   Compare the latency of these most recent queries against the dynamic baseline established in Step 1 to verify if recent changes or iterations have resulted in improvements.
+
+4.  **INVESTIGATE (Deep Dive)**:
+    *   AFTER completing Step 3, pick the WORST performing components (can be one Agent, one Model, and one Tool if all are bad) compared to their baselines.
     *   Call `get_slowest_queries(..., view_id=...)` using the **correct view** for those components to get specific `span_id`s.
     *   **Root Cause**: Run `analyze_root_cause(span_id=...)` for the top 2-3 most critical outliers (highest latency `span_id`s).
 
-4.  **REPORT**:
+5.  **REPORT**:
     *   Summarize your findings in a highly detailed, professional Markdown report.
     *   Structure the report cleanly by Level: **Executive Summary**, **Agent KPI Analysis**, **Model KPI Analysis**, **Tool KPI Analysis**, and **Deep Dive / Root Cause Insights**.
     *   Highlight any "Red Flags" (High Latency, Missed Baselines). Explicitly state the dynamic baselines used for comparison.
     *   Include actionable, specific recommendations based on the root cause analyses. If a tool like `get_active_metadata` is the bottleneck, point it out.
+    *   **CRITICAL**: Do NOT hallucinate architectural recommendations for the observability agent (e.g. do NOT tell the agent to run tools in parallel, as it already does). ONLY suggest fact-based improvements related strictly to the targeted components you analyze.
 
 **Tools Available:**
 - `get_active_metadata`: Discover who is active.
 - `get_baseline_performance_metrics`: Get target KPI baselines based on fastest performance.
 - `get_fastest_queries`: Get examples of fastest successful performance.
+- `get_latest_queries`: Get the most recent requests to evaluate current iterations against the baseline.
 - `analyze_latency_grouped`: Get high-level stats. Supports group_by="agent_name", "model_name", "tool_name".
 - `get_slowest_queries`: Get specific examples of bad performance.
 - `analyze_root_cause`: Use AI to explain a trace.
