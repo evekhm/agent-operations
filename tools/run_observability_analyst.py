@@ -31,6 +31,10 @@ from agents.analytics_agent.agent_tools.analytics.latency import (
     get_latest_queries,
     analyze_root_cause
 )
+from agents.analytics_agent.agent_tools.analytics.concurrency import (
+    analyze_trace_concurrency,
+    detect_sequential_bottlenecks
+)
 
 # Configure Logging
 logging.basicConfig(level=logging.ERROR)
@@ -63,7 +67,9 @@ async def main():
             get_fastest_queries,
             get_baseline_performance_metrics,
             get_latest_queries,
-            analyze_root_cause
+            analyze_root_cause,
+            analyze_trace_concurrency,
+            detect_sequential_bottlenecks
         ]
     )
     

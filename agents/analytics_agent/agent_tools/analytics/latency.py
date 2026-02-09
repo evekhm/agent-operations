@@ -270,7 +270,7 @@ async def analyze_latency_performance(
 @cached_tool()
 async def get_slowest_queries(
     time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 10,
+    limit: int = 5,
     min_latency_ms: float = 0,
     agent_name: Optional[str] = None,
     root_agent_name: Optional[str] = None,
@@ -312,7 +312,7 @@ async def get_slowest_queries(
             time_range=time_range,
             filter_config=filter_config
         )
-        
+
         query = f"""
         SELECT *
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
@@ -322,6 +322,14 @@ async def get_slowest_queries(
         """
 
         df = await execute_bigquery(query)
+
+        # Truncate massive columns with descriptive pointers so the agent relies on analyze_root_cause for full data inspection
+        for col in ['tool_args', 'response_content', 'prompt_content']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).apply(
+                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use analyze_root_cause(span_id='...') to analyze full content instead of fetching it here.]"
+                )
+
         
         if df.empty:
             return json.dumps({
@@ -433,7 +441,7 @@ async def analyze_latency_grouped(
 @trace_span()
 @cached_tool()
 async def get_active_metadata(
-    time_range: str = DEFAULT_TIME_RANGE,
+    time_range: str = "7d",
     view_id: Optional[str] = None
 ) -> str:
     """
@@ -517,7 +525,7 @@ async def analyze_root_cause(
         SELECT
             span_id,
             AI.GENERATE(
-                ('Analyze this request log and explain the root cause of the latency or error. Be concise. Log: ', TO_JSON_STRING(T)),
+                ('Analyze this request log and explain the root cause of the latency or error. Be concise. Focus ONLY on factors visible in the log (e.g. LLM prompt size, external API delays). NEVER use the words "sequential" or "parallel", as the agent architecture is fixed and already concurrent. Describe only what is in the data. Log: ', TO_JSON_STRING(T)),
                 connection_id => '{connection_id}',
                 endpoint => '{model_endpoint}'
             ).result AS analysis
@@ -642,14 +650,20 @@ async def get_baseline_performance_metrics(
     Returns:
         str: JSON string containing baseline metrics (mean, p95) for the best performing percentage of queries.
     """
-    target_table = view_id or LLM_EVENTS_VIEW_ID
+    allowed_groups = {
+        "agent_name": "agent_events_view",
+        "root_agent_name": "agent_events_view",
+        "model_name": LLM_EVENTS_VIEW_ID,
+        "tool_name": "tool_events_view"
+    }
+
+    if group_by not in allowed_groups:
+        return json.dumps({"error": f"Invalid group_by: {group_by}. Must be one of {list(allowed_groups.keys())}"})
+        
+    target_table = view_id or allowed_groups[group_by]
     logger.info(f"[TOOL CALL-get_baseline_performance_metrics] group_by='{group_by}', time_range='{time_range}', "
                 f"limit_percentile={limit_percentile}, model_name='{model_name}', "
                 f"view_id='{target_table}', latency_col='{latency_col}'")
-    
-    allowed_groups = ["agent_name", "model_name", "tool_name"]
-    if group_by not in allowed_groups:
-        return json.dumps({"error": f"Invalid group_by: {group_by}. Must be one of {allowed_groups}"})
 
     try:
         where_clause = build_standard_where_clause(
@@ -664,7 +678,7 @@ async def get_baseline_performance_metrics(
                 {latency_col} as latency_ms,
                 PERCENT_RANK() OVER (PARTITION BY {group_by} ORDER BY {latency_col} ASC) as percentile_rank
             FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-            WHERE {where_clause} AND {latency_col} > 0
+            WHERE {where_clause} AND {latency_col} > 50
         ),
         FilteredBaseline AS (
             SELECT group_key, latency_ms
