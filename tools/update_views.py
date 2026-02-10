@@ -8,16 +8,16 @@ sys.path.append(project_root)
 
 logging.basicConfig(level=logging.INFO)
 
-from agents.analytics_agent.utils.views import (
+from agents.observability_agent.utils.views import (
     ensure_llm_events_view_exists,
     ensure_tool_events_view_exists,
     ensure_invocation_events_view_exists,
     ensure_agent_events_view_exists
 )
 
-print("Updating View...")
+print("Updating Views...")
 ensure_llm_events_view_exists()
 ensure_tool_events_view_exists()
 ensure_agent_events_view_exists()
 ensure_invocation_events_view_exists()
-print("View Updated.")
+print("Views Updated.")

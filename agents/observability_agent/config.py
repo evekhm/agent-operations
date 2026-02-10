@@ -122,7 +122,7 @@ def load_analyst_config() -> dict:
     Loads configuration for the Observability Analyst.
     Priority:
     1. Env var: LATENCY_ANALYSIS_CONFIG_FILE
-    2. Local file: agents/analytics_agent/config.json
+    2. Local file: agents/observability_agent/config.json
     3. Default: hardcoded fallback
     """
     # 1. Try Env Var

@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 load_dotenv(os.path.join(dir_path, "../.env"))
 
 try:
-    from agents.analytics_agent.agent_tools.analytics.latency import (
+    from agents.observability_agent.agent_tools.analytics.latency import (
         analyze_latency_distribution,
         analyze_latency_performance,
         get_slowest_queries,
         analyze_latency_grouped,
         get_active_metadata
     )
-    from agents.analytics_agent.config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID
+    from agents.observability_agent.config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID
 except ImportError as e:
     logger.error(f"Failed to import analytics tools: {e}")
     sys.exit(1)

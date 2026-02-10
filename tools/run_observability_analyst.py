@@ -15,14 +15,14 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from google.genai import types # Import types for Content
-from agents.analytics_agent.prompts import OBSERVABILITY_ANALYST_PROMPT_TEMPLATE
-from agents.analytics_agent.config import (
+from agents.observability_agent.prompts import OBSERVABILITY_ANALYST_PROMPT_TEMPLATE
+from agents.observability_agent.config import (
     load_analyst_config, 
     PROJECT_ID, 
     DATASET_ID, 
     AGENT_EVENTS_TABLE_ID
 )
-from agents.analytics_agent.agent_tools.analytics.latency import (
+from agents.observability_agent.agent_tools.analytics.latency import (
     get_active_metadata,
     analyze_latency_grouped,
     get_slowest_queries,
@@ -31,7 +31,7 @@ from agents.analytics_agent.agent_tools.analytics.latency import (
     get_latest_queries,
     analyze_root_cause
 )
-from agents.analytics_agent.agent_tools.analytics.concurrency import (
+from agents.observability_agent.agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
     detect_sequential_bottlenecks
 )
