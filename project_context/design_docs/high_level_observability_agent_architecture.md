@@ -4,8 +4,10 @@
 
 The **Observability Agent** is an autonomous AI-powered Site Reliability Engineer (SRE) that continuously monitors, analyzes, and optimizes the performance of AI agent ecosystems. It replaces manual log analysis with intelligent, systematic investigation using a data-driven, hypothesis-testing methodology.
 
+In the era of "Observability 2.0" and the "Agentic Shift," traditional monitoring focused solely on reactive system metrics (like MTTR and MTTD) is insufficient for non-deterministic AI applications. Agentic systems require proactive observation of emergent behaviors, tool execution pathways, and reasoning loops. This agent moves beyond static dashboards to proactively interrogate telemetry data, dynamically establish performance baselines, construct hypotheses about system degradation, and produce actionable, data-backed insights.
+
 ## 1. Core Purpose and Persona
-The Observability Analyst Agent acts as an autonomous Senior Site Reliability Engineer (SRE) and Lead Data Scientist for the AI agent ecosystem. Its primary goal is to proactively monitor, investigate, and report on the health, stability, and performance of the system to ensure it meets strict operational criteria. It actively interrogates telemetry data, hypothesizes potential issues, tests these hypotheses rigorously using data, and synthesizes its findings into a highly structured "Gold Standard" report.
+The Observability Analyst Agent acts as an autonomous Senior Site Reliability Engineer (SRE) and Lead Data Scientist for the AI agent ecosystem. Its primary goal is to proactively monitor, investigate, and report on the health, stability, and performance of the system to ensure it meets strict operational criteria. It actively interrogates telemetry data, hypothesizes potential issues based on advanced SRE theories (e.g., KV cache fragmentation, reasoning bottlenecks), tests these hypotheses rigorously using data, and synthesizes its findings into a highly structured "Gold Standard" report.
 
 ## 2. The Three-Tiered Observability Framework
 To accurately pinpoint bottlenecks, the agent anchors its analysis across three distinct architectural layers, each backed by a specialized BigQuery telemetry view:
@@ -62,13 +64,13 @@ error_message    | Error details if status=ERROR
 
 ---
 
-### Data Access Layer: Four Specialized SQL Views
+### Data Federation Layer: Four Specialized SQL Views
 
-**The Challenge**: Raw telemetry and event data from the events table (e.g., `agent_events_v2`) is highly complex—a single agent invocation generates 10-50+ individual events (LLM_REQUEST, LLM_RESPONSE, TOOL_STARTING, TOOL_COMPLETED, USER_MESSAGE_RECEIVED, STATE_DELTA, etc.). This includes not just operational metrics but the full semantic content: prompts sent to LLMs, responses generated, tool arguments, results returned, user messages, and state transitions. Analyzing this raw stream requires complex JOIN operations and deep knowledge of the event lifecycle.
+**The Challenge**: Raw telemetry and event data from the events table (e.g., `agent_events_v2`) is highly complex—a single agent invocation generates 10-50+ individual events. This includes not just operational metrics but the full semantic content: prompts sent to LLMs, reasoning traces, responses generated, tool arguments, results returned, user messages, and state transitions. In agentic systems, this telemetry is often an unstructured, nested graph of traces. Analyzing this raw stream requires complex JOIN operations and deep knowledge of the event lifecycle.
 
-**The Solution**: To enable the Observability Agent to reason effectively and execute performant analytics, the ecosystem utilizes a **structured data abstraction layer** consisting of four specialized BigQuery SQL views.
+**The Solution**: To enable the Observability Agent to reason effectively and execute performant analytics, the ecosystem utilizes a **Data Federation Layer** consisting of four specialized BigQuery SQL views.
 
-These views pre-process and categorize the telemetry and event data, transforming the raw event stream into analysis-friendly row structures. Each view joins related event pairs (START/COMPLETE) to provide a coherent picture of a specific analytical dimension:
+These views unify, pre-process, and categorize the telemetry and event data, transforming the raw wide-event stream into analysis-friendly row structures. Each view joins related event pairs (START/COMPLETE) to provide a coherent picture of a specific analytical dimension:
 
 #### 1. **Agent Events View** (`agent_events_view`)
 **Purpose**: Track end-to-end agent execution from start to completion
@@ -241,7 +243,8 @@ The agent operations follow a highly structured, five-phase reasoning loop, leve
 ### Phase 1: Discovery & Dynamic Baselining
 The agent begins by contextualizing what "normal" and "excellent" look like.
 *   **Discovery**: It queries metadata to establish exactly which agents, models, and tools were active during the analysis window.
-*   **Dynamic Targeting**: It sets dynamic target baselines based on the **top 10% fastest successful transactions** for every active component across all three levels. This establishes an ambitious but proven baseline for `mean` and `p95` latency KPIs.
+*   **The "Execution Path" (The Forest vs. The Tree)**: To move toward "L4: Prescriptive" maturity, the agent goes beyond analyzing isolated spans. It groups transactions by their unique sequence of operations (e.g., `Start -> Router -> Tool[Search] -> LLM`). This allows for precise baselining of specific agent behaviors rather than relying on a generic, noisy average.
+*   **Dynamic Targeting**: For each distinct Execution Path, it sets dynamic target baselines based on the **top 10% fastest successful transactions**. This establishes an ambitious but proven baseline for `mean` and `p95` latency KPIs.
 
 ### Phase 2: Concurrent Multi-Level Analysis & Pattern Detection
 The agent shifts to evaluating current operational realities across the ecosystem.
@@ -253,22 +256,24 @@ The agent assesses the impact of recent engineering efforts or environment chang
 *   By fetching the absolute latest traces, it compares "just deployed" or "recent" performance against the historical dynamic baseline.
 *   This answers the critical engineering question: *Did our latest code iterations or configuration tweaks actually yield quantifiable improvement?*
 
-### Phase 4: Hypothesis Testing & Root Cause Investigation
-This is the scientific core of the agent. It targets the worst-performing outliers and systematically tests a battery of established SRE hypotheses:
+### Phase 4: Hypothesis Testing (Anomaly Detection & Root Cause)
+This is the scientific core of the agent. It leverages Anomaly Detection to target the worst-performing outliers and systematically tests a battery of advanced SRE theories specific to the "Agentic Shift":
 
 *   **H1: Token Size Drives Latency**: Investigates strong correlations between input/output token counts and generation time.
-*   **H2: Unoptimized Models Underperform**: Compares performance across models to detect if specific models are inherently slower or bottlenecking the agents using them.
-*   **H3: Agent Orchestration Overhead**: Analyzes if end-to-end latency is dominated by agent handoffs or sequential tool chains rather than raw LLM generation.
-*   **H4: Excessive Tool Iteration**: Checks if agents are caught in loops or using tools excessively (e.g., >10x per request).
-*   **H5: Systemic Daily Degradation**: Looks for peak-hour variances or consistent degradation over multi-day periods.
-*   **H6: Request Queuing**: Detects if bursts of concurrent requests are artificially inflating latency due to underlying rate limits.
-*   **H7: Tool Failure Cost / Reliability**: Identifies tools with high error rates (<95% success) or extreme P95 execution times (>5000ms).
-*   **H8: Sub-optimal LLM Parameters (GenerationConfig)**: Isolates issues caused by wasteful `maxOutputTokens` limits or specific `temperature` settings that degrade performance.
+*   **H2: KV Cache Fragmentation (Over-provisioning)**: Incorporates the concept that `maxOutputTokens` is not just a limit, but a memory reservation. Over-provisioning this value forces the backend to reserve GPU RAM covering the maximum possible sequence length, strictly reducing the batch sizes the GPU can handle and increasing queuing latency even if the model produces a short response.
+*   **H3: Non-Linear Prefill vs. Linear Decode Context Bloat**: Determines if latency is driven primarily by non-linear input context (prefill latency jumps) or by the model generating excessive, verbose output (linear decoding latency).
+*   **H4: Agent Orchestration Overhead**: Analyzes if end-to-end latency is dominated by agent handoffs or sequential tool chains rather than raw LLM generation.
+*   **H5: Excessive Tool Iteration**: Checks if agents are caught in autonomous reasoning loops or using tools excessively (e.g., >10x per request).
+*   **H6: Data Scaling Degradation in Tools**: Tracks if specific external tools or vector datastores are silently degrading in performance as their underlying data volume or payload scales.
+*   **H7: Request Queuing**: Detects if bursts of concurrent requests are artificially inflating latency due to underlying rate limits.
+*   **H8: Tool Failure Cost / Reliability**: Identifies tools with high error rates (<95% success) or extreme P95 execution times (>5000ms).
 *   **H9: High Error Rate Impact**: Categorizes errors (QUOTA, TIMEOUT) and correlates them to latency spikes.
 *   **H10: Configuration Drift**: Tracks if unannounced changes in model defaults or environment variables are shifting the performance baseline.
-*   **H11: Thinking Budget Misconfiguration (Gemini 2.5+)**: Tests if latency is driven by excessive 'thinking' tokens vs. output tokens, recommending fixed `thinkingBudget` caps if variance is high.
+*   **H11: The Reasoning Budget Overhead (Gemini 2.5+)**: Tests if latency is driven by excessive internal 'thinking' loops vs. output tokens. If the `thinkingBudget` is unmanaged, it can cause unpredictable latency spikes even for simple prompts.
+*   **H12: Systemic Daily Degradation**: Looks for peak-hour variances or consistent degradation over multi-day periods.
+*   **H13: Sub-optimal LLM Parameters (GenerationConfig)**: Isolates issues caused by specific settings that degrade performance (such as `temperature`, `top_k`).
 
-For complex outliers, the agent mathematically tests concurrency (e.g., calculating the `overlap_ratio` of sibling spans) and finally runs AI root-cause analysis on the raw, granular trace tree to synthesize a definitive explanation.
+For complex outliers, the agent mathematically tests concurrency (e.g., automatically calculating the `overlap_ratio` of sibling spans to prove sequential bottlenecks) and runs AI root-cause synthesis on the raw, granular trace tree.
 
 ### Phase 5: Synthesis and Strategic Reporting (Gold Standard)
 The agent concludes by generating an actionable, highly structured Markdown report. To ensure consistency and immediate value, the report strictly follows the "Gold Standard Table of Contents":
@@ -351,6 +356,12 @@ The agent succeeds when it can definitively answer:
 
 Beyond basic SQL queries, the BigQuery Agent Analytics plugin enables **AI-powered analytics** using BigQuery ML and Gemini integration. This transforms the platform from descriptive ("what happened?") to prescriptive ("why did it happen and what should we do?").
 
+### The Quality Flywheel: Linking Observability to Evaluation
+**Capability**: Closing the loop between production monitoring and offline testing.
+Production traces should not just be monitored for speed and errors; high-quality traces should be exported directly to the **Vertex AI Eval** service. This allows the system to automatically curate "Golden Datasets" of successful, complex agent interactions from real users, fueling continuous offline evaluating and fine-tuning.
+
+---
+
 ### 1. AI-Powered Root Cause Analysis
 
 **Capability**: Use Gemini to synthesize narrative explanations from raw event traces.
@@ -383,7 +394,27 @@ WHERE error_message IS NOT NULL
 
 **Capability**: Evaluate user satisfaction and agent response quality using LLM scoring.
 
-**Example Use Cases**:
+### 3. Agentic Cost & ROI Tracking
+
+**Capability**: Given the autonomous nature of agents, monitoring the pure financial cost of their execution paths is critical. The agent tracks:
+- **Cost per Conversation**: Normalizes token costs to calculate the average monetary cost for one complete user goal. A sudden spike indicates a change in agent behavior (e.g., getting stuck in expensive reasoning loops).
+- **Token Consumption Variance**: Tracks the precise prompt vs. completion ratios per turn to identify runaway context histories.
+
+### 4. Responsible AI (RAI) & Safety Monitoring
+
+**Capability**: For production agents, tracking latency is secondary to tracking safety. The Observability Agent correlates operational data with RAI metrics:
+- **Policy Violations**: Tracks how often an agent's response is flagged for harmful or inappropriate content.
+- **Grounding & Hallucination Rates**: For agents in sensitive fields, monitors how often an agent invents facts not grounded in its retrieved tool outputs.
+
+### 5. Security & Abuse Detection
+
+**Capability**: Agent monitoring acts as a feedback loop to build stronger, more resilient prompts.
+- **Injection Detection**: Identifies malicious users attempting prompt injection.
+- **Backend Abuse**: Secures the backend systems by tracking anomalies in the specific arguments an agent passes to its downstream tools (e.g., an agent suddenly dropping tables).
+
+---
+
+**Example Use Cases (Sentiment)**:
 
 **A. Sentiment Analysis**:
 ```sql
@@ -621,6 +652,6 @@ By unifying the raw power of the **BigQuery Agent Analytics plugin** with the st
 - ✅ Proves root causes with mathematical evidence (overlap ratios, token efficiency metrics)
 - ✅ Delivers "Gold Standard", actionable engineering reports with prioritized, quantified recommendations
 
-**Key Innovation**: The agent doesn't just report metrics—it **reasons about them**. It asks "why is this slow?" and systematically tests hypotheses (token bloat, tool inefficiencies, LLM configuration drift, sequential execution bottlenecks) until it finds provable answers.
+**Key Innovation**: The agent doesn't just report metrics—it **reasons about them**. It asks "why is this slow?", "is this safe?", and "is this cost-effective?", systematically testing hypotheses (token bloat, tool inefficiencies, LLM configuration drift, sequential execution bottlenecks, and policy violations) until it finds provable answers.
 
-**The Result**: Engineering teams receive comprehensive performance reports that read like expert SRE analysis, complete with root cause attribution, quantified impact, and specific remediation steps—all generated autonomously from comprehensive telemetry and ADK event data.
+**The Result**: Engineering teams receive comprehensive performance reports that read like expert SRE analysis, complete with root cause attribution, safety compliance checks, quantified financial impact, and specific remediation steps—all generated autonomously from comprehensive telemetry and ADK event data.
