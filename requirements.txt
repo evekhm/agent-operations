@@ -1,0 +1,30 @@
+db-dtypes
+Pillow
+tabulate
+matplotlib
+google-auth
+google-generativeai
+google-genai
+google-cloud-bigquery
+google-cloud-bigquery-connection
+google-cloud-bigquery-storage
+google-cloud-storage
+google-cloud-trace
+google-cloud-resource-manager
+google-cloud-logging
+pandas
+scipy
+python-dotenv
+google-adk>=1.24.0
+numpy
+python-dateutil
+# opentelemetry-instrumentation-google-genai
+# opentelemetry-instrumentation-sqlite3
+# opentelemetry-exporter-gcp-logging
+# opentelemetry-exporter-gcp-monitoring
+# opentelemetry-exporter-otlp-proto-grpc
+# opentelemetry-instrumentation-vertexai>=2.0b0
+# opentelemetry-exporter-gcp-trace
+# opentelemetry-sdk
+pydantic-ai
+

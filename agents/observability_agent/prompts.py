@@ -42,6 +42,7 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
 
 4.  **INVESTIGATE (Deep Dive)**:
     *   AFTER completing Step 3, pick the WORST performing components compared to their baselines. **NOTE: Baselines are the top 10% fastest queries, meaning the average will ALWAYS be worse than the baseline. Do NOT mark everything with a Red Flag just because it misses the baseline. Only flag major, multi-second deviations.**
+    *   **Failed Queries:** For ANY component identified with errors in Step 2, call `get_failed_queries(..., view_id=...)` to retrieve the most recently failed traces (status = 'ERROR').
     *   Call `get_slowest_queries(..., view_id=...)` using the **correct view** for those components to get specific `span_id`s.
     *   **Root Cause**: Run `analyze_root_cause(span_id=...)` for the top 2-3 most critical outliers (highest latency `span_id`s).
     *   **Concurrency Evidence**: For any major outlier, call `analyze_trace_concurrency(session_id=...)` to mathematically determine if its children ran sequentially or in parallel. You can also proactively call `detect_sequential_bottlenecks` to find the worst offenders in the last 24h.
@@ -49,7 +50,10 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
 5.  **REPORT**:
     *   Summarize your findings in a highly detailed, professional Markdown report.
     *   Structure the report cleanly by Level: **Executive Summary**, **Agent KPI Analysis**, **Model KPI Analysis**, **Tool KPI Analysis**, and **Deep Dive / Root Cause Insights**.
-    *   Highlight any "Red Flags" ONLY for severe, multi-second deviations from the baseline. Explicitly state the dynamic baselines used for comparison.
+    *   **CRITICAL KPI TABLES FORMAT**: For each level, you MUST present the metrics in exactly this table format WITH NO EXCEPTIONS: `| Name | Baseline p95 | Actual p95 | Error Rate | Status |`. You MUST populate the `Error Rate` column using the exact `error_rate_pct` value returned from the SQL query (e.g., '100.0%'). NEVER output 'Unknown' for Error Rate.
+    *   If `error_rate_pct` is not provided for a component, it is 0.00%. Do not write 'Unknown'.
+    *   **CRITICAL STATUS RULE**: If a component has an `Error Rate > 0%`, its Status MUST be marked as **🔴 Red Flag - Error**, regardless of how fast its latency is. If Latency is >2x Baseline but no errors, it is **🔴 Red Flag - Latency**. If both are fine, it is **🟢 Green**.
+    *   Make sure to explicitly mention and investigate any errors found using the `get_failed_queries` output.
     *   **CRITICAL CONSTRAINT:** You are analyzing a system that is ALREADY heavily optimized. Specifically, the `observability_analyst` agent ALREADY runs its data gathering tools in parallel. **NEVER, UNDER ANY CIRCUMSTANCES, recommend "running tools in parallel", "concurrency", or "re-architecting logic" UNLESS you have mathematically proven it using `analyze_trace_concurrency` or `detect_sequential_bottlenecks`.** If those tools show an `overlap_ratio` of ~1.0, then you MAY recommend architectural parallelization using the numbers as evidence. Otherwise, assume it is currently parallel.
     *   **ALLOWED RECOMMENDATIONS:** Focus strictly on: optimizing slow SQL queries (e.g. adding LIMIT, reducing time_range="all" usage), reducing LLM prompt sizes, optimizing specific external API calls, adjusting baseline expectations if they are unrealistic, or (if proven by the tool) parallelization.
 
@@ -60,6 +64,7 @@ You have access to three specialized BigQuery views. You MUST use the correct vi
 - `get_latest_queries`: Get the most recent requests to evaluate current iterations against the baseline.
 - `analyze_latency_grouped`: Get high-level stats. Supports group_by="agent_name", "model_name", "tool_name".
 - `get_slowest_queries`: Get specific examples of bad performance.
+- `get_failed_queries`: Get specific examples of failed queries (status = 'ERROR'). Use to investigate high error rates.
 - `analyze_root_cause`: Use AI to explain a trace.
 - `analyze_trace_concurrency`: Mathematically prove if a session executed spans sequentially or concurrently.
 - `detect_sequential_bottlenecks`: Discover traces with high sequential wasted time.

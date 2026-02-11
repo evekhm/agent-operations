@@ -394,11 +394,13 @@ async def analyze_latency_grouped(
         SELECT
           {group_by} as group_key,
           COUNT(*) as total_count,
-          AVG({latency_col}) as avg_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(50)] as p50_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(95)] as p95_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(99)] as p99_ms,
-          MAX({latency_col}) as max_ms
+          COUNTIF(status = 'ERROR') as error_count,
+          ROUND(COUNTIF(status = 'ERROR') / COUNT(*) * 100, 2) as error_rate_pct,
+          AVG(IF(status != 'ERROR', {latency_col}, NULL)) as avg_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(50)] as p50_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(95)] as p95_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(99)] as p99_ms,
+          MAX(IF(status != 'ERROR', {latency_col}, NULL)) as max_ms
         FROM
           `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE
@@ -794,4 +796,78 @@ async def get_latest_queries(
         
     except Exception as e:
         logger.error(f"Error in get_latest_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+async def get_failed_queries(
+    time_range: str = "24h",
+    limit: int = 10,
+    agent_name: str = None,
+    root_agent_name: str = None,
+    model_name: str = None,
+    view_id: str = None,
+    latency_col: str = "duration_ms"
+) -> str:
+    """
+    Retrieves the most recent failed requests (status = 'ERROR') with their details.
+    Use this after analyze_latency_grouped shows a high error_rate_pct for a specific component.
+    Always specify the problematic component (e.g., model_name="gemini-3.0-pro") to narrow down the search.
+    
+    Args:
+        time_range (str): Time filter (e.g., "1h", "24h", "7d", "all").
+        limit (int): Max number of failed requests to return.
+        agent_name (str, optional): Filter by agent name.
+        root_agent_name (str, optional): Filter by root agent name.
+        model_name (str, optional): Filter by model name.
+        view_id (str, optional): The target BigQuery view (e.g., "agent_events_view", "llm_events_view"). Defaults to llm_events_view.
+        latency_col (str): Column name for latency/duration (default: "duration_ms").
+        
+    Returns:
+        str: JSON string containing a list of failed requests with details.
+    """
+    target_table = view_id or LLM_EVENTS_VIEW_ID
+    logger.info(f"[TOOL CALL-get_failed_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
+                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "model_name": (model_name, "="),
+            "status": ("ERROR", "=")
+        }
+        
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        query = f"""
+        SELECT * 
+        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+        WHERE {where_clause}
+        ORDER BY timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({
+                "message": "No failed queries found matching criteria.", 
+                "metadata": {"view_id": target_table}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name,
+                         "model_name": model_name, "view_id": target_table},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_failed_queries: {str(e)}")
         return json.dumps({"error": str(e)})
