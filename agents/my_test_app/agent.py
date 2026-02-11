@@ -130,6 +130,16 @@ OK_CONFIG2=types.GenerateContentConfig(
 )
 
 
+def get_agent_config() -> types.GenerateContentConfig:
+    config_name = os.environ.get("AGENT_CONFIG", "OK_CONFIG2")
+    configs = {
+        "WRONG_CONFIG1": WRONG_CONFIG1,
+        "WRONG_CONFIG2": WRONG_CONFIG2,
+        "OK_CONFIG1": OK_CONFIG1,
+        "OK_CONFIG2": OK_CONFIG2,
+    }
+    logger.info(f"Using agent config: {config_name}")
+    return configs.get(config_name, OK_CONFIG2)
 
 
 # --- Initialize Tools and Model ---
@@ -225,7 +235,7 @@ def create_agent() -> Agent:
         disallow_transfer_to_peers=True,
     )
 
-    print(f"DEBUG: create_agent called @ {time.time()}")
+    logger.debug(f"create_agent called @ {time.time()}")
     agent = LlmAgent(
         name="starter_agent",
         model=MODEL_ID, # Or parameterized
@@ -238,7 +248,7 @@ def create_agent() -> Agent:
         ),
         sub_agents=[vertexai_search_agent, google_search_agent, bigquery_agent, exception_agent],
         tools=[hello_tool],
-        generate_content_config=OK_CONFIG2,
+        generate_content_config=get_agent_config(),
     )
 
     
