@@ -3,3 +3,4 @@
 /.agent/
 /.idea/
 /.venv/
+/tools/.cache/
