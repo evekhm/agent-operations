@@ -50,10 +50,14 @@ async def main():
     # Load dynamic config
     config = load_analyst_config()
     time_period = config.get("time_period", "all")
+    baseline_period = config.get("baseline_period", "7d")
+    bucket_size = config.get("bucket_size", "1d")
     
     # Hydrate Prompt
     hydrated_prompt = OBSERVABILITY_ANALYST_PROMPT_TEMPLATE.format(
-        time_period=time_period
+        time_period=time_period,
+        baseline_period=baseline_period,
+        bucket_size=bucket_size
     )
     
     # Define the Agent
