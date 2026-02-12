@@ -2,14 +2,9 @@
   "state": {},
   "queries": [
     "What is Agent Observability top 3 features?",
-    "Hello, my name is Alice",
-    "Search for debugging agents best practices",
     "What tables are available in the BigQuery dataset?",
+    "Hello, my name is Alice",
     "Throw an exception",
-    "what are the top 3 observability agent must have features",
-    "Agent Observability features top 3",
-    "throw test exception",
-    "greet me, my name is Oscar",
     "what is the weather in Tel Aviv?"
   ]
 }
