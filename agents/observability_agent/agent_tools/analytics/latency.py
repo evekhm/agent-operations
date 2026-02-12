@@ -395,11 +395,18 @@ async def analyze_latency_grouped(
           {group_by} as group_key,
           COUNT(*) as total_count,
           COUNTIF(status = 'ERROR') as error_count,
+          COUNTIF(status != 'ERROR') as success_count,
           ROUND(COUNTIF(status = 'ERROR') / COUNT(*) * 100, 2) as error_rate_pct,
           AVG(IF(status != 'ERROR', {latency_col}, NULL)) as avg_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(50)] as p50_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(95)] as p95_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 100)[OFFSET(99)] as p99_ms,
+          STDDEV(IF(status != 'ERROR', {latency_col}, NULL)) as std_latency_ms,
+          ROUND((STDDEV(IF(status != 'ERROR', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
+          MIN(IF(status != 'ERROR', {latency_col}, NULL)) as min_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
           MAX(IF(status != 'ERROR', {latency_col}, NULL)) as max_ms
         FROM
           `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
@@ -422,10 +429,19 @@ async def analyze_latency_grouped(
             records.append({
                 group_by: row['group_key'],
                 "total_count": int(row['total_count']),
+                "success_count": int(row['success_count']),
+                "error_count": int(row['error_count']),
+                "error_rate_pct": float(row['error_rate_pct']) if pd.notna(row['error_rate_pct']) else 0.0,
+                "min_ms": float(row['min_ms']) if pd.notna(row['min_ms']) else None,
                 "avg_ms": float(row['avg_ms']) if pd.notna(row['avg_ms']) else None,
+                "std_latency_ms": float(row['std_latency_ms']) if pd.notna(row['std_latency_ms']) else None,
+                "cv_pct": float(row['cv_pct']) if pd.notna(row['cv_pct']) else None,
                 "p50_ms": float(row['p50_ms']) if pd.notna(row['p50_ms']) else None,
+                "p75_ms": float(row['p75_ms']) if pd.notna(row['p75_ms']) else None,
+                "p90_ms": float(row['p90_ms']) if pd.notna(row['p90_ms']) else None,
                 "p95_ms": float(row['p95_ms']) if pd.notna(row['p95_ms']) else None,
                 "p99_ms": float(row['p99_ms']) if pd.notna(row['p99_ms']) else None,
+                "p999_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
                 "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None
             })
             
@@ -870,4 +886,77 @@ async def get_failed_queries(
         
     except Exception as e:
         logger.error(f"Error in get_failed_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+@trace_span()
+@cached_tool()
+async def analyze_latency_trend(
+    group_by: str,
+    view_id: str,
+    time_range: str = "30d",
+    bucket_size: str = "1d"
+) -> str:
+    """
+    Analyzes the temporal trend of latency and errors by chopping the time array into distinct chronological buckets.
+    Used exclusively by Playbook C to determine if slopes are degrading or improving over long periods of time.
+    """
+    try:
+        # Strip invisible characters from LLM injection
+        view_id = str(view_id).strip()
+        group_by = str(group_by).strip()
+        
+        # 1. Strict view validation
+        if view_id not in ["agent_events_view", "llm_events_view", "tool_events_view"]:
+            return json.dumps({"error": f"Invalid view_id: {view_id}"})
+            
+        # 2. Strict group_by validation so the LLM cannot inject bad column names
+        valid_groups = ["agent_name", "model_name", "tool_name"]
+        if group_by not in valid_groups:
+             return json.dumps({"error": f"Invalid group_by '{group_by}'. MUST be one of {valid_groups}"})
+            
+        where_clause = build_standard_where_clause(time_range=time_range)
+        
+        # Translate generic bucket strings to BigQuery intervals
+        interval_map = {"1h": "HOUR", "1d": "DAY", "7d": "WEEK"}
+        bq_interval = interval_map.get(bucket_size, "DAY")
+        
+        clean_where_clause = where_clause.replace("T.", "")
+        
+        query = f"""
+        SELECT
+            {group_by} AS name,
+            TIMESTAMP_TRUNC(timestamp, {bq_interval}) AS time_bucket,
+            COUNT(*) AS total_calls,
+            APPROX_QUANTILES(duration_ms, 100)[OFFSET(95)] AS p95_ms,
+            AVG(duration_ms) AS avg_ms,
+            COUNTIF(status = 'ERROR') / NULLIF(COUNT(*), 0) * 100 AS error_rate_pct
+        FROM
+            `{PROJECT_ID}.{DATASET_ID}.{view_id}`
+        WHERE
+            {clean_where_clause}
+        GROUP BY
+            name, time_bucket
+        ORDER BY
+            name, time_bucket ASC
+        """
+        
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({"error": "No data found for trend analysis."})
+            
+        trend_results = {}
+        for name, group in df.groupby('name'):
+            buckets = []
+            for _, row in group.iterrows():
+                buckets.append({
+                    "bucket": row['time_bucket'].strftime('%Y-%m-%d %H:%M:%S'),
+                    "p95_ms": float(row['p95_ms']) if pd.notna(row['p95_ms']) else None,
+                    "error_rate_pct": f"{float(row['error_rate_pct']):.2f}%" if pd.notna(row['error_rate_pct']) else "0.00%"
+                })
+            trend_results[name] = {"trend": buckets}
+            
+        return json.dumps({"trend_analysis": trend_results}, cls=AnalysisEncoder)
+    except Exception as e:
+        logger.error(f"Error in analyze_latency_trend: {e}")
         return json.dumps({"error": str(e)})

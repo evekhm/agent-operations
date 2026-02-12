@@ -6,33 +6,72 @@
 uv pip install -r requirements.txt
 ```
 
-## Stress test
-```shell
+## Stress Test (Data Generation)
+
+The core purpose of the `stress_test.py` script is to simulate concurrent user load for the `my_test_app` agent. This rapidly populates BigQuery with realistic, varied agent execution data. By running the stress test with different configurations (models, regions, and settings), you generate the rich dataset necessary for the Observability Analyst Agent to detect regressions, bottlenecks, and anomalies.
+
+The stress test expects a `replay_test.json` file in the `agents/my_test_app/` directory, which contains an array of `queries` and an initial conversational `state`.
+
+**To run the stress test manually (e.g., 10 concurrent users):**
+```bash
+python agents/my_test_app/stress_test.py 10
+```
+This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
+
+### Automated Configuration Matrix Testing
+
+A wrapper script is provided to automatically run the stress test across a matrix of multiple configurations and models for benchmarking.
+
+To run the suite (e.g., using 2 concurrent users per combination):
+```bash
 ./agents/my_test_app/run_stress_test_suite.sh 2
 ```
+This script automatically iterates through:
+- **Datastore Configurations**: A valid `DATASTORE_ID` (from `.env`) and a dummy value, to test Vertex AI search tool resilience.
+- **Models**: `gemini-3-pro`, `gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`
+- **Agent Configs**: Variants such as `OK_CONFIG2`, `OK_CONFIG1`, `WRONG_CONFIG1`, `WRONG_CONFIG2`
+
+It automatically sets the required region (`GCP_LOCATION`) based on the model and invokes the `stress_test.py` script for each combination.
 
 ## Generate Observability Reports
 
 You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent:
 
-### Playbook A: Daily Health Check (Pulse Check)
+### Playbook: overview (Default System Overview)
+By default, the agent executes the `overview` playbook, which provides a straightforward aggregation of latency and error metrics for the specified `--time_period` without attempting to mathematically compare it to a historical baseline.
+```shell
+tools/run_observability_analyst.sh --time_period 24h
+```
+
+### Playbook: health (Healthcheck)
 By default, the agent evaluates the **last 24 hours (Current Reality)** against a sturdy **7-day Historical Baseline**.
+*(Note: You can explicitly force the agent into any Playbook using `--playbook overview`, `--playbook health`, `--playbook incident`, `--playbook trend`, or `--playbook latest`)*
 ```shell
-tools/run_observability_analyst.sh
+tools/run_observability_analyst.sh --playbook health
 ```
 
-### Playbook B: Custom KPI Performance (Time-Bound)
-To explicitly bound the analysis to a specific event (e.g., investigating a 6-hour production incident), simply limit the scope:
-```shell
-tools/run_observability_analyst.sh --time_period 6h --baseline_period 6h
-```
-**How it works**: By specifying identical time and baseline periods, the LLM will automatically perform a "Time Shift." It will evaluate your `time_period` (the last 6 hours) against a mathematically offset historical window that immediately *precedes* it (the 6 hours before that). This ensures accurate delta analysis immediately before and during an incident.
+### Playbook: incident (Incident Review)
+The `incident` playbook is designed for investigating isolated events, sudden latency spikes, or validating recent hotfixes within a tight, custom time window.
 
-### Playbook C: Temporal Trend Analysis
+```shell
+tools/run_observability_analyst.sh --playbook incident --time_period 6h --baseline_period 6h
+```
+**How it works**:
+1. **Time-Shifted Baselines**: By specifying identical `time_period` and `baseline_period` (e.g. 6h), the LLM will automatically perform a "Time Shift." It will explicitly calculate non-overlapping bounds to evaluate the current 6-hour incident window against the 6 hours *immediately preceding* the incident.
+2. **Deep Concurrency Investigation**: During an incident, the agent is proactively instructed to utilize `analyze_trace_concurrency` and `detect_sequential_bottlenecks` on the slowest anomalous traces. This mathematically proves if your multi-agent architecture is suffering from blocking execution or deadlocks during load.
+3. **Hotfix Verification**: It utilizes the `get_latest_queries` tool to fetch the absolute most recent requests *inside* your defined incident window to verify if recent iterations or deployments are actively improving the situation.
+
+### Playbook: latest (Single Trace Deep Dive)
+The `latest` playbook acts as a microscope, giving you an end-to-end "X-Ray" of the single most recent root agent execution trace. It extracts exact tool sequential timing, concurrency proof, backwards compatibility with baselines, and root cause analysis.
+```shell
+tools/run_observability_analyst.sh --playbook latest
+```
+
+### Playbook: trend (Trend Analysis)
 To evaluate long term structural degradation or improvement, you can pass a large timeframe and split it into chronological buckets. The agent will calculate slopes and trends over time:
 ```shell
 # Analyzes the last 30 days of data, grouped into daily buckets
-tools/run_observability_analyst.sh --time_period 30d --baseline_period 30d --bucket_size 1d
+tools/run_observability_analyst.sh --playbook trend --time_period 30d --bucket_size 1d
 ```
-**How it works**: Playbook C explicitly uses the `--baseline_period` (e.g. `30d`) to establish the overall boundary of the time-series array, and `--bucket_size` (e.g. `1d`) to chop that boundary into discrete chronological steps. The LLM iterates over those 30 distinct daily buckets to mathematically calculate if the p95 slope is rising (degrading) or falling (improving) over the course of the month.
-*(Note: Unlike Playbook B, Playbook C does **not** perform any time-shifting. It evaluates the exact historical block of data as specified by the `--baseline_period`).*
+**How it works**: The `trend` playbook explicitly uses the `--time_period` (e.g. `30d`) to establish the overall boundary of the time-series array, and `--bucket_size` (e.g. `1d`) to chop that boundary into discrete chronological steps. The LLM iterates over those 30 distinct daily buckets to mathematically calculate if the p95 slope is rising (degrading) or falling (improving) over the course of the month.
+*(Note: Unlike the `incident` playbook, `trend` does **not** perform any time-shifting. It evaluates the exact historical block of data as specified by the `--time_period`).*

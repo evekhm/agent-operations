@@ -3,6 +3,9 @@ import datetime
 import logging
 import os
 import sys
+import time
+import argparse
+import json
 
 from dotenv import load_dotenv
 
@@ -17,7 +20,6 @@ from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerCon
 from google.genai import types # Import types for Content
 from agents.observability_agent.prompts import OBSERVABILITY_ANALYST_PROMPT_TEMPLATE
 from agents.observability_agent.config import (
-    load_analyst_config, 
     PROJECT_ID, 
     DATASET_ID, 
     AGENT_EVENTS_TABLE_ID
@@ -30,7 +32,8 @@ from agents.observability_agent.agent_tools.analytics.latency import (
     get_failed_queries,
     get_baseline_performance_metrics,
     get_latest_queries,
-    analyze_root_cause
+    analyze_root_cause,
+    analyze_latency_trend
 )
 from agents.observability_agent.agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
@@ -43,6 +46,61 @@ logger = logging.getLogger(__name__)
 
 # Load Environment
 load_dotenv(os.path.join(dir_path, "../.env"))
+
+def load_analyst_config() -> dict:
+    """
+    Loads configuration for the Observability Analyst.
+    Priority:
+    1. CLI Arguments
+    2. Env var: LATENCY_ANALYSIS_CONFIG_FILE
+    3. Local file: agents/observability_agent/config.json
+    4. Default: hardcoded fallback
+    """
+    config_dict = {}
+
+    # 1. CLI Arguments
+    parser = argparse.ArgumentParser(description="Observability Analyst CLI")
+    parser.add_argument("--time_period", type=str, help="Time range for Current Reality")
+    parser.add_argument("--baseline_period", type=str, help="Time range for Historical Baseline")
+    parser.add_argument("--bucket_size", type=str, help="Bucket size for Playbook C")
+    parser.add_argument("--playbook", type=str, choices=["overview", "health", "incident", "trend", "latest"], help="Force explicitly route to Playbook overview, health, incident, trend, or latest")
+    
+    # Parse known args so it doesn't crash if imported elsewhere
+    args, _ = parser.parse_known_args(sys.argv[1:])
+    if args.time_period: config_dict["time_period"] = args.time_period
+    if args.baseline_period: config_dict["baseline_period"] = args.baseline_period
+    if args.bucket_size: config_dict["bucket_size"] = args.bucket_size
+    if args.playbook: config_dict["playbook"] = args.playbook
+
+    if config_dict:
+        return config_dict
+
+    # 2. Try Env Var
+    env_path = os.getenv("LATENCY_ANALYSIS_CONFIG_FILE")
+    if env_path and os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                logger.info(f"Loaded analyst config from {env_path}")
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load config from {env_path}: {e}")
+
+    # 3. Try Local config.json (relative to this file)
+    local_path = os.path.join(os.path.dirname(__file__), "config.json")
+    if os.path.exists(local_path):
+        try:
+            with open(local_path, 'r') as f:
+                logger.info(f"Loaded analyst config from {local_path}")
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load config from {local_path}: {e}")
+
+    # 4. Default Fallback
+    logger.warning("No config found, using defaults.")
+    return {
+        "time_period": "7d"
+    }
+
 
 async def main():
     print("🤖 Initializing Observability Analyst Agent...")
@@ -75,6 +133,7 @@ async def main():
             get_latest_queries,
             analyze_root_cause,
             analyze_trace_concurrency,
+            analyze_latency_trend,
             detect_sequential_bottlenecks
         ]
     )
@@ -83,6 +142,7 @@ async def main():
     
     # Run the Agent using Runner
     try:
+        start_time = time.time()
         print("   (Reasoning in progress...)\n")
         response_text = ""
         
@@ -119,10 +179,27 @@ async def main():
             plugins=[bq_logging_plugin]
         )
         
+        # Inject explicit routing if requested
+        playbook = config.get("playbook", "overview")
+        if playbook == "overview":
+            prompt_injection = "Execute Playbook: overview."
+        elif playbook == "health":
+            prompt_injection = "Execute Playbook: health."
+        elif playbook == "incident":
+            prompt_injection = "Execute Playbook: incident."
+        elif playbook == "trend":
+            prompt_injection = "Execute Playbook: trend."
+        elif playbook == "latest":
+            prompt_injection = "Execute Playbook: latest."
+        else:
+            prompt_injection = "Evaluate the current system state. Choose the appropriate Playbook autonomously based on my configured parameters."
+
+        print(f"🎯 Explicit Routing: {prompt_injection}")
+
         # Create Content object
         user_msg = types.Content(
             role="user",
-            parts=[types.Part(text="Perform a system health check for the last 24h. Follow your workflow: Discover, Analyze, Investigate.")]
+            parts=[types.Part(text=f"Instructions: {prompt_injection}")]
         )
         
         # Runner.run_async requires user_id and session_id
@@ -148,7 +225,9 @@ async def main():
                     print(text_chunk, end="", flush=True)
                     response_text += text_chunk
         
-        print("\n\n✅ **Analysis Complete**")
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"\n\n✅ **Analysis Complete** (Execution Time: {execution_time:.2f} seconds)")
         
         # Save Report
         if response_text.strip():
