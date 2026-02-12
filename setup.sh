@@ -124,7 +124,7 @@ curl -s -X POST \
   -d '{
     "gcsSource": {
       "inputUris": ["'"${BUCKET_NAME}"'/*"],
-      "dataSchema": "custom"
+      "dataSchema": "content"
     },
     "reconciliationMode": "INCREMENTAL"
 }'
@@ -133,8 +133,5 @@ echo ""
 echo "=========================================================="
 echo "Setup Complete!"
 echo "Data store creation and import process started."
-echo "Please update your .env file in agents/my_test_app with:"
-echo ""
-echo "DATASTORE_ID=${DATASTORE_ID}"
-echo "SEARCH_APP_REGION=${REGION}"
 echo "=========================================================="
+echo ""
