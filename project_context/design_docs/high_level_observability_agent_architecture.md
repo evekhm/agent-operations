@@ -238,26 +238,30 @@ graph TB
 ---
 
 ## 3. The Analytical Thinking Process (Workflow)
-The agent operations follow a highly structured, five-phase reasoning loop, leveraging the "Outlier-First" approach: Establish the baseline, identify outliers, and dig into the root cause.
+The agent operations follow a highly structured, scenario-driven reasoning loop. Depending on the user's operational goal, the Observability Agent evaluates uses specialized "Investigation Playbooks."
 
-### Phase 1: Discovery & Dynamic Baselining
-The agent begins by contextualizing what "normal" and "excellent" look like.
-*   **Discovery**: It queries metadata to establish exactly which agents, models, and tools were active during the analysis window.
-*   **The "Execution Path" (The Forest vs. The Tree)**: To move toward "L4: Prescriptive" maturity, the agent goes beyond analyzing isolated spans. It groups transactions by their unique sequence of operations (e.g., `Start -> Router -> Tool[Search] -> LLM`). This allows for precise baselining of specific agent behaviors rather than relying on a generic, noisy average.
-*   **Dynamic Targeting**: For each distinct Execution Path, it sets dynamic target baselines based on the **top 10% fastest successful transactions**. This establishes an ambitious but proven baseline for `mean` and `p95` latency KPIs.
+### Playbook A: The "Pulse Check" (Health vs Baseline)
+This is the standard daily operational health check. It strictly separates the *Current Reality* from *Historical Proven Performance* to prevent a degraded system from becoming the new normal.
 
-### Phase 2: Concurrent Multi-Level Analysis & Pattern Detection
-The agent shifts to evaluating current operational realities across the ecosystem.
-*   **Parallel Aggregation**: It concurrently queries summary latency statistics, grouping by `agent_name`, `model_name`, and `tool_name`.
-*   **Temporal & Structural Correlation**: The agent looks for systemic degradation (e.g., hourly/daily/weekend patterns) and clustering (do specific request sizes or types trigger spikes?).
+1.  **Phase 1: Historical Baselining (The Standard)**: The agent establishes what "excellent" looks like by analyzing the **Top 10% fastest successful transactions** from a prolonged, stable historical window (e.g., the last `7d` or `14d`). This generates an ambitious but proven target for `p50`, `p95`, and error rates.
+2.  **Phase 2: Current Reality Discovery (The Pulse)**: The agent queries the immediate operational window (the last `24h`) to discover all *currently* active Agents, LLMs, and Tools.
+3.  **Phase 3: Multi-Level Aggregation & Comparison**: The agent concurrently aggregates latency and error distributions for the `24h` reality window and mathematically compares them against the `7d` historical baseline, explicitly flagging major deviations (>2x Baseline Latency) or unacceptable reliability (>0% Error Rate).
 
-### Phase 3: Iteration Verification
-The agent assesses the impact of recent engineering efforts or environment changes.
-*   By fetching the absolute latest traces, it compares "just deployed" or "recent" performance against the historical dynamic baseline.
-*   This answers the critical engineering question: *Did our latest code iterations or configuration tweaks actually yield quantifiable improvement?*
+### Playbook B: Custom KPI Performance (Time-Bound Assessment)
+When a user needs to evaluate a specific timeframe (e.g., "How did the system perform during yesterday's massive marketing launch?"), the agent shifts from "Health Check" to "Definitive Assessment."
+*   **Targeted Windowing**: The agent strictly bounds its analysis to the user-provided temporal window (`start_timestamp` to `end_timestamp`).
+*   **Volume vs Latency Correlation**: It evaluates if performance degraded strictly as a function of request volume (e.g., API Rate Limits Queueing).
+*   **Cost & Constraint Verification**: It aggregates the absolute total token consumption and API costs for that exact window to determine if the burst remained within budget constraints.
+
+### Playbook C: Temporal Trend Analysis (Degradation vs Improvement)
+When evaluating long-term architectural decay or the success of a recent optimization sprint, point-in-time metrics are insufficient. The agent evaluates *Trends*.
+*   **Bucketized Aggregation**: The agent splits a large window (e.g., `30d`) into discrete intervals (e.g., `daily` or `hourly` buckets).
+*   **Slope Calculation**: It plots the `p95` latency and `error_rate` for each bucket and identifies the trendline slope.
+    *   *Positive Slope (Degrading)*: e.g., Vector Database retrieval latency increasing horizontally as datastore size scales.
+    *   *Negative Slope (Improving)*: e.g., Confirming that an engineered fix (like reducing `maxOutputTokens`) actively drove the p95 down over the last 3 days.
 
 ### Phase 4: Hypothesis Testing (Anomaly Detection & Root Cause)
-This is the scientific core of the agent. It leverages Anomaly Detection to target the worst-performing outliers and systematically tests a battery of advanced SRE theories specific to the "Agentic Shift":
+Regardless of the active Playbook, when the agent identifies a failing component (Red Flag), it systematically tests a battery of advanced SRE theories specific to the "Agentic Shift":
 
 *   **H1: Token Size Drives Latency**: Investigates strong correlations between input/output token counts and generation time.
 *   **H2: KV Cache Fragmentation (Over-provisioning)**: Incorporates the concept that `maxOutputTokens` is not just a limit, but a memory reservation. Over-provisioning this value forces the backend to reserve GPU RAM covering the maximum possible sequence length, strictly reducing the batch sizes the GPU can handle and increasing queuing latency even if the model produces a short response.
