@@ -2,36 +2,60 @@
 
 ## Installation
 
+* Install uv
+
+* Activate Python virtual environment in home directory
+
+```bash
+python -m venv .venv
+  source .venv/bin/activate
+```
+
+* Install libraries
 ```bash
 uv pip install -r requirements.txt
 ```
 
-## Stress Test (Data Generation)
+* Install ADK in the Python virtual environment
 
-The core purpose of the `stress_test.py` script is to simulate concurrent user load for the `my_test_app` agent. This rapidly populates BigQuery with realistic, varied agent execution data. By running the stress test with different configurations (models, regions, and settings), you generate the rich dataset necessary for the Observability Analyst Agent to detect regressions, bottlenecks, and anomalies.
+```bash
+  uv pip install google-adk
+```
+
+* Create new GCP project
+* Set your GCP Project ID into environment variable below:
+    ```shell
+    export PROJECT_ID="..."
+    ```
+
+    ```shell
+    gcloud config set project $PROJECT_ID
+    gcloud auth application-default set-quota-project $PROJECT_ID
+    ```
+
+    ```shell
+    gcloud auth login
+    gcloud auth application-default login    
+    ```
+* Update `.env` file with your `PROJECT_ID` 
+  
+* TODO: Steps to create Vertex AI datastore
+
+
+## Data Generation
+
+The core purpose of the `stress_test.py` script is to simulate concurrent user load for the `my_test_app` agent. 
+This rapidly populates BigQuery with realistic, varied agent execution data. By running the stress test with different configurations (models, regions, and settings), you generate the rich dataset necessary for the Observability Analyst Agent to detect regressions, bottlenecks, and anomalies.
 
 The stress test expects a `replay_test.json` file in the `agents/my_test_app/` directory, which contains an array of `queries` and an initial conversational `state`.
-
-**To run the stress test manually (e.g., 10 concurrent users):**
-```bash
-python agents/my_test_app/stress_test.py 10
-```
-This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
-
-### Automated Configuration Matrix Testing
-
-A wrapper script is provided to automatically run the stress test across a matrix of multiple configurations and models for benchmarking.
 
 To run the suite (e.g., using 2 concurrent users per combination):
 ```bash
 ./agents/my_test_app/run_stress_test_suite.sh 2
 ```
-This script automatically iterates through:
-- **Datastore Configurations**: A valid `DATASTORE_ID` (from `.env`) and a dummy value, to test Vertex AI search tool resilience.
-- **Models**: `gemini-3-pro`, `gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`
-- **Agent Configs**: Variants such as `OK_CONFIG2`, `OK_CONFIG1`, `WRONG_CONFIG1`, `WRONG_CONFIG2`
 
-It automatically sets the required region (`GCP_LOCATION`) based on the model and invokes the `stress_test.py` script for each combination.
+This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
+
 
 ## Generate Observability Reports
 

@@ -19,12 +19,10 @@ from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_R
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
-from ...utils.telemetry import trace_span
 
 logger = logging.getLogger(__name__)
 
 
-@trace_span()
 @cached_tool()
 async def analyze_latency_distribution(
     time_range: str = DEFAULT_TIME_RANGE,
@@ -156,7 +154,6 @@ async def analyze_latency_distribution(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
 @cached_tool()
 async def analyze_latency_performance(
     time_range: str = DEFAULT_TIME_RANGE,
@@ -266,7 +263,6 @@ async def analyze_latency_performance(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
 @cached_tool()
 async def get_slowest_queries(
     time_range: str = DEFAULT_TIME_RANGE,
@@ -353,7 +349,6 @@ async def get_slowest_queries(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
 @cached_tool()
 async def analyze_latency_grouped(
     group_by: str = "agent_name",
@@ -456,7 +451,7 @@ async def analyze_latency_grouped(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
+
 @cached_tool()
 async def get_active_metadata(
     time_range: str = "7d",
@@ -515,7 +510,6 @@ async def get_active_metadata(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
 @cached_tool()
 async def analyze_root_cause(
     span_id: str,
@@ -569,7 +563,7 @@ async def analyze_root_cause(
         logger.error(f"Error in analyze_root_cause: {str(e)}")
         return json.dumps({"error": str(e)})
 
-@trace_span()
+
 @cached_tool()
 async def get_fastest_queries(
     time_range: str = "7d",
@@ -644,7 +638,6 @@ async def get_fastest_queries(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
 @cached_tool()
 async def get_baseline_performance_metrics(
     group_by: str = "agent_name",
@@ -741,7 +734,7 @@ async def get_baseline_performance_metrics(
         return json.dumps({"error": str(e)})
 
 
-@trace_span()
+
 @cached_tool()
 async def get_latest_queries(
     time_range: str = DEFAULT_TIME_RANGE,
@@ -888,7 +881,7 @@ async def get_failed_queries(
         logger.error(f"Error in get_failed_queries: {str(e)}")
         return json.dumps({"error": str(e)})
 
-@trace_span()
+
 @cached_tool()
 async def analyze_latency_trend(
     group_by: str,
