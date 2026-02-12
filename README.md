@@ -22,8 +22,7 @@ uv pip install -r requirements.txt
   uv pip install google-adk
 ```
 
-* Create new GCP project
-* Set your GCP Project ID into environment variable below:
+* Create new GCP project, note dow PROJECT_ID
     ```shell
     export PROJECT_ID="..."
     ```
@@ -39,8 +38,12 @@ uv pip install -r requirements.txt
     ```
 * Update `.env` file with your `PROJECT_ID` 
   
-* TODO: Steps to create Vertex AI datastore
+* Create required GCP resources
 
+```shell
+./setup.sh
+```
+>> Will take ~10 minutes for the datastore to get indexed (for the creation of the embeddings)
 
 ## Data Generation
 
@@ -49,9 +52,16 @@ This rapidly populates BigQuery with realistic, varied agent execution data. By 
 
 The stress test expects a `replay_test.json` file in the `agents/my_test_app/` directory, which contains an array of `queries` and an initial conversational `state`.
 
-To run the suite (e.g., using 2 concurrent users per combination):
+To run the suite:
 ```bash
-./agents/my_test_app/run_stress_test_suite.sh 2
+./agents/my_test_app/run_stress_test_suite.sh
+```
+
+Advanced:
+To run with concurrency (e.g. 10 users) for the load test:
+
+```bash
+./agents/my_test_app/run_stress_test_suite.sh 10
 ```
 
 This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
