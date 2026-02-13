@@ -15,11 +15,10 @@ from typing import Optional
 
 from google.api_core import exceptions
 from google.cloud import bigquery_connection_v1
-from google.cloud.bigquery_connection_v1 import Connection, CloudResourceProperties
 from google.cloud import resourcemanager_v3
 from google.iam.v1 import policy_pb2
 
-from ..config import PROJECT_ID, LOCATION, CONNECTION_ID
+from ..config import PROJECT_ID, DATASET_LOCATION, CONNECTION_ID
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +109,10 @@ def ensure_bq_connection_exists():
         # Initialize client
         client = bigquery_connection_v1.ConnectionServiceClient()
         
-        connection = _get_connection(client, PROJECT_ID, LOCATION, CONNECTION_ID)
+        connection = _get_connection(client, PROJECT_ID, DATASET_LOCATION, CONNECTION_ID)
         
         if not connection:
-            connection = _create_connection(client, PROJECT_ID, LOCATION, CONNECTION_ID)
+            connection = _create_connection(client, PROJECT_ID, DATASET_LOCATION, CONNECTION_ID)
             logger.info(f"Successfully created connection '{CONNECTION_ID}'.")
             
         if connection and connection.cloud_resource and connection.cloud_resource.service_account_id:
