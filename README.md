@@ -1,75 +1,83 @@
 # Agent Operations
 
-## Installation
+## Prerequisites
 
+* GCP project (Note down Project ID)
+* Python 3.12 
+
+
+## Installation 
+for the Local machine Execution
 * Install uv
 
-* Activate Python virtual environment in home directory
+* Activate Python virtual environment in home directory:
 
 ```bash
 python -m venv .venv
-  source .venv/bin/activate
+source .venv/bin/activate
 ```
 
-* Install libraries
+* Install libraries:
 ```bash
 uv pip install -r requirements.txt
 ```
 
-* Install ADK in the Python virtual environment
+* Install ADK in the Python virtual environment:
 
 ```bash
-  uv pip install google-adk
+uv pip install google-adk
 ```
 
-* Create new GCP project, note dow PROJECT_ID
-    ```shell
-    export PROJECT_ID="..."
-    ```
-
-    ```shell
-    gcloud config set project $PROJECT_ID
-    gcloud auth application-default set-quota-project $PROJECT_ID
-    ```
-
-    ```shell
-    gcloud auth login
-    gcloud auth application-default login    
-    ```
-* Update `.env` file with your `PROJECT_ID` 
-  
-* Create required GCP resources
+* Set Project ID and authenticate:
+```shell
+export PROJECT_ID="..."
+```
 
 ```shell
-./setup.sh
-```
->> Will take ~10 minutes for the datastore to get indexed (for the creation of the embeddings)
-
-## Data Generation
-
-The core purpose of the `stress_test.py` script is to simulate concurrent user load for the `my_test_app` agent. 
-This rapidly populates BigQuery with realistic, varied agent execution data. By running the stress test with different configurations (models, regions, and settings), you generate the rich dataset necessary for the Observability Analyst Agent to detect regressions, bottlenecks, and anomalies.
-
-The stress test expects a `replay_test.json` file in the `agents/my_test_app/` directory, which contains an array of `queries` and an initial conversational `state`.
-
-To run the suite:
-```bash
-./agents/my_test_app/run_stress_test_suite.sh
+gcloud config set project $PROJECT_ID
+gcloud auth application-default set-quota-project $PROJECT_ID
 ```
 
-Advanced:
-To run with concurrency (e.g. 10 users) for the load test:
-
-```bash
-./agents/my_test_app/run_stress_test_suite.sh 10
+```shell
+gcloud auth login
+gcloud auth application-default login    
 ```
 
-This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
+* Update environment variables inside [.env](.env)  file:
+```text
+PROJECT_ID=...
+```
+  
+* When integrating with existing environment and agent using [BigQuery Agent Analytics plugin](https://google.github.io/adk-docs/integrations/bigquery-agent-analytics/), make sure to point to the corresponding resources and update `.env` file accordingly:
 
+```text
+# BigQuery Analytics Plugin
+DATASET_ID="logging"
+DATASET_LOCATION="us-central1"
+TABLE_ID="agent_events_v2"
+```
+
+* Alternatively, if you do not have an existing environment and want to quickly create resources and use a sample agent to generate some load, follow the steps below: 
+  * Create required GCP resources, such as BigQuery, DATASET, Datastore for Vertex AI search (sample Agent)
+
+      ```shell
+      ./setup.sh
+      ```
+  * Data Generation using sample `starter-agent` of the `my_test_app`
+
+    ```bash
+    ./agents/my_test_app/run_stress_test_suite.sh
+    ```
+
+    >> Advanced:
+    To run with concurrency (e.g. 10 users):
+    >>```bash
+    >>./agents/my_test_app/run_stress_test_suite.sh 10
+    >>```
 
 ## Generate Observability Reports
 
-You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent:
+You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks
 
 ### Playbook: overview (Default System Overview)
 By default, the agent executes the `overview` playbook, which provides a straightforward aggregation of latency and error metrics for the specified `--time_period` without attempting to mathematically compare it to a historical baseline.

@@ -5,7 +5,7 @@ import json
 import logging
 
 # Load .env from project root
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=True)
 
 # Get ADC creds and project ID.
 PROJECT_ID = os.getenv('PROJECT_ID')
@@ -24,8 +24,10 @@ AGENT_EVENTS_VIEW_ID = os.getenv('AGENT_EVENTS_VIEW_ID', 'agent_events_view')
 LLM_EVENTS_VIEW_ID = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
 TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
-
-AGENT_EVENTS_TABLE_ID = os.getenv('AGENT_EVENTS_TABLE_ID', 'agent_events_v2')
+AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
+DATASET_LOCATION = os.getenv('DATASET_LOCATION', 'us-central1')
+DEBUG=os.getenv('DEBUG', False)
+AGENT_EVENTS_TABLE_ID = os.getenv('TABLE_ID', 'agent_events_v2')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 LOCATION = os.getenv('LOCATION', "us")
 

@@ -142,7 +142,9 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None) -> 
         pd.DataFrame: The query results as a Pandas DataFrame.
     """
     # ensure cache dir exists
-    logger.info(f"execute_bigquery - {query}")
+    print(f"\n================ SQL QUERY ================\n"
+          f"{query}\n"
+          f"===========================================")
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR, exist_ok=True)
 

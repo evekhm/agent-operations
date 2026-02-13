@@ -22,7 +22,9 @@ from agents.observability_agent.prompts import OBSERVABILITY_ANALYST_PROMPT_TEMP
 from agents.observability_agent.config import (
     PROJECT_ID, 
     DATASET_ID, 
-    AGENT_EVENTS_TABLE_ID
+    AGENT_EVENTS_TABLE_ID,
+    MODEL_ID,
+    AGENT_NAME
 )
 from agents.observability_agent.agent_tools.analytics.latency import (
     get_active_metadata,
@@ -40,12 +42,13 @@ from agents.observability_agent.agent_tools.analytics.concurrency import (
     detect_sequential_bottlenecks
 )
 
-# Configure Logging
-logging.basicConfig(level=logging.ERROR)
-logger = logging.getLogger(__name__)
-
 # Load Environment
-load_dotenv(os.path.join(dir_path, "../.env"))
+load_dotenv(os.path.join(dir_path, "../.env"), override=True)
+
+# Configure Logging
+log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
+logging.basicConfig(level=getattr(logging, log_level, logging.ERROR))
+logger = logging.getLogger(__name__)
 
 def load_analyst_config() -> dict:
     """
@@ -120,8 +123,8 @@ async def main():
     
     # Define the Agent
     analyst_agent = Agent(
-        name="observability_analyst",
-        model="gemini-2.5-pro", # Updated to 2.5 Pro as requested
+        name=AGENT_NAME,
+        model=MODEL_ID,
         instruction=hydrated_prompt,
         tools=[
             get_active_metadata,

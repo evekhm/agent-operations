@@ -44,7 +44,7 @@ def create_per_thread_plugins():
         _, project_id = google.auth.default()
 
     dataset_id = os.environ.get("BIG_QUERY_DATASET_ID", "logging")
-    table_id = os.environ.get("AGENT_EVENTS_TABLE_ID", "agent_events_v4")
+    table_id = os.environ.get("TABLE_ID", "agent_events_v4")
     location = os.environ.get("GOOGLE_CLOUD_LOCATION", "US")
 
     bq_config = BigQueryLoggerConfig(

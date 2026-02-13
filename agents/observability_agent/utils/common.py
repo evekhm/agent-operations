@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional, List, Dict, Tuple, Union
-
+from ..config import DEBUG, AGENT_NAME
 import numpy as np
 import pandas as pd
 
@@ -42,6 +42,10 @@ def build_standard_where_clause(
         table_alias: Table alias to use.
     """
     filters = []
+    if not DEBUG:
+        logger.info(f"[build_standard_where_clause] Excluding Agent : {AGENT_NAME}")
+        filters.append(f"root_agent_name!='{AGENT_NAME}'") # Exclude itself
+
     if extra_filters:
         filters.extend(extra_filters)
 

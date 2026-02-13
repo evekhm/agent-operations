@@ -15,7 +15,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID
+from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -530,7 +530,7 @@ async def analyze_root_cause(
     
     try:
         # Generate connection ID
-        connection_id = f"{PROJECT_ID}.us.{CONNECTION_ID}"
+        connection_id = f"{PROJECT_ID}.{DATASET_LOCATION}.{CONNECTION_ID}"
         model_endpoint = "gemini-2.0-flash"
         
         query = f"""

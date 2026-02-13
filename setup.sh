@@ -31,10 +31,11 @@ fi
 REGION=${SEARCH_APP_REGION:-"global"}
 BUCKET_NAME="gs://${PROJECT_ID}-obs-docs"
 
-echo "Project ID:        $PROJECT_ID"
-echo "Datastore Region:  $REGION"
-echo "Bucket Name:       $BUCKET_NAME"
-echo "Data Store ID:     $DATASTORE_ID"
+echo "Project ID:          $PROJECT_ID"
+echo "Datastore Region:    $REGION"
+echo "BQ Location Region:  $BQ_LOCATION"
+echo "Bucket Name:         $BUCKET_NAME"
+echo "Data Store ID:       $DATASTORE_ID"
 echo "----------------------------------------------------------"
 
 
@@ -72,7 +73,7 @@ echo "[1/5] Creating BigQuery Dataset (if it doesn't exist)..."
 if [ -n "$DATASET_ID" ]; then
     bq show --dataset "${PROJECT_ID}:${DATASET_ID}" >/dev/null 2>&1 || {
         echo "Dataset ${DATASET_ID} not found. Creating..."
-        bq mk --location="${LOCATION}" --dataset "${PROJECT_ID}:${DATASET_ID}"
+        bq mk --location="${BQ_LOCATION}" --dataset "${PROJECT_ID}:${DATASET_ID}"
     }
 else
     echo "WARNING: DATASET_ID not set in .env. Skipping dataset creation."
