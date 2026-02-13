@@ -391,7 +391,7 @@ If the Strategist asks about... YOU MUST RUN...
 - **MISSING TOOLS**: If you identify a gap where a specific tool would solve the problem but it does not exist, explicitly state: "MISSING TOOL: [Tool Name] - [Why it is needed]". Do NOT hallucinate a tool.
 
 **AGENT EVENTS ANALYTICS (BigQueryAgentAnalyticsPlugin):**
-The `agent_events_v2` table captures comprehensive event-level telemetry. Use these tools when you need detailed event-driven insights:
+The `TABLE_ID` (.env file) table captures comprehensive event-level telemetry. Use these tools when you need detailed event-driven insights:
 
 - **`get_agent_event_performance(time_range, agent_name?, event_type?)`**:
   - Purpose: Analyze performance metrics per agent and event type from agent events

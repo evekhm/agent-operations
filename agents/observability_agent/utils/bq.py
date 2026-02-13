@@ -1,3 +1,12 @@
+"""
+BigQuery Utility Module.
+
+This module handles BigQuery interactions, including:
+- **Client Management**: Singleton client with lazy initialization of views and connections.
+- **Query Execution**: Async execution with timeout protection and dedicated thread pool.
+- **Caching**: Local file-based caching for query results to reduce costs and latency during development/testing.
+- **View Management**: Automatically ensures required SQL views exist.
+"""
 import asyncio
 import concurrent.futures
 import hashlib
@@ -10,19 +19,9 @@ import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
-from ..config import PROJECT_ID, DATASET_ID
+from ..config import PROJECT_ID
 
 logger = logging.getLogger(__name__)
-
-"""
-BigQuery Utility Module.
-
-This module handles BigQuery interactions, including:
-- **Client Management**: Singleton client with lazy initialization of views and connections.
-- **Query Execution**: Async execution with timeout protection and dedicated thread pool.
-- **Caching**: Local file-based caching for query results to reduce costs and latency during development/testing.
-- **View Management**: Automatically ensures required SQL views exist.
-"""
 
 # ==============================================================================
 # CLIENT & CONNECTION
@@ -76,10 +75,6 @@ def check_table_exists(client, table_ref) -> bool:
         return True
     except NotFound:
         return False
-
-def get_table_ref(table_id: str) -> str:
-    """Get full table reference."""
-    return f"{PROJECT_ID}.{DATASET_ID}.{table_id}"
 
 # ==============================================================================
 # QUERY EXECUTION & CACHING

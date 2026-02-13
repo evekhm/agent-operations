@@ -137,7 +137,7 @@ async def main():
         bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
             project_id=PROJECT_ID,
             dataset_id=DATASET_ID,
-            table_id=AGENT_EVENTS_TABLE_ID, # default table name is agent_events_v2
+            table_id=AGENT_EVENTS_TABLE_ID,
             config=bq_config,
             location="us"
         )
@@ -199,14 +199,20 @@ async def main():
         execution_time = end_time - start_time
         print(f"\n\n✅ **Analysis Complete** (Execution Time: {execution_time:.2f} seconds)")
         
+        # Retrieve final explicitly formatted report from state
+        session = await session_service.get_session(user_id="test_user",
+                                                    session_id="test_session_001",
+                                                    app_name="observability_analyst_app")
+        final_report = session.state.get("final_report", response_text)
+
         # Save Report
-        if response_text.strip():
+        if final_report.strip():
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             report_path = os.path.join(dir_path, f"../reports/observability_report_{timestamp}.md")
             os.makedirs(os.path.dirname(report_path), exist_ok=True)
             
             with open(report_path, "w") as f:
-                f.write(response_text)
+                f.write(final_report)
             
             print(f"\n📄 Report saved to: {report_path}")
         else:

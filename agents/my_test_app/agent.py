@@ -73,7 +73,7 @@ bq_config = BigQueryLoggerConfig(
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
     dataset_id=DATASET_ID,
-    table_id=AGENT_EVENTS_TABLE_ID, # default table name is agent_events_v2
+    table_id=AGENT_EVENTS_TABLE_ID,
     config=bq_config,
     location="us"
 )

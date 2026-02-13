@@ -1,8 +1,8 @@
-import os
-from dotenv import load_dotenv
-import google.auth
-import json
 import logging
+import os
+
+import google.auth
+from dotenv import load_dotenv
 
 # Load .env from project root
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=True)
@@ -18,7 +18,7 @@ if not PROJECT_ID:
         PROJECT_ID = None
 
 DATASET_ID = os.getenv('DATASET_ID')
-TABLE_ID = os.getenv('AGENT_TABLE_ID')
+TABLE_ID = os.getenv('TABLE_ID')
 
 AGENT_EVENTS_VIEW_ID = os.getenv('AGENT_EVENTS_VIEW_ID', 'agent_events_view')
 LLM_EVENTS_VIEW_ID = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
@@ -26,13 +26,15 @@ TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
 DATASET_LOCATION = os.getenv('DATASET_LOCATION', 'us-central1')
-DEBUG=os.getenv('DEBUG', False)
-AGENT_EVENTS_TABLE_ID = os.getenv('TABLE_ID', 'agent_events_v2')
+DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
+AGENT_EVENTS_TABLE_ID = os.getenv('TABLE_ID')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 LOCATION = os.getenv('LOCATION', "us")
 
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"
+assert TABLE_ID, "TABLE_ID is not set for the BigQuery Analytics Plugin"
+assert DATASET_ID, "DATASET_ID is not set for the BigQuery Analytics Plugin"
 
 # Set env vars for Google generic libs
 if PROJECT_ID:
