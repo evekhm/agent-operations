@@ -10,6 +10,8 @@ In the era of the "Agentic Shift," traditional monitoring focused solely on reac
 
 The end goal for the Observability Agent is to act as a **fully autonomous, prescriptive SRE** capable of comprehensive performance, cost, and safety monitoring. It aims to move beyond static dashboards by deeply integrating with the rich dataset of **ADK events and execution contexts** captured by the BigQuery plugin (tracking entire LLM reasoning traces, tool executions, state deltas, and multi-agent orchestration overhead). Ultimately, the agent will not only diagnose performance issues but proactively auto-remediate them, secure the system against prompt injections, score interaction quality, and feed high-quality "Golden Datasets" back into evaluation pipelines for continuous model fine-tuning.
 
+See [high_level_observability_agent_architecture](project_context/design_docs/high_level_observability_agent_architecture.md) for more details.
+
 ### Current Capabilities
 
 Currently, the Observability Agent operates at a diagnostic and early predictive level, acting as the analytical brain on top of the BigQuery Agent Analytics plugin's data. It executes specialized, data-driven **Playbooks** (`health`, `incident`, `latest`, `trend`, and `overview`) to investigate the true performance of your agentic applications across three architectural layers: the Agent Layer, the LLM Layer, and the Tool Layer.
