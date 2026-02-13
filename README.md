@@ -1,3 +1,18 @@
+<!-- TOC -->
+* [Agent Operations](#agent-operations)
+  * [Overview](#overview)
+    * [The Vision & End Goal](#the-vision--end-goal)
+    * [Current Capabilities](#current-capabilities)
+    * [Future Roadmap (To Be Built)](#future-roadmap-to-be-built)
+  * [Prerequisites](#prerequisites)
+  * [Installation](#installation-)
+  * [Generate Observability Reports](#generate-observability-reports)
+    * [Playbook: overview (Default System Overview)](#playbook-overview-default-system-overview)
+    * [Playbook: health (Healthcheck)](#playbook-health-healthcheck)
+    * [Playbook: incident (Incident Review)](#playbook-incident-incident-review)
+    * [Playbook: latest (Single Trace Deep Dive)](#playbook-latest-single-trace-deep-dive)
+    * [Playbook: trend (Trend Analysis)](#playbook-trend-trend-analysis)
+<!-- TOC -->
 # Agent Operations
 
 ## Overview
