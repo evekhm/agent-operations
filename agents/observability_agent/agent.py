@@ -16,7 +16,6 @@ from .agent_tools.analytics.latency import (
     get_slowest_queries,
     get_fastest_queries,
     get_failed_queries,
-    get_baseline_performance_metrics,
     get_latest_queries,
     analyze_root_cause,
     analyze_latency_trend
@@ -35,7 +34,6 @@ analyst_tools = [
     get_slowest_queries,
     get_failed_queries,
     get_fastest_queries,
-    get_baseline_performance_metrics,
     get_latest_queries,
     analyze_root_cause,
     analyze_trace_concurrency,
@@ -50,7 +48,8 @@ playbook_agent = Agent(
     instruction=PLAYBOOK_INVESTIGATOR_PROMPT, # Will be hydrated dynamically
     description="Executes deep-dive observability playbooks (health, incident, overview, trend, latest) on the agent events and telemetry data inside BigQuery. Collects the raw findings.",
     tools=analyst_tools,
-    output_key="playbook_findings"
+    output_key="playbook_findings",
+    disallow_transfer_to_peers=True
 )
 
 # Create the Report Creator Agent that takes findings and structures them into markdown
@@ -60,7 +59,8 @@ report_creator_agent = Agent(
     instruction=REPORT_CREATOR_PROMPT, # Automatically injects {playbook_findings}
     description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
     tools=[],
-    output_key="final_report"
+    output_key="final_report",
+    disallow_transfer_to_peers=True
 )
 
 # Group the investigator and report creator into a strict sequential pipeline
@@ -70,14 +70,40 @@ investigate_and_report_pipeline = SequentialAgent(
     description="Pipeline that first investigates the system and then generates a report."
 )
 
-def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str):
+def _format_kpis_for_prompt(kpis: dict) -> str:
+    lines = ["**STATIC KPIs (SLOs)**"]
+    for k, v in kpis.items():
+        if k == "per_agent":
+            lines.append("- Custom per-agent KPIs:")
+            for agent_name, agent_kpis in v.items():
+                lines.append(f"  - `{agent_name}`:")
+                for ak, av in agent_kpis.items():
+                    lines.append(f"    - {ak}: {av}s")
+        else:
+            lines.append(f"- {k}: {v}s")
+    return "\n".join(lines)
+
+def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None):
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
-    hydrated_prompt = PLAYBOOK_INVESTIGATOR_PROMPT.format(
+    if kpis is None:
+        from .config import DEFAULT_KPIS
+        kpis = DEFAULT_KPIS
+        
+    kpis_string = _format_kpis_for_prompt(kpis)
+
+    hydrated_investigator_prompt = PLAYBOOK_INVESTIGATOR_PROMPT.format(
         time_period=time_period,
         baseline_period=baseline_period,
-        bucket_size=bucket_size
+        bucket_size=bucket_size,
+        kpis_string=kpis_string
     )
-    playbook_agent.instruction = hydrated_prompt
+    playbook_agent.instruction = hydrated_investigator_prompt
+
+    hydrated_report_prompt = REPORT_CREATOR_PROMPT.format(
+        playbook_findings="{playbook_findings}",
+        kpis_string=kpis_string
+    )
+    report_creator_agent.instruction = hydrated_report_prompt
 
 # Create the Orchestrating Root Agent
 root_agent = Agent(

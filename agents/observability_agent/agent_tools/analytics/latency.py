@@ -15,7 +15,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION
+from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -354,6 +354,7 @@ async def analyze_latency_grouped(
     group_by: str = "agent_name",
     time_range: str = DEFAULT_TIME_RANGE,
     model_name: Optional[str] = None,
+    exclude_root: bool = False,
     view_id: Optional[str] = None,
     latency_col: str = "duration_ms"
 ) -> str:
@@ -364,6 +365,7 @@ async def analyze_latency_grouped(
         group_by (str): Dimension to group by. One of: "agent_name", "root_agent_name", "model_name".
         time_range (str): Time range.
         model_name (str): Optional. Filter by specific model (useful when grouping by agent).
+        exclude_root (bool): Optional. If True, excludes rows where agent_name matches root_agent_name.
         view_id (str): Optional.
         latency_col (str): Duration column.
 
@@ -372,7 +374,7 @@ async def analyze_latency_grouped(
     """
     target_table = view_id or LLM_EVENTS_VIEW_ID
     logger.info(f"[TOOL CALL-analyze_latency_grouped] group_by='{group_by}', time_range='{time_range}', "
-                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
+                f"model_name='{model_name}', exclude_root={exclude_root}, view_id='{target_table}', latency_col='{latency_col}'")
     
     # Updated allowed_groups to include tool_name
     allowed_groups = ["agent_name", "root_agent_name", "model_name", "tool_name"]
@@ -385,24 +387,27 @@ async def analyze_latency_grouped(
             filter_config={"model_name": (model_name, "=")}
         )
         
+        if exclude_root:
+            where_clause += " AND agent_name != root_agent_name"
+        
         query = f"""
         SELECT
           {group_by} as group_key,
           COUNT(*) as total_count,
           COUNTIF(status = 'ERROR') as error_count,
-          COUNTIF(status != 'ERROR') as success_count,
-          ROUND(COUNTIF(status = 'ERROR') / COUNT(*) * 100, 2) as error_rate_pct,
-          AVG(IF(status != 'ERROR', {latency_col}, NULL)) as avg_ms,
-          STDDEV(IF(status != 'ERROR', {latency_col}, NULL)) as std_latency_ms,
-          ROUND((STDDEV(IF(status != 'ERROR', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
-          MIN(IF(status != 'ERROR', {latency_col}, NULL)) as min_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
-          MAX(IF(status != 'ERROR', {latency_col}, NULL)) as max_ms
+          COUNTIF(status != 'ERROR' AND status != 'PENDING') as success_count,
+          ROUND(COUNTIF(status = 'ERROR') / NULLIF(COUNTIF(status != 'PENDING'), 0) * 100, 2) as error_rate_pct,
+          AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as avg_ms,
+          STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as std_latency_ms,
+          ROUND((STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
+          MIN(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as min_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
+          MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms
         FROM
           `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE
@@ -533,16 +538,18 @@ async def analyze_root_cause(
         connection_id = f"{PROJECT_ID}.{DATASET_LOCATION}.{CONNECTION_ID}"
         model_endpoint = "gemini-2.0-flash"
         
+        id_column = "invocation_id" if target_table == INVOCATION_EVENTS_VIEW_ID else "span_id"
+        
         query = f"""
         SELECT
-            span_id,
+            {id_column} AS span_id,
             AI.GENERATE(
                 ('Analyze this request log and explain the root cause of the latency or error. Be concise. Focus ONLY on factors visible in the log (e.g. LLM prompt size, external API delays). NEVER use the words "sequential" or "parallel", as the agent architecture is fixed and already concurrent. Describe only what is in the data. Log: ', TO_JSON_STRING(T)),
                 connection_id => '{connection_id}',
                 endpoint => '{model_endpoint}'
             ).result AS analysis
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE span_id = '{span_id}'
+        WHERE {id_column} = '{span_id}'
         """
         
         df = await execute_bigquery(query)
@@ -663,7 +670,7 @@ async def get_baseline_performance_metrics(
     """
     allowed_groups = {
         "agent_name": "agent_events_view",
-        "root_agent_name": "agent_events_view",
+        "root_agent_name": "invocation_events_view",
         "model_name": LLM_EVENTS_VIEW_ID,
         "tool_name": "tool_events_view"
     }

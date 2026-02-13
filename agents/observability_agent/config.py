@@ -81,3 +81,18 @@ logger = logging.getLogger(__name__)
 # Define DEFAULT_TIME_RANGE
 # _config = _load_config_data()
 DEFAULT_TIME_RANGE = "all" #TODO Convert to session specific period shared so it can be used for caching
+
+# =========================================
+# STATIC KPIs (SLOs)
+# =========================================
+DEFAULT_KPIS = {
+    "llm_mean_latency_target": 2.0,
+    "llm_p95_latency_target": 3.0,
+    "e2e_mean_latency_target": 5.0,
+    "e2e_p95_latency_target": 10.0,
+    "agent_mean_latency_target": 3.0,
+    "agent_p95_latency_target": 5.0,
+    "tool_mean_latency_target": 2.0,
+    "tool_p95_latency_target": 3.0,
+    "per_agent": {}
+}

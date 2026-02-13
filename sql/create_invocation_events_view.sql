@@ -45,15 +45,21 @@ UserMessages AS (
 )
 SELECT
   S.start_timestamp as timestamp,
-  COALESCE(E.root_agent_name, S.root_agent_name) as root_agent_name,
+  COALESCE(E.root_agent_name, S.root_agent_name, S.agent_name) as root_agent_name,
   S.agent_name,
   M.content_text_summary,
   -- Extract text from the first part of the generic content_parts array column
   M.content_parts[SAFE_OFFSET(0)].text as content_text,
 
   TIMESTAMP_DIFF(E.end_timestamp, S.start_timestamp, MILLISECOND) as duration_ms,
-  COALESCE(E.status, 'PENDING') as status,
-  E.error_message,
+  CASE
+    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
+    ELSE COALESCE(E.status, 'PENDING')
+  END as status,
+  CASE
+    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'Invocation PENDING for > 5 minutes (Timed Out)'
+    ELSE E.error_message
+  END as error_message,
 
   M.message_timestamp,
   S.start_timestamp,

@@ -61,10 +61,14 @@ SELECT
     E.tool_result,
 
     E.duration_ms,
-    E.error_message,
+    CASE
+        WHEN E.error_message IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 AND E.status IS NULL THEN 'Tool span PENDING for > 5 minutes (Timed Out)'
+        ELSE E.error_message
+    END as error_message,
       CASE
         WHEN E.event_type = 'TOOL_ERROR' THEN 'ERROR'
         WHEN E.status IS NOT NULL THEN E.status
+        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
         ELSE 'PENDING'
     END as status,
 

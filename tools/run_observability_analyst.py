@@ -1,11 +1,12 @@
+import argparse
 import asyncio
 import datetime
+import json
 import logging
 import os
 import sys
 import time
-import argparse
-import json
+import uuid
 
 from dotenv import load_dotenv
 
@@ -13,7 +14,6 @@ from dotenv import load_dotenv
 dir_path = os.path.dirname(__file__)
 sys.path.append(os.path.join(dir_path, ".."))
 
-from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.plugins import LoggingPlugin
@@ -23,8 +23,7 @@ from agents.observability_agent.config import (
     PROJECT_ID, 
     DATASET_ID, 
     AGENT_EVENTS_TABLE_ID,
-    MODEL_ID,
-    AGENT_NAME
+    DEFAULT_KPIS
 )
 # Import the newly refactored root agent and config setter
 from agents.observability_agent.agent import root_agent, set_playbook_config
@@ -88,7 +87,8 @@ def load_analyst_config() -> dict:
     # 4. Default Fallback
     logger.warning("No config found, using defaults.")
     return {
-        "time_period": "7d"
+        "time_period": "7d",
+        "kpis": DEFAULT_KPIS
     }
 
 
@@ -97,15 +97,29 @@ async def main():
     
     # Load dynamic config
     config = load_analyst_config()
+    # Support wrapper objects (e.g. nested under "config" block or top-level)
+    if "config" in config:
+        config = config["config"]
+
     time_period = config.get("time_period", "all")
     baseline_period = config.get("baseline_period", "7d")
     bucket_size = config.get("bucket_size", "1d")
+    
+    # Load KPIs and merge with defaults
+    custom_kpis = config.get("kpis", {})
+    kpis = DEFAULT_KPIS.copy()
+    if isinstance(custom_kpis, dict):
+        # Deep merge for per_agent
+        if "per_agent" in custom_kpis and "per_agent" in kpis:
+            kpis["per_agent"].update(custom_kpis.pop("per_agent"))
+        kpis.update(custom_kpis)
 
     # Hydrate Prompt for the subagent
     set_playbook_config(
         time_period=time_period,
         baseline_period=baseline_period,
-        bucket_size=bucket_size
+        bucket_size=bucket_size,
+        kpis=kpis
     )
     
     print("🚀 Starting Autonomous Health Check...")
@@ -116,14 +130,19 @@ async def main():
         print("   (Reasoning in progress...)\n")
         response_text = ""
         
+        session_id = f"session_{uuid.uuid4().hex[:8]}"
+        user_id = f"user_{uuid.uuid4().hex[:8]}"
+        
         session_service = InMemorySessionService()
         
         # Explicitly create the session first with app_name
-        await session_service.create_session(
-            user_id="test_user", 
-            session_id="test_session_001", 
+        session = await session_service.create_session(
+            user_id=user_id, 
+            session_id=session_id, 
             app_name="observability_analyst_app"
         )
+        # Pre-populate state to prevent KeyError if playbook_agent aborts/fails before setting output_key
+        session.state["playbook_findings"] = "Error: The playbook investigator agent aborted or failed before it could produce findings."
 
         bq_config = BigQueryLoggerConfig(
             enabled=True,
@@ -174,8 +193,8 @@ async def main():
         
         # Runner.run_async requires user_id and session_id
         async for event in runner.run_async(
-            user_id="test_user", 
-            session_id="test_session_001", 
+            user_id=user_id, 
+            session_id=session_id, 
             new_message=user_msg
         ):
             if event.content:
@@ -200,8 +219,8 @@ async def main():
         print(f"\n\n✅ **Analysis Complete** (Execution Time: {execution_time:.2f} seconds)")
         
         # Retrieve final explicitly formatted report from state
-        session = await session_service.get_session(user_id="test_user",
-                                                    session_id="test_session_001",
+        session = await session_service.get_session(user_id=user_id,
+                                                    session_id=session_id,
                                                     app_name="observability_analyst_app")
         final_report = session.state.get("final_report", response_text)
 

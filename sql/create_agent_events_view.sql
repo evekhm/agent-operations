@@ -46,8 +46,14 @@ SELECT
     S.instruction,
 
     E.duration_ms,
-    COALESCE(E.status, 'PENDING') as status,
-    E.error_message,
+    CASE
+      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
+      ELSE COALESCE(E.status, 'PENDING')
+    END as status,
+    CASE
+      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'Agent span PENDING for > 5 minutes (Timed Out)'
+      ELSE E.error_message
+    END as error_message,
 
     S.span_id,
     S.trace_id,

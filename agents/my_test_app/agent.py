@@ -31,11 +31,12 @@ load_dotenv()
 
 # --- Configuration ---
 PROJECT_ID = os.environ.get("PROJECT_ID", project_id)
-DATASET_ID = os.environ.get("DATASET_ID", "logging")
 
 LOCATION = os.environ.get("GCP_LOCATION", "us-central1") # required for gemini-3 preview
 MODEL_ID = os.environ.get("MODEL_ID", "gemini-2.5-pro")
-AGENT_EVENTS_TABLE_ID = os.environ.get("TABLE_ID", "agent_events_v4")
+
+AGENT_EVENTS_TABLE_ID = os.environ.get("TABLE_ID")
+DATASET_ID = os.environ.get("DATASET_ID")
 
 # TODO Describe/Automate a manual step to create Vertex ai search corpus
 SEARCH_APP_REGION = os.getenv("SEARCH_APP_REGION", "global")
