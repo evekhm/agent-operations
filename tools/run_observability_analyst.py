@@ -16,9 +16,9 @@ sys.path.append(os.path.join(dir_path, ".."))
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from google.genai import types # Import types for Content
-from agents.observability_agent.prompts import OBSERVABILITY_ANALYST_PROMPT_TEMPLATE
 from agents.observability_agent.config import (
     PROJECT_ID, 
     DATASET_ID, 
@@ -26,21 +26,8 @@ from agents.observability_agent.config import (
     MODEL_ID,
     AGENT_NAME
 )
-from agents.observability_agent.agent_tools.analytics.latency import (
-    get_active_metadata,
-    analyze_latency_grouped,
-    get_slowest_queries,
-    get_fastest_queries,
-    get_failed_queries,
-    get_baseline_performance_metrics,
-    get_latest_queries,
-    analyze_root_cause,
-    analyze_latency_trend
-)
-from agents.observability_agent.agent_tools.analytics.concurrency import (
-    analyze_trace_concurrency,
-    detect_sequential_bottlenecks
-)
+# Import the newly refactored root agent and config setter
+from agents.observability_agent.agent import root_agent, set_playbook_config
 
 # Load Environment
 load_dotenv(os.path.join(dir_path, "../.env"), override=True)
@@ -113,32 +100,12 @@ async def main():
     time_period = config.get("time_period", "all")
     baseline_period = config.get("baseline_period", "7d")
     bucket_size = config.get("bucket_size", "1d")
-    
-    # Hydrate Prompt
-    hydrated_prompt = OBSERVABILITY_ANALYST_PROMPT_TEMPLATE.format(
+
+    # Hydrate Prompt for the subagent
+    set_playbook_config(
         time_period=time_period,
         baseline_period=baseline_period,
         bucket_size=bucket_size
-    )
-    
-    # Define the Agent
-    analyst_agent = Agent(
-        name=AGENT_NAME,
-        model=MODEL_ID,
-        instruction=hydrated_prompt,
-        tools=[
-            get_active_metadata,
-            analyze_latency_grouped,
-            get_slowest_queries,
-            get_failed_queries,
-            get_fastest_queries,
-            get_baseline_performance_metrics,
-            get_latest_queries,
-            analyze_root_cause,
-            analyze_trace_concurrency,
-            analyze_latency_trend,
-            detect_sequential_bottlenecks
-        ]
     )
     
     print("🚀 Starting Autonomous Health Check...")
@@ -176,10 +143,10 @@ async def main():
         )
         
         runner = Runner(
-            agent=analyst_agent, 
+            agent=root_agent, 
             session_service=session_service, 
             app_name="observability_analyst_app",
-            plugins=[bq_logging_plugin]
+            plugins=[LoggingPlugin(), bq_logging_plugin]
         )
         
         # Inject explicit routing if requested
