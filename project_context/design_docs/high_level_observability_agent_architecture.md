@@ -170,6 +170,12 @@ When investigating system performance, the agent conceptualizes its actions at a
 
 ### Tool Design Principles
 
+| Category | View | Example `group_by` |
+|---|---|---|
+| Overall agent performance (Orchestration) | `agent_events_view` | `group_by="agent_name"` |
+| Agent performance (Model-Specific/Attribution) | `llm_events_view` | `group_by="agent_name, model_name"` |
+| Model comparison | `llm_events_view` | `group_by="model_name"` |
+| Tool reliability | `tool_events_view` | `group_by="tool_name"` |
 1. **Semantic Abstraction**: Tools accept high-level parameters like `group_by="agent_name"`, `root_agent_name`, or `model_name` rather than requiring raw SQL knowledge
 2. **View-Aware**: Each tool knows which view to query based on the analysis context (agent vs. LLM vs. tool level)
 3. **Optimized Execution**: Tools use pre-computed aggregations, avoiding full table scans where possible
@@ -586,7 +592,6 @@ FROM agent_sessions
 SELECT
   session_id,
   user_id,
-  COUNT(*) as interaction_count,
   SUM(LENGTH(content)) / 4 AS estimated_tokens,  -- Approx: 4 chars/token
   ROUND((SUM(LENGTH(content)) / 4) / 1000 * 0.0001, 6) AS estimated_cost_usd
 FROM agent_events_v2

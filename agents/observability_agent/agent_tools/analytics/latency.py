@@ -378,8 +378,12 @@ async def analyze_latency_grouped(
     
     # Updated allowed_groups to include tool_name
     allowed_groups = ["agent_name", "root_agent_name", "model_name", "tool_name"]
-    if group_by not in allowed_groups:
-        return json.dumps({"error": f"Invalid group_by: {group_by}. Must be one of {allowed_groups}"})
+    
+    # Handle multi-column grouping
+    group_columns = [g.strip() for g in group_by.split(",")]
+    for col in group_columns:
+        if col not in allowed_groups:
+             return json.dumps({"error": f"Invalid group_by column: {col}. Must be one of {allowed_groups}"})
 
     try:
         where_clause = build_standard_where_clause(
@@ -390,9 +394,13 @@ async def analyze_latency_grouped(
         if exclude_root:
             where_clause += " AND agent_name != root_agent_name"
         
+        # Build SELECT and GROUP BY clauses dynamically
+        select_group_cols = ", ".join(group_columns)
+        group_by_clause = ", ".join([str(i+1) for i in range(len(group_columns))])
+
         query = f"""
         SELECT
-          {group_by} as group_key,
+          {select_group_cols},
           COUNT(*) as total_count,
           COUNTIF(status = 'ERROR') as error_count,
           COUNTIF(status != 'ERROR' AND status != 'PENDING') as success_count,
@@ -412,7 +420,7 @@ async def analyze_latency_grouped(
           `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE
           {where_clause}
-        GROUP BY group_key
+        GROUP BY {group_by_clause}
         ORDER BY avg_ms DESC
         """
         
@@ -426,8 +434,7 @@ async def analyze_latency_grouped(
             
         records = []
         for _, row in df.iterrows():
-            records.append({
-                group_by: row['group_key'],
+            record = {
                 "total_count": int(row['total_count']),
                 "success_count": int(row['success_count']),
                 "error_count": int(row['error_count']),
@@ -443,7 +450,11 @@ async def analyze_latency_grouped(
                 "p99_ms": float(row['p99_ms']) if pd.notna(row['p99_ms']) else None,
                 "p999_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
                 "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None
-            })
+            }
+            # Add grouping columns to the record
+            for col in group_columns:
+                record[col] = row[col]
+            records.append(record)
             
         result = {
             "metadata": {"time_range": time_range, "view_id": target_table, "group_by": group_by},

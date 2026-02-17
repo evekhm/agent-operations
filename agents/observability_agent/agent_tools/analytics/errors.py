@@ -5,7 +5,7 @@ from google.cloud import bigquery
 from ...utils.common import AnalysisEncoder
 from ...utils.bq import execute_bigquery
 from ...utils.time import parse_time_range
-from ...config import PROJECT_ID, DATASET_ID, LOGS_VIEW_ID, get_table_list
+from ...config import PROJECT_ID, DATASET_ID
 from ...utils.telemetry import trace_span
 from ...utils.caching import cached_tool
 
