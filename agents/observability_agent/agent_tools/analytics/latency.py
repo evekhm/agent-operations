@@ -415,7 +415,20 @@ async def analyze_latency_grouped(
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
-          MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms
+          MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms"""
+        
+        # Conditionally add token metrics if querying LLM events
+        if str(target_table) == str(LLM_EVENTS_VIEW_ID):
+             query += """,
+          AVG(prompt_token_count) as avg_input_tokens,
+          APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
+          AVG(candidates_token_count) as avg_output_tokens,
+          APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
+          AVG(thoughts_token_count) as avg_thought_tokens,
+          APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens
+             """
+             
+        query += f"""
         FROM
           `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE
@@ -451,6 +464,17 @@ async def analyze_latency_grouped(
                 "p999_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
                 "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None
             }
+            
+            # Add token metrics if available
+            if str(target_table) == str(LLM_EVENTS_VIEW_ID):
+                 record.update({
+                     "avg_input_tokens": float(row['avg_input_tokens']) if pd.notna(row['avg_input_tokens']) else 0.0,
+                     "p95_input_tokens": float(row['p95_input_tokens']) if pd.notna(row['p95_input_tokens']) else 0.0,
+                     "avg_output_tokens": float(row['avg_output_tokens']) if pd.notna(row['avg_output_tokens']) else 0.0,
+                     "p95_output_tokens": float(row['p95_output_tokens']) if pd.notna(row['p95_output_tokens']) else 0.0,
+                     "avg_thought_tokens": float(row['avg_thought_tokens']) if pd.notna(row['avg_thought_tokens']) else 0.0,
+                     "p95_thought_tokens": float(row['p95_thought_tokens']) if pd.notna(row['p95_thought_tokens']) else 0.0,
+                 })
             # Add grouping columns to the record
             for col in group_columns:
                 record[col] = row[col]
