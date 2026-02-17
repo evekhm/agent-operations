@@ -83,11 +83,14 @@ def _format_kpis_for_prompt(kpis: dict) -> str:
             lines.append(f"- {k}: {v}s")
     return "\n".join(lines)
 
-def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None):
+def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None, num_slowest_queries: int = 20, config: dict = None):
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
     if kpis is None:
         from .config import DEFAULT_KPIS
         kpis = DEFAULT_KPIS
+    
+    if config is None:
+        config = {}
         
     kpis_string = _format_kpis_for_prompt(kpis)
 
@@ -95,13 +98,19 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         time_period=time_period,
         baseline_period=baseline_period,
         bucket_size=bucket_size,
-        kpis_string=kpis_string
+        kpis_string=kpis_string,
+        num_slowest_queries=num_slowest_queries
     )
     playbook_agent.instruction = hydrated_investigator_prompt
 
+    # Format config for display
+    import json
+    config_str = json.dumps(config, indent=2, default=str)
+
     hydrated_report_prompt = REPORT_CREATOR_PROMPT.format(
         playbook_findings="{playbook_findings}",
-        kpis_string=kpis_string
+        kpis_string=kpis_string,
+        config_dump=config_str
     )
     report_creator_agent.instruction = hydrated_report_prompt
 

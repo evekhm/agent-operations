@@ -39,15 +39,40 @@ logger = logging.getLogger(__name__)
 def load_analyst_config() -> dict:
     """
     Loads configuration for the Observability Analyst.
-    Priority:
-    1. CLI Arguments
-    2. Env var: LATENCY_ANALYSIS_CONFIG_FILE
-    3. Local file: agents/observability_agent/config.json
-    4. Default: hardcoded fallback
-    """
-    config_dict = {}
+    Priority (Lowest to Highest):
+    1. Default: hardcoded fallback
+    2. Local file: agents/observability_agent/config.json
+    # 2. Try Local config.json (relative to this file -> ../agents/observability_agent/config.json)
+    # This is the canonical config location for the agent.
+    agent_config_path = os.path.join(os.path.dirname(__file__), "../agents/observability_agent/config.json")
+    if os.path.exists(agent_config_path):
+        try:
+            with open(agent_config_path, 'r') as f:
+                logger.info(f"Loaded analyst config from {agent_config_path}")
+                loaded = json.load(f)
+                config.update(loaded)
+        except Exception as e:
+            logger.error(f"Failed to load config from {agent_config_path}: {e}")
 
-    # 1. CLI Arguments
+    # 3. Try Env Var: LATENCY_ANALYSIS_CONFIG_FILE
+    4. CLI Arguments
+    """
+    config = {
+        "time_period": "7d",
+        "kpis": DEFAULT_KPIS
+    }
+
+    env_path = os.getenv("LATENCY_ANALYSIS_CONFIG_FILE")
+    if env_path and os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                logger.info(f"Loaded analyst config from {env_path}")
+                loaded = json.load(f)
+                config.update(loaded)
+        except Exception as e:
+            logger.error(f"Failed to load config from {env_path}: {e}")
+
+    # 4. CLI Arguments
     parser = argparse.ArgumentParser(description="Observability Analyst CLI")
     parser.add_argument("--time_period", type=str, help="Time range for Current Reality")
     parser.add_argument("--baseline_period", type=str, help="Time range for Historical Baseline")
@@ -56,40 +81,13 @@ def load_analyst_config() -> dict:
     
     # Parse known args so it doesn't crash if imported elsewhere
     args, _ = parser.parse_known_args(sys.argv[1:])
-    if args.time_period: config_dict["time_period"] = args.time_period
-    if args.baseline_period: config_dict["baseline_period"] = args.baseline_period
-    if args.bucket_size: config_dict["bucket_size"] = args.bucket_size
-    if args.playbook: config_dict["playbook"] = args.playbook
+    
+    if args.time_period: config["time_period"] = args.time_period
+    if args.baseline_period: config["baseline_period"] = args.baseline_period
+    if args.bucket_size: config["bucket_size"] = args.bucket_size
+    if args.playbook: config["playbook"] = args.playbook
 
-    if config_dict:
-        return config_dict
-
-    # 2. Try Env Var
-    env_path = os.getenv("LATENCY_ANALYSIS_CONFIG_FILE")
-    if env_path and os.path.exists(env_path):
-        try:
-            with open(env_path, 'r') as f:
-                logger.info(f"Loaded analyst config from {env_path}")
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load config from {env_path}: {e}")
-
-    # 3. Try Local config.json (relative to this file)
-    local_path = os.path.join(os.path.dirname(__file__), "config.json")
-    if os.path.exists(local_path):
-        try:
-            with open(local_path, 'r') as f:
-                logger.info(f"Loaded analyst config from {local_path}")
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load config from {local_path}: {e}")
-
-    # 4. Default Fallback
-    logger.warning("No config found, using defaults.")
-    return {
-        "time_period": "7d",
-        "kpis": DEFAULT_KPIS
-    }
+    return config
 
 
 async def main():
@@ -100,6 +98,9 @@ async def main():
     # Support wrapper objects (e.g. nested under "config" block or top-level)
     if "config" in config:
         config = config["config"]
+
+    # LOG THE FINAL CONFIG
+    print(f"🔧 Loaded Analyst Config: {json.dumps(config, indent=2, default=str)}")
 
     time_period = config.get("time_period", "all")
     baseline_period = config.get("baseline_period", "7d")
@@ -119,7 +120,9 @@ async def main():
         time_period=time_period,
         baseline_period=baseline_period,
         bucket_size=bucket_size,
-        kpis=kpis
+        kpis=kpis,
+        num_slowest_queries=config.get("num_slowest_queries", 20),
+        config=config
     )
     
     print("🚀 Starting Autonomous Health Check...")
