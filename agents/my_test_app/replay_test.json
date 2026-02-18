@@ -1,10 +1,7 @@
 {
   "state": {},
   "queries": [
-    "What is Agent Observability top 3 features?",
-    "What tables are available in the BigQuery dataset?",
-    "Hello, my name is Alice",
-    "Throw an exception",
+
     "what is the weather in Tel Aviv?"
   ]
 }

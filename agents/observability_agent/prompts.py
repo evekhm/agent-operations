@@ -99,7 +99,10 @@ You are configured to analyze specific timeframes based on your inputs:
     *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
 3.  **INVESTIGATE (Deep Dive)**:
     *   If any component has high error rates, call `get_failed_queries`.
-    *   For the slowest components, call `get_slowest_queries` and run `analyze_root_cause`.
+    *   **3a. SLOWEST INVOCATIONS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="invocation_events_view")`.
+    *   **3b. SLOWEST AGENTS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="agent_events_view")`.
+    *   **3c. SLOWEST LLMs**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="llm_events_view")`.
+    *   **3d. SLOWEST TOOLS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="tool_events_view")`.
     
 ---
 ### PLAYBOOK: health (Standard Health Check)
@@ -219,7 +222,7 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     
 
 
-*   Structure the report cleanly by Level: **Executive Summary**, **KPI Compliance**, **End to end performance**, **Sub Agent Performance**, **Model Performance**, **Tool Performance**, and **Deep Dive / Root Cause Insights**.
+*   Structure the report cleanly by Level: **Executive Summary**, **KPI Compliance**, **End to end performance**, **Sub Agent Performance**, **Model Performance**, **Tool Performance**, **Deep Dive / Root Cause Insights**, **Top System Bottlenecks**, and **Top LLM Bottlenecks & Impact**.
 *   **KPI COMPLIANCE SUMMARY (MANDATORY)**:
     *   **Immediately** after the Executive Summary, you MUST create a section called `### KPI Compliance`.
     *   Create 4 summary tables: **Overall KPI Status** (Root Agents), **KPI Compliance Per Agent** (Sub-Agents), **KPI Compliance Per Model**, and **KPI Compliance Per Tool**.
@@ -245,6 +248,60 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     *   **For "Tool Performance"**:
         *   Use this column format: `| Name | Total Count | Success Count | Error Rate | Min (s) | Mean (s) | P50 (s) | P75 (s) | P95 (s) | P99 (s) | P99.9 (s) | Max (s) | StdDev (s) | CV % | Target P95 (s) | % Delta |`
         *   (Do NOT include a 'Model' column for tools).
+    *   **For "Top System Bottlenecks"**:
+            *   Create a section `### Top System Bottlenecks` after `Deep Dive`.
+            *   To populate this table, you MUST run a **UNION ALL** SQL query via `run_sql_query` to fetch the top 15 slowest spans of ANY type.
+            *   **Query Logic**:
+                ```sql
+                SELECT * FROM (
+                    SELECT 'Invocation' as type, invocation_id as span_id, trace_id, duration_ms, agent_name as name, SUBSTR(content_text, 1, 100) as details FROM invocation_events_view
+                    UNION ALL
+                    SELECT 'Agent' as type, span_id, trace_id, duration_ms, agent_name as name, SUBSTR(instruction, 1, 100) as details FROM agent_events_view
+                    UNION ALL
+                    SELECT 'LLM' as type, span_id, trace_id, duration_ms, model_name as name, SUBSTR(TO_JSON_STRING(full_request), 1, 100) as details FROM llm_events_view
+                    UNION ALL
+                    SELECT 'Tool' as type, span_id, trace_id, duration_ms, tool_name as name, SUBSTR(TO_JSON_STRING(tool_args), 1, 100) as details FROM tool_events_view
+                )
+                ORDER BY duration_ms DESC
+                LIMIT 15
+                ```
+            *   **Table Structure**: `| Rank | Type | Latency (s) | Name | Details (Trunk) | Trace ID | Span ID |`
+            *   **Populate Logic**:
+                 *   `Type`, `Name`, `Details (Trunk)`: Directly from query results.
+                 *   `Latency (s)`: From `duration_ms` / 1000.
+                 *   `Trace ID`, `Span ID`: Wrapped in backticks.
+    
+    *   **For "Top LLM Bottlenecks & Impact"**:
+            *   Create a section `### Top LLM Bottlenecks & Impact` after `Top System Bottlenecks`.
+            *   To populate this table, you MUST run a **JOIN** SQL query via `run_sql_query` to fetch the top 15 slowest LLM calls and their parent context.
+            *   **Query Logic**:
+                ```sql
+                SELECT
+                    L.duration_ms as llm_duration,
+                    L.model_name,
+                    COALESCE(L.status, 'UNKNOWN') as llm_status,
+                    A.agent_name,
+                    A.duration_ms as agent_duration,
+                    COALESCE(A.status, 'UNKNOWN') as agent_status,
+                    I.root_agent_name,
+                    I.duration_ms as root_duration,
+                    COALESCE(I.status, 'UNKNOWN') as root_status,
+                    L.trace_id,
+                    L.span_id,
+                    SUBSTR(TO_JSON_STRING(L.full_request), 1, 50) as request_snippet
+                FROM llm_events_view L
+                LEFT JOIN agent_events_view A ON L.parent_span_id = A.span_id
+                LEFT JOIN invocation_events_view I ON L.session_id = I.session_id
+                ORDER BY L.duration_ms DESC
+                LIMIT 15
+                ```
+            *   **Table Structure**: `| Rank | LLM Latency (s) | Model | Status | Agent | Agent Latency (s) | Status | Root Agent | E2E Latency (s) | Status | Trace ID |`
+            *   **Populate Logic**:
+                 *   `LLM Latency (s)`: `llm_duration` / 1000.
+                 *   `Agent Latency (s)`: `agent_duration` / 1000.
+                 *   `E2E Latency (s)`: `root_duration` / 1000.
+                 *   `Trace ID`: Wrapped in backticks.
+                 *   `Status`: Map 'OK'/'SUCCESS' -> 🟢, 'ERROR' -> 🔴, 'PENDING' -> ⏳, 'UNKNOWN' -> ❓.
 *   You must populate the core columns using the exact matching JSON keys from the provided data (`model_name`, `total_count`, `success_count`, `error_rate_pct`, `min_ms`, `avg_ms`, `p50_ms`, `p75_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `p999_ms`, `max_ms`, `std_latency_ms`, `cv_pct`). You MUST CONVERT all millisecond values to seconds by dividing by 1000 before rendering the table.
 *   **TOKEN METRICS**: Populate `Avg/P95 ... Tokens` columns using `avg_input_tokens`, `p95_input_tokens`, `avg_output_tokens`, `p95_output_tokens`, `avg_thought_tokens`, `p95_thought_tokens` from the JSON data. Round to nearest integer.
 *   You MUST calculate and populate the `% Delta` column to show the exact percentage variation between the actual `P95 (s)` and the `Target P95 (s)` (e.g., '+55%', '-12%').

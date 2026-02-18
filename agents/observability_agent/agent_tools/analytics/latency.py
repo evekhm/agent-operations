@@ -309,8 +309,19 @@ async def get_slowest_queries(
             filter_config=filter_config
         )
 
+        # Select key columns + token metrics
         query = f"""
-        SELECT *
+        SELECT 
+            span_id,
+            trace_id,
+            parent_span_id,
+            {latency_col},
+            agent_name,
+            root_agent_name,
+            model_name,
+            prompt_token_count,
+            candidates_token_count,
+            total_token_count
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE {where_clause}
         ORDER BY {latency_col} DESC

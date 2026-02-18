@@ -20,6 +20,7 @@ from .agent_tools.analytics.latency import (
     analyze_root_cause,
     analyze_latency_trend
 )
+from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID
 from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
 
@@ -38,7 +39,8 @@ analyst_tools = [
     analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
-    detect_sequential_bottlenecks
+    detect_sequential_bottlenecks,
+    run_sql_query
 ]
 
 # Create the deep-dive Playbook Investigator Agent

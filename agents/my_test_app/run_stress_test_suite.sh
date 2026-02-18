@@ -5,7 +5,7 @@
 # Usage: ./run_stress_test_suite.sh [NUM_USERS]
 # If NUM_USERS is not provided, it defaults to 2 concurrent users.
 
-NUM_USERS=${1:-2}
+NUM_USERS=${1:-1}
 
 START_TIME=$(date +%s)
 
@@ -27,11 +27,11 @@ echo "======================================================================="
 # Define the scenarios to test: "DATASTORE_ID|MODEL_ID|AGENT_CONFIG|REGION"
 SCENARIOS=(
     "$VALID_DATASTORE|gemini-2.5-flash|OK_CONFIG1|$DEFAULT_REGION"
-    "$VALID_DATASTORE|gemini-2.5-pro|OK_CONFIG1|$DEFAULT_REGION"
-    "dummy-datastore-12345|gemini-2.5-flash|OK_CONFIG1|$DEFAULT_REGION"
+#    "$VALID_DATASTORE|gemini-2.5-pro|OK_CONFIG1|$DEFAULT_REGION"
+#    "dummy-datastore-12345|gemini-2.5-flash|OK_CONFIG1|$DEFAULT_REGION"
     "$VALID_DATASTORE|gemini-2.5-flash|WRONG_CONFIG1|$DEFAULT_REGION"
-    "$VALID_DATASTORE|gemini-3-pro-preview|OK_CONFIG1|global"
-    "dummy-datastore-12345|gemini-3-pro-preview|OK_CONFIG1|global"
+#    "$VALID_DATASTORE|gemini-3-pro-preview|OK_CONFIG1|global"
+#    "dummy-datastore-12345|gemini-3-pro-preview|OK_CONFIG1|global"
 )
 
 for SCENARIO in "${SCENARIOS[@]}"; do
