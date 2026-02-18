@@ -11,11 +11,12 @@ This module contains tools for analyzing:
 """
 import json
 import logging
+import asyncio
 from typing import Optional
 
 import pandas as pd
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID
+from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -309,19 +310,45 @@ async def get_slowest_queries(
             filter_config=filter_config
         )
 
-        # Select key columns + token metrics
+        target_table = view_id.strip()
+
+        # Dynamic column selection based on view_id
+        if target_table == LLM_EVENTS_VIEW_ID:
+            select_col_model = "model_name"
+            select_col_tokens = "prompt_token_count, candidates_token_count, total_token_count, thoughts_token_count, time_to_first_token_ms"
+            select_col_extra = ", full_request, full_response, llm_config"
+        elif target_table == TOOL_EVENTS_VIEW_ID:
+            select_col_model = "NULL as model_name"
+            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
+            select_col_extra = ", tool_name, tool_args, tool_result"
+        elif target_table == INVOCATION_EVENTS_VIEW_ID:
+            select_col_model = "NULL as model_name"
+            # Invocations don't have standard token counts or instructions in the same way, but have content
+            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
+            select_col_extra = ", content_text as instruction" # Using content_text as loose equivalent for instruction/input
+        else: # AGENT_EVENTS_VIEW_ID (default fallthrough or explicit)
+            select_col_model = "NULL as model_name"
+            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
+            select_col_extra = ", instruction"
+
+        if target_table == INVOCATION_EVENTS_VIEW_ID:
+             # Invocations have invocation_id, not span_id/parent_span_id
+             # We map invocation_id to span_id for consistency in the SELECT, or use NULL
+             select_ids = "invocation_id as span_id, trace_id, session_id, NULL as parent_span_id"
+        else:
+             select_ids = "span_id, trace_id, session_id, parent_span_id"
+
+        # Select key columns + metrics
         query = f"""
         SELECT 
-            span_id,
-            trace_id,
-            parent_span_id,
+            {select_ids},
             {latency_col},
             agent_name,
             root_agent_name,
-            model_name,
-            prompt_token_count,
-            candidates_token_count,
-            total_token_count
+            {select_col_model},
+            {select_col_tokens},
+            status,
+            timestamp{select_col_extra}
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
         WHERE {where_clause}
         ORDER BY {latency_col} DESC
@@ -334,7 +361,7 @@ async def get_slowest_queries(
         for col in ['tool_args', 'response_content', 'prompt_content']:
             if col in df.columns:
                 df[col] = df[col].astype(str).apply(
-                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use analyze_root_cause(span_id='...') to analyze full content instead of fetching it here.]"
+                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
                 )
 
         
@@ -618,6 +645,58 @@ async def analyze_root_cause(
 
 
 @cached_tool()
+async def batch_analyze_root_cause(
+    span_ids: str,
+    view_ids: str = None
+) -> str:
+    """
+    Perform AI-powered root cause analysis on multiple requests (spans) in PARALLEL.
+    Use this when you have multiple spans to analyze (e.g., top 3 slowest queries) to save time.
+    
+    Args:
+        span_ids (str): Comma-separated list of span_ids to analyze.
+        view_ids (str): Comma-separated list of view IDs corresponding to each span, OR a single view ID to apply to all.
+                        If provided as a list, it must match the order of span_ids.
+
+    Returns:
+        str: JSON string containing a list of analysis results.
+    """
+    logger.info(f"[TOOL CALL-batch_analyze_root_cause] span_ids='{span_ids}', view_ids='{view_ids}'")
+    
+    try:
+        id_list = [s.strip() for s in span_ids.split(",") if s.strip()]
+        
+        # Handle view_ids
+        if not view_ids:
+            view_list = [None] * len(id_list)
+        else:
+            v_list = [v.strip() for v in view_ids.split(",") if v.strip()]
+            if len(v_list) == 1:
+                view_list = [v_list[0]] * len(id_list)
+            elif len(v_list) == len(id_list):
+                view_list = v_list
+            else:
+                return json.dumps({"error": "Mismatch between count of span_ids and view_ids provided."})
+
+        # Create concurrent tasks
+        tasks = []
+        for span_id, view_id in zip(id_list, view_list):
+            tasks.append(analyze_root_cause(span_id=span_id, view_id=view_id))
+            
+        # Run in parallel
+        results_json = await asyncio.gather(*tasks)
+        
+        # Parse JSONs back to dicts to return a composite JSON list
+        results = [json.loads(r) for r in results_json]
+        
+        return json.dumps({"batch_analysis": results}, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in batch_analyze_root_cause: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+@cached_tool()
 async def get_fastest_queries(
     time_range: str = "7d",
     limit: int = 10,
@@ -715,10 +794,10 @@ async def get_baseline_performance_metrics(
         str: JSON string containing baseline metrics (mean, p95) for the best performing percentage of queries.
     """
     allowed_groups = {
-        "agent_name": "agent_events_view",
-        "root_agent_name": "invocation_events_view",
+        "agent_name": AGENT_EVENTS_VIEW_ID,
+        "root_agent_name": INVOCATION_EVENTS_VIEW_ID,
         "model_name": LLM_EVENTS_VIEW_ID,
-        "tool_name": "tool_events_view"
+        "tool_name": TOOL_EVENTS_VIEW_ID
     }
 
     if group_by not in allowed_groups:
@@ -1005,4 +1084,124 @@ async def analyze_latency_trend(
         return json.dumps({"trend_analysis": trend_results}, cls=AnalysisEncoder)
     except Exception as e:
         logger.error(f"Error in analyze_latency_trend: {e}")
+        return json.dumps({"error": str(e)})
+
+@cached_tool()
+async def get_llm_impact_analysis(
+    time_range: str = "7d",
+    limit: int = 15,
+    agent_name: Optional[str] = None,
+    root_agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    view_id: Optional[str] = None
+) -> str:
+    """
+    Analyze the impact of LLM calls on End-to-End latency.
+    
+    Joins LLM events with their parent Agent and Root Invocation to calculate:
+    - % Impact (LLM Duration / Total Duration)
+    - Token usage (Input/Output/Thought)
+    - User Message context
+    
+    Args:
+        time_range (str): Time range to analyze.
+        limit (int): Number of top bottlenecks to return.
+        agent_name (str): Filter by Agent.
+        root_agent_name (str): Filter by Root Agent.
+        model_name (str): Filter by Model.
+        view_id (str): Optional view override (defaults to LLM view).
+
+    Returns:
+        str: JSON string containing the impact analysis.
+    """
+    target_table = view_id or LLM_EVENTS_VIEW_ID
+    logger.info(f"[TOOL CALL-get_llm_impact_analysis] time_range='{time_range}', limit={limit}")
+
+    try:
+        # Build filter for the PRIMARY table (LLM_EVENTS_VIEW as 'L')
+        # We filter 'L' directly for efficiency.
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config={
+                "agent_name": (agent_name, "="),
+                "root_agent_name": (root_agent_name, "="), 
+                "model_name": (model_name, "=")
+            },
+            table_alias="L"
+        )
+        
+        query = f"""
+        SELECT
+            L.duration_ms as llm_duration,
+            L.time_to_first_token_ms,
+            L.model_name,
+            COALESCE(L.status, 'UNKNOWN') as llm_status,
+            L.prompt_token_count as input_tokens,
+            L.candidates_token_count as output_tokens,
+            L.thoughts_token_count as thought_tokens,
+            L.total_token_count,
+            A.agent_name,
+            A.duration_ms as agent_duration,
+            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            I.root_agent_name,
+            I.duration_ms as root_duration,
+            COALESCE(I.status, 'UNKNOWN') as root_status,
+            ROUND(SAFE_DIVIDE(L.duration_ms, I.duration_ms) * 100, 2) as impact_pct,
+            L.trace_id,
+            L.session_id,
+            L.span_id,
+            L.parent_span_id,
+            L.timestamp,
+            SUBSTR(I.content_text, 1, 100) as user_message_trunk
+        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` L
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON L.parent_span_id = A.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON L.session_id = I.session_id
+        WHERE
+            {where_clause}
+        ORDER BY L.duration_ms DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+             return json.dumps({
+                "message": "No impact data found.",
+                "metadata": {"view_id": target_table}
+            })
+
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                "llm_duration": float(row['llm_duration']),
+                "time_to_first_token_ms": float(row['time_to_first_token_ms']) if pd.notna(row['time_to_first_token_ms']) else None,
+                "model_name": row['model_name'],
+                "llm_status": row['llm_status'],
+                "input_tokens": int(row['input_tokens']) if pd.notna(row['input_tokens']) else 0,
+                "output_tokens": int(row['output_tokens']) if pd.notna(row['output_tokens']) else 0,
+                "thought_tokens": int(row['thought_tokens']) if pd.notna(row['thought_tokens']) else 0,
+                "total_tokens": int(row['total_token_count']) if pd.notna(row['total_token_count']) else 0,
+                "agent_name": row['agent_name'],
+                "agent_duration": float(row['agent_duration']) if pd.notna(row['agent_duration']) else 0.0,
+                "agent_status": row['agent_status'],
+                "root_agent_name": row['root_agent_name'],
+                "root_duration": float(row['root_duration']) if pd.notna(row['root_duration']) else 0.0,
+                "root_status": row['root_status'],
+                "impact_pct": float(row['impact_pct']) if pd.notna(row['impact_pct']) else 0.0,
+                "trace_id": row['trace_id'],
+                "session_id": row['session_id'],
+                "span_id": row['span_id'],
+                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                "user_message_trunk": row['user_message_trunk']
+            })
+
+        result = {
+            "metadata": {"time_range": time_range, "view_id": target_table},
+            "impact_analysis": records
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in get_llm_impact_analysis: {str(e)}")
         return json.dumps({"error": str(e)})

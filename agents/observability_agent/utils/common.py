@@ -44,7 +44,7 @@ def build_standard_where_clause(
     filters = []
     if not DEBUG:
         logger.info(f"[build_standard_where_clause] Excluding Agent : {AGENT_NAME}")
-        filters.append(f"root_agent_name!='{AGENT_NAME}'") # Exclude itself
+        filters.append(f"{table_alias}.root_agent_name!='{AGENT_NAME}'") # Exclude itself
 
     if extra_filters:
         filters.extend(extra_filters)
