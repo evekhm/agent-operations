@@ -129,10 +129,14 @@ def run_single_user_wrapper(args):
 def main():
     parser = argparse.ArgumentParser(description="Run parallel load test for ADK agent.")
     parser.add_argument("users", type=int, nargs="?", default=5, help="Number of concurrent users")
+    parser.add_argument("--replay-file", type=str, default=None, help="Path to replay JSON file")
     args = parser.parse_args()
 
     # Load replay config
-    replay_file = CURRENT_DIR / "replay_test.json"
+    if args.replay_file:
+         replay_file = Path(args.replay_file)
+    else:
+         replay_file = CURRENT_DIR / "replay_test.json"
     if not replay_file.exists():
         print(f"Error: Replay file not found at {replay_file}")
         sys.exit(1)

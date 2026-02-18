@@ -11,7 +11,7 @@ from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 
 import google.auth
-from google.adk.agents import Agent, LlmAgent
+from google.adk.agents import Agent, LlmAgent, ParallelAgent
 from google.adk.tools import google_search
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
@@ -23,17 +23,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Set environment variables
-load_dotenv()
 
 _, project_id = google.auth.default()
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=True)
 
 # --- Configuration ---
 PROJECT_ID = os.environ.get("PROJECT_ID", project_id)
 
-LOCATION = os.environ.get("GCP_LOCATION", "us-central1") # required for gemini-3 preview
-MODEL_ID = os.environ.get("MODEL_ID", "gemini-2.5-pro")
+LOCATION = os.environ.get("LOCATION", "us-central1") # required for gemini-3 preview
+MODEL_ID = os.environ.get("AGENT_MODEL_ID", "gemini-2.5-pro")
 
 AGENT_EVENTS_TABLE_ID = os.environ.get("TABLE_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
@@ -179,6 +178,23 @@ def sleep(seconds: int) -> None:
     logger.info("Finished sleeping")
 
 
+def build_parallel_team(agent_index: int) -> LlmAgent:
+    """Creates a dedicated analysis team for a specific latency dimension."""
+    # 1. Primer Agent
+    primer = LlmAgent(
+        name=f"sleep_sub_agent_{agent_index}",
+        model=MODEL_ID,
+        description="A simple agent that can sleep.",
+        instruction="You are a helpful assistant. If asked to sleep, use the sleep_one_minute tool. If user does not mention units, always assume those are seconds. SLeep 1 means sleep one second.",
+        generate_content_config=types.GenerateContentConfig(
+            temperature=0,
+            labels={"llm.agent.name": f"sleep_sub_agent_{agent_index}"}
+        ),
+
+        tools=[sleep]
+    )
+    return primer
+
 def create_agent() -> Agent:
     """
     Factory function to create the ADK Agent instance.
@@ -236,19 +252,23 @@ def create_agent() -> Agent:
         disallow_transfer_to_peers=True,
     )
 
-    logger.debug(f"create_agent called @ {time.time()}")
+    sleep_team = ParallelAgent(
+        name="sleep_sub_agent",
+        description="Runs multiple agents in parallel to execute sleep action by the user.",
+        sub_agents=[build_parallel_team(ix) for ix in range(1, 4)])
+
     agent = LlmAgent(
-        name="starter_agent",
-        model=MODEL_ID, # Or parameterized
-        description="A helpful starter agent that can greet users.",
+        name="my_test_agent",
+        model=MODEL_ID,
+        description="A helpful agent to generate some user interactions.",
         instruction=(
             "You are a helpful assistant. "
             "Use the hello_tool to greet the user if they provide a name. "
-            "Otherwise, introduce yourself as the Starter Agent and use sub agents to delegate the task."
+            "Otherwise, introduce yourself as the Test Agent and use sub agents to delegate the task."
             "Use sub-agents to delegate tasks that you are not equipped to perform. If user asks to crash, call exception_agent "
         ),
-        sub_agents=[vertexai_search_agent, google_search_agent, bigquery_agent, exception_agent],
-        tools=[hello_tool],
+        sub_agents=[vertexai_search_agent, google_search_agent, bigquery_agent, exception_agent, sleep_team],
+        tools=[hello_tool, sleep],
         generate_content_config=get_agent_config(),
     )
 
