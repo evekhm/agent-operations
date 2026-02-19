@@ -97,6 +97,7 @@ You are configured to analyze specific timeframes based on your inputs:
     *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{time_period}", view_id="llm_events_view", exclude_root=True)`.
     *   **2c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
     *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
+    *   **2e. LLM STATISTICS**: Run `analyze_latency_performance(time_range="{time_period}", view_id="llm_events_view", group_by="model_name")`. You MUST include `group_by="model_name"` to populate the per-model statistics table.
 3.  **INVESTIGATE (Deep Dive)**:
     *   If any component has high error rates, call `get_failed_queries`.
     *   **3a. SLOWEST INVOCATIONS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="invocation_events_view")`.
@@ -188,6 +189,7 @@ You are configured to analyze specific timeframes based on your inputs:
     *   Using the `session_id` you extracted, call `analyze_trace_concurrency(session_id=...)` to mathematically prove if the tools in this specific run were invoked in parallel or sequentially.
     *   Run `batch_analyze_root_cause(span_ids="id1")` on the root span to get an AI summary of what the trace actually accomplished.
 
+
 **Tools Available:**
 - `get_active_metadata`: Discover who is active.
 - `analyze_latency_trend`: **(NEW)** Generates chronological array of latency points grouped by `bucket_size` across the overall `time_range`.
@@ -241,7 +243,7 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     *   **STRICT REQUIREMENT:** You MUST use a **Mermaid Pie Chart**. Do NOT use bar charts or any other type.
     *   **Format:** Follow this EXACT syntax:
     ```mermaid
-    pie title LLM P95 Latency vs. Target (3.5s)
+    pie title LLM P95 Latency vs. Target (5.0s)
         "gemini-2.5-pro (Exceeded)" : 13.125
         "gemini-2.0-flash (Exceeded)" : 9.571
         "gemini-2.5-flash (Exceeded)" : 6.276
@@ -260,6 +262,7 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     *   **Columns:** `| Name | Mean Latency (s) | Target (s) | Status | P95 Latency (s) | Target (s) | Status | Overall |`
     *   **Naming:** For Agents, use `**<agent_name> (<model_name>)**`.
     *   **Status Indicators:** Use 🟢 for PASS (<= Target), 🔴 for FAIL (> Target). Overall is PASS only if BOTH Mean and P95 pass.
+    *   **Headers:** Use `**Bold Text**` for table headers (e.g., `**Overall KPI Status (Root Agents)**`), NOT Markdown headers (`####`).
 
 #### C. End to End Performance
 *   **Explanation:** Add a sentence explaining this shows user-facing latency.
@@ -290,6 +293,55 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 #### E. Model Performance
 *   **Explanation:** Explain this isolates valid LLM inference time from agent overhead.
 *   **Table:** Same detailed column structure (include `Error N`).
+*   **BASIC LLM STATISTICS TABLE (Comparison)**: In the **Model Performance** section, you MUST include a table titled **Basic LLM Statistics** populated from the `analyze_latency_performance` output.
+    *   **Note**: The output is a LIST of objects. You must match `metadata.model_name` to the column.
+    *   **Structure**: This must be a **SIDE-BY-SIDE Comparison** table where **Columns are Models**.
+    *   **Rows**:
+        - Total Requests [Use `performance.count`]
+        - Date Range [Use `metadata.time_range`]
+        - Mean Latency [Use `performance.mean_ms`]
+        - Std Deviation [Use `performance.std_ms`]
+        - Median Latency [Use `performance.median_ms`]
+        - P95 Latency [Use `performance.p95_ms`]
+        - P99 Latency [Use `performance.p99_ms`]
+        - Max Latency [Use `performance.max_ms`]
+        - Outliers 2 STD [Format as "Count (Pct%)" using `performance.outliers.count_2std` and `performance.outliers.pct_2std`]
+        - Outliers 3 STD [Format as "Count (Pct%)" using `performance.outliers.count_3std` and `performance.outliers.pct_3std`]
+
+    *   **TOKEN STATISTICS TABLE (Comparison)**: Immediately after, add a table titled **Token Statistics**:
+    *   **Structure**: Side-by-Side Comparison (Columns = Models).
+    *   **Rows**:
+        - Mean Output Tokens [Use `performance.token_stats.mean_tokens`]
+        - Median Output Tokens [Use `performance.token_stats.median_tokens`]
+        - Min Output Tokens [Use `performance.token_stats.min_tokens`]
+        - Max Output Tokens [Use `performance.token_stats.max_tokens`]
+        - Latency vs Output Corr. [Use `performance.token_stats.corr_latency_output`]
+        - Latency vs Output+Thinking Corr. [Use `performance.token_stats.corr_latency_output_thinking`]
+        - Correlation Strength [Interpret correlation value: >0.7 Strong, >0.4 Moderate, else Weak]
+        
+    *   **PERFORMANCE DISTRIBUTION TABLE (Comparison)**: Finally, add a table titled **Performance Distribution**:
+    *   **Structure**: Side-by-Side Comparison (Columns = Models).
+    *   **Format**: Show "Count (Percentage%)" in each cell. E.g., `12 (15.5%)`.
+    *   **Rows**:
+        - Very Fast (< 1s) [Use `performance.distribution.bucket_under_1s`]
+        - Fast (1-2s) [Use `performance.distribution.bucket_1_2s`]
+        - Medium (2-3s) [Use `performance.distribution.bucket_2_3s`]
+        - Slow (3-5s) [Use `performance.distribution.bucket_3_5s`]
+        - Very Slow (5-8s) [Use `performance.distribution.bucket_5_8s`]
+        - Outliers (8s+) [Use `performance.distribution.bucket_over_8s`]
+    
+    *   **LATENCY DISTRIBUTION BAR CHART (Mermaid)**:
+        *   Immediately after the **Performance Distribution** table, generate a Mermaid `xychart-beta` bar chart for EACH model to visualize the distribution counts.
+        *   **Requirement**: Create ONE chart per model. Do NOT use stacked charts.
+        *   **Syntax**:
+        ```mermaid
+        xychart-beta
+            title "Latency Distribution: <Model Name>"
+            x-axis ["0-1s", "1-2s", "2-3s", "3-5s", "5-8s", "8s+"]
+            y-axis "Count" 0 --> <Max Count rounded up to nearest 10>
+            bar [<bucket_under_1s>, <bucket_1_2s>, <bucket_2_3s>, <bucket_3_5s>, <bucket_5_8s>, <bucket_over_8s>]
+        ```
+        *   *Constraint:* Ensure syntax is correct. If `xychart-beta` is known to be unsupported in your environment, fall back to a simple text summary, but attempting the chart is preferred.
 
 #### F. Tool Performance
 *   **Explanation:** Explain these are external tool calls.

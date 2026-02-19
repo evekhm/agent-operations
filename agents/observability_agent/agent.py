@@ -22,7 +22,8 @@ from .agent_tools.analytics.latency import (
     analyze_latency_trend,
     get_llm_impact_analysis,
     get_tool_impact_analysis,
-    get_error_impact_analysis
+    get_error_impact_analysis,
+    analyze_latency_performance
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID, AGENT_DATASET_ID, \
@@ -49,7 +50,8 @@ analyst_tools = [
     run_sql_query,
     get_llm_impact_analysis,
     get_tool_impact_analysis,
-    get_error_impact_analysis
+    get_error_impact_analysis,
+    analyze_latency_performance
 ]
 
 # Create the deep-dive Playbook Investigator Agent
@@ -123,7 +125,8 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     hydrated_report_prompt = REPORT_CREATOR_PROMPT.format(
         playbook_findings="{playbook_findings}",
         kpis_string=kpis_string,
-        config_dump=config_str
+        config_dump=config_str,
+        time_period=time_period
     )
     report_creator_agent.instruction = hydrated_report_prompt
 

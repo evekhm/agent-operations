@@ -163,34 +163,33 @@ async def analyze_latency_performance(
     root_agent_name: Optional[str] = None,
     model_name: Optional[str] = None,
     view_id: Optional[str] = None,
-    latency_col: str = "duration_ms"
+    latency_col: str = "duration_ms",
+    group_by: Optional[str] = None
 ) -> str:
     """
-    Calculate detailed latency performance metrics.
+    Calculate detailed latency performance metrics, optionally grouped by a column.
     
     Metrics:
-    - Count
-    - Avg (ms)
-    - P50, P90, P95, P99, P99.9 (ms)
-    - Min, Max (ms)
-    - Nan (PENDING state count)
-    - Std Dev, Median, Mean
+    - Count, Avg, Median, P95, P99 (ms)
+    - Min, Max, Outliers (>2std, >3std)
+    - Token Statistics (Mean, Correlation)
+    - Latency Buckets
     
     Args:
         time_range (str): Time range to analyze.
         agent_name (str): Optional system filter.
         root_agent_name (str): Optional system filter.
         model_name (str): Optional model filter.
-        view_id (str): Optional. BigQuery table/view ID to query. Defaults to LLM_EVENTS_VIEW_ID.
-        latency_col (str): Column name for latency/duration (default: "duration_ms").
+        view_id (str): Optional. BigQuery table/view ID to query.
+        latency_col (str): Column name for latency (default: "duration_ms").
+        group_by (str): Optional column to group by (e.g. "model_name").
 
     Returns:
-        str: JSON string containing performance metrics.
+        str: JSON string containing performance metrics (list of dicts if grouped).
     """
     target_table = view_id or LLM_EVENTS_VIEW_ID
     logger.info(f"[TOOL CALL-analyze_latency_performance] time_range='{time_range}', "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
-                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
+                f"group_by='{group_by}', filters=(agent='{agent_name}', root='{root_agent_name}', model='{model_name}')")
 
     try:
         where_clause = build_standard_where_clause(
@@ -202,24 +201,68 @@ async def analyze_latency_performance(
             }
         )
         
+        # Determine grouping
+        group_select = f"{group_by}," if group_by else ""
+        group_clause = f"GROUP BY {group_by}" if group_by else ""
+        
+        # specific for final query which joins two tables with same column
+        group_select_final = f"R.{group_by}," if group_by else ""
+        group_clause_final = f"GROUP BY R.{group_by}" if group_by else ""
+        join_clause = f"ON R.{group_by} = S.{group_by}" if group_by else "ON 1=1"
+        
         query = f"""
+        WITH RawData AS (
+          SELECT
+            {group_select}
+            {latency_col} as latency_ms,
+            candidates_token_count as output_tokens,
+            thoughts_token_count as thinking_tokens,
+            (IFNULL(candidates_token_count, 0) + IFNULL(thoughts_token_count, 0)) as total_output_tokens
+          FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+          WHERE {where_clause}
+        ),
+        Stats AS (
+          SELECT
+            {group_select}
+            AVG(latency_ms) as mean_ms,
+            STDDEV(latency_ms) as std_ms
+          FROM RawData
+          {group_clause}
+        )
         SELECT
+          {group_select_final}
           COUNT(*) as total_count,
-          COUNTIF({latency_col} IS NULL) as pending_count,
-          AVG({latency_col}) as mean_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(50)] as p50_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(50)] as median_ms, -- Same as P50
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(90)] as p90_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(95)] as p95_ms,
-          APPROX_QUANTILES({latency_col}, 100)[OFFSET(99)] as p99_ms,
-          APPROX_QUANTILES({latency_col}, 1000)[OFFSET(999)] as p999_ms,
-          MIN({latency_col}) as min_ms,
-          MAX({latency_col}) as max_ms,
-          STDDEV({latency_col}) as std_ms
+          COUNTIF(R.latency_ms IS NULL) as pending_count,
+          ANY_VALUE(S.mean_ms) as mean_ms,
+          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(50)] as p50_ms,
+          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(50)] as median_ms,
+          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(90)] as p90_ms,
+          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(95)] as p95_ms,
+          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(99)] as p99_ms,
+          APPROX_QUANTILES(R.latency_ms, 1000)[OFFSET(999)] as p999_ms,
+          MIN(R.latency_ms) as min_ms,
+          MAX(R.latency_ms) as max_ms,
+          ANY_VALUE(S.std_ms) as std_ms,
+          COUNTIF(R.latency_ms > (S.mean_ms + 2 * S.std_ms)) as count_2std,
+          COUNTIF(R.latency_ms > (S.mean_ms + 3 * S.std_ms)) as count_3std,
+          -- Token Stats
+          AVG(R.output_tokens) as mean_tokens,
+          APPROX_QUANTILES(R.output_tokens, 100)[OFFSET(50)] as median_tokens,
+          MIN(R.output_tokens) as min_tokens,
+          MAX(R.output_tokens) as max_tokens,
+          CORR(R.latency_ms, R.output_tokens) as corr_latency_output,
+          CORR(R.latency_ms, R.total_output_tokens) as corr_latency_output_thinking,
+          -- Latency Buckets
+          COUNTIF(R.latency_ms < 1000) as bucket_under_1s,
+          COUNTIF(R.latency_ms >= 1000 AND R.latency_ms < 2000) as bucket_1_2s,
+          COUNTIF(R.latency_ms >= 2000 AND R.latency_ms < 3000) as bucket_2_3s,
+          COUNTIF(R.latency_ms >= 3000 AND R.latency_ms < 5000) as bucket_3_5s,
+          COUNTIF(R.latency_ms >= 5000 AND R.latency_ms < 8000) as bucket_5_8s,
+          COUNTIF(R.latency_ms >= 8000) as bucket_over_8s
         FROM
-          `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE
-          {where_clause}
+          RawData R
+        JOIN Stats S {join_clause}
+        {group_clause_final}
         """
 
         df = await execute_bigquery(query)
@@ -230,36 +273,73 @@ async def analyze_latency_performance(
                 "metadata": {"time_range": time_range, "view_id": target_table}
             })
 
-        row = df.iloc[0]
-        
-        result = {
-            "metadata": {
-                "time_range": time_range,
-                "view_id": target_table,
-                "latency_col": latency_col,
-                "agent_name": agent_name,
-                "root_agent_name": root_agent_name,
-                "model_name": model_name
-            },
-            "performance": {
-                "count": int(row['total_count']),
-                "pending_nan": int(row['pending_count']),
-                "avg_ms": float(row['mean_ms']) if pd.notna(row['mean_ms']) else None,
-                "mean_ms": float(row['mean_ms']) if pd.notna(row['mean_ms']) else None,
-                "median_ms": float(row['median_ms']) if pd.notna(row['median_ms']) else None,
-                "p50_ms": float(row['p50_ms']) if pd.notna(row['p50_ms']) else None,
-                "p90_ms": float(row['p90_ms']) if pd.notna(row['p90_ms']) else None,
-                "p95_ms": float(row['p95_ms']) if pd.notna(row['p95_ms']) else None,
-                "p99_ms": float(row['p99_ms']) if pd.notna(row['p99_ms']) else None,
-                "p99_9_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
-                "min_ms": float(row['min_ms']) if pd.notna(row['min_ms']) else None,
-                "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None,
-                "std_ms": float(row['std_ms']) if pd.notna(row['std_ms']) else None
-            }
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
+        results = []
+        for _, row in df.iterrows():
+            total_count = int(row['total_count'])
+            
+            def calc_pct(count):
+                return (count / total_count * 100) if total_count > 0 else 0.0
+                
+            # Helper for safer float conversion
+            def safe_float(val, default=None):
+                return float(val) if pd.notna(val) else default
 
+            result_item = {
+                "metadata": {
+                    "time_range": time_range,
+                    "view_id": target_table,
+                    "latency_col": latency_col,
+                    "agent_name": agent_name,
+                    "root_agent_name": root_agent_name,
+                    "model_name": model_name
+                },
+                "performance": {
+                    "count": total_count,
+                    "pending_nan": int(row['pending_count']),
+                    "avg_ms": safe_float(row['mean_ms']),
+                    "mean_ms": safe_float(row['mean_ms']),
+                    "median_ms": safe_float(row['median_ms']),
+                    "p50_ms": safe_float(row['p50_ms']),
+                    "p90_ms": safe_float(row['p90_ms']),
+                    "p95_ms": safe_float(row['p95_ms']),
+                    "p99_ms": safe_float(row['p99_ms']),
+                    "p99_9_ms": safe_float(row['p999_ms']),
+                    "min_ms": safe_float(row['min_ms']),
+                    "max_ms": safe_float(row['max_ms']),
+                    "std_ms": safe_float(row['std_ms']),
+                    "outliers": {
+                        "count_2std": int(row['count_2std']) if pd.notna(row['count_2std']) else 0,
+                        "pct_2std": float(f"{calc_pct(int(row['count_2std']) if pd.notna(row['count_2std']) else 0):.1f}"),
+                        "count_3std": int(row['count_3std']) if pd.notna(row['count_3std']) else 0,
+                        "pct_3std": float(f"{calc_pct(int(row['count_3std']) if pd.notna(row['count_3std']) else 0):.1f}")
+                    },
+                    "token_stats": {
+                        "mean_tokens": safe_float(row['mean_tokens']),
+                        "median_tokens": safe_float(row['median_tokens']),
+                        "min_tokens": safe_float(row['min_tokens']),
+                        "max_tokens": safe_float(row['max_tokens']),
+                        "corr_latency_output": safe_float(row['corr_latency_output']),
+                        "corr_latency_output_thinking": safe_float(row['corr_latency_output_thinking'])
+                    },
+                    "distribution": {
+                        "bucket_under_1s": {"count": int(row['bucket_under_1s']), "pct": float(f"{calc_pct(row['bucket_under_1s']):.1f}")},
+                        "bucket_1_2s": {"count": int(row['bucket_1_2s']), "pct": float(f"{calc_pct(row['bucket_1_2s']):.1f}")},
+                        "bucket_2_3s": {"count": int(row['bucket_2_3s']), "pct": float(f"{calc_pct(row['bucket_2_3s']):.1f}")},
+                        "bucket_3_5s": {"count": int(row['bucket_3_5s']), "pct": float(f"{calc_pct(row['bucket_3_5s']):.1f}")},
+                        "bucket_5_8s": {"count": int(row['bucket_5_8s']), "pct": float(f"{calc_pct(row['bucket_5_8s']):.1f}")},
+                        "bucket_over_8s": {"count": int(row['bucket_over_8s']), "pct": float(f"{calc_pct(row['bucket_over_8s']):.1f}")}
+                    }
+                }
+            }
+            if group_by:
+                result_item["metadata"][group_by] = row[group_by]
+            results.append(result_item)
+
+        if group_by:
+            return json.dumps(results, cls=AnalysisEncoder)
+        else:
+            return json.dumps(results[0], cls=AnalysisEncoder)
+            
     except Exception as e:
         logger.error(f"Error in analyze_latency_performance: {str(e)}")
         return json.dumps({"error": str(e)})
@@ -530,7 +610,6 @@ async def analyze_latency_grouped(
         return json.dumps({"error": str(e)})
 
 
-
 @cached_tool()
 async def get_active_metadata(
     time_range: str = "7d",
@@ -552,8 +631,8 @@ async def get_active_metadata(
     try:
         where_clause = build_standard_where_clause(time_range=time_range)
         import asyncio
-        
         async def fetch_distinct(column_name: str, limit: int = 50) -> list[str]:
+            """Fetch distinct values for a given column from the events view."""
             query = f"""
             SELECT DISTINCT {column_name}
             FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
