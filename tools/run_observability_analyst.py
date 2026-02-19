@@ -122,6 +122,7 @@ async def main():
         bucket_size=bucket_size,
         kpis=kpis,
         num_slowest_queries=config.get("num_slowest_queries", 20),
+        num_error_records=config.get("num_error_queries", 10),
         config=config
     )
     

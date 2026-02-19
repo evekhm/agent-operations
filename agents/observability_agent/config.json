@@ -4,25 +4,26 @@
         "playbook": "overview",
         "kpis": {
           "end_to_end": {
-            "mean_latency_target": 5.0,
+            "mean_latency_target": 8.0,
             "p95_latency_target": 10.0
           },
           "agent": {
-            "mean_latency_target": 4.0,
-            "p95_latency_target": 6.0
+            "mean_latency_target": 7.0,
+            "p95_latency_target": 8.0
           },
           "llm": {
-            "mean_latency_target": 2.5,
-            "p95_latency_target": 3.5
+            "mean_latency_target": 4,
+            "p95_latency_target": 5
           },
           "tool": {
-            "mean_latency_target": 1,
-            "p95_latency_target": 2
+            "mean_latency_target": 2,
+            "p95_latency_target": 3
           }
         },
-        "num_slowest_queries": 10
+        "num_slowest_queries": 10,
+        "num_error_queries": 10
     },
-    "queries_": [
+    "queries": [
         "Some additional instructions to add to the prompt."
     ]
 }

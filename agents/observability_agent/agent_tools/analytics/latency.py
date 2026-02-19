@@ -1152,7 +1152,7 @@ async def get_llm_impact_analysis(
             L.span_id,
             L.parent_span_id,
             L.timestamp,
-            SUBSTR(I.content_text, 1, 100) as user_message_trunk
+            SUBSTR(I.content_text, 1, 250) as user_message_trunk
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` L
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON L.parent_span_id = A.span_id
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON L.trace_id = I.trace_id
@@ -1236,7 +1236,7 @@ async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> 
             T.span_id,
             T.parent_span_id,
             T.timestamp,
-            SUBSTR(I.content_text, 1, 100) as user_message_trunk
+            SUBSTR(I.content_text, 1, 250) as user_message_trunk
         FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
@@ -1284,4 +1284,138 @@ async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> 
 
     except Exception as e:
         logger.error(f"Error in get_tool_impact_analysis: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+@cached_tool()
+async def get_error_impact_analysis(
+    time_range: str = "7d",
+    limit: int = 10,
+    view_ids: str = None # Legacy/Generic param
+) -> str:
+    """
+    Aggregates error data from ALL four views with JOINED context to show true propagation.
+    
+    Args:
+        time_range (str): Time range to analyze.
+        limit (int): Max number of failed requests to return per category.
+        view_ids (str): Optional. unused.
+
+    Returns:
+        str: JSON string containing lists of errors for each component type with parent status.
+    """
+    logger.info(f"[TOOL CALL-get_error_impact_analysis] time_range='{time_range}', limit={limit}")
+    
+    try:
+        common_where = build_standard_where_clause(
+            time_range=time_range,
+            filter_config={"status": ("ERROR", "=")},
+            table_alias="T"
+        )
+        
+        # 1. Tool Errors (Joined with Agent and Root)
+        query_tools = f"""
+        SELECT 
+            T.tool_name, 
+            T.error_message, 
+            T.timestamp, 
+            T.tool_args,
+            T.agent_name,
+            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            I.root_agent_name,
+            COALESCE(I.status, 'UNKNOWN') as root_status,
+            I.content_text as user_message,
+            T.trace_id, 
+            T.span_id
+        FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+        WHERE {common_where}
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        # 2. LLM Errors (Joined with Agent and Root)
+        query_llm = f"""
+        SELECT 
+            T.model_name, 
+            T.error_message, 
+            T.timestamp, 
+            T.llm_config,
+            T.agent_name,
+            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            I.root_agent_name,
+            COALESCE(I.status, 'UNKNOWN') as root_status,
+            I.content_text as user_message,
+            T.trace_id, 
+            T.span_id
+        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+        WHERE {common_where}
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        # 3. Agent Errors (Joined with Root)
+        query_agents = f"""
+        SELECT 
+            T.agent_name, 
+            T.error_message, 
+            T.timestamp, 
+            T.root_agent_name,
+            COALESCE(I.status, 'UNKNOWN') as root_status,
+            I.content_text as user_message,
+            T.trace_id, 
+            T.span_id
+        FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+        WHERE {common_where}
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        # 4. Root Invocation Errors
+        query_root = f"""
+        SELECT 
+            T.root_agent_name, 
+            T.error_message, 
+            T.timestamp, 
+            T.content_text as user_message,
+            T.trace_id, 
+            T.invocation_id
+        FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` T
+        WHERE {common_where}
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        # Run all 4 queries in parallel
+        results = await asyncio.gather(
+            execute_bigquery(query_tools),
+            execute_bigquery(query_llm),
+            execute_bigquery(query_agents),
+            execute_bigquery(query_root)
+        )
+        
+        tool_df, llm_df, agent_df, root_df = results
+
+        def to_records(df):
+            if df.empty:
+                return []
+            if 'timestamp' in df.columns:
+                df['timestamp'] = df['timestamp'].astype(str)
+            return df.to_dict(orient="records")
+
+        final_result = {
+            "metadata": {"time_range": time_range, "limit": limit},
+            "tool_errors": to_records(tool_df),
+            "llm_errors": to_records(llm_df),
+            "agent_errors": to_records(agent_df),
+            "root_errors": to_records(root_df)
+        }
+        
+        return json.dumps(final_result, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in get_error_impact_analysis: {str(e)}")
         return json.dumps({"error": str(e)})

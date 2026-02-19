@@ -21,7 +21,8 @@ from .agent_tools.analytics.latency import (
     batch_analyze_root_cause,
     analyze_latency_trend,
     get_llm_impact_analysis,
-    get_tool_impact_analysis
+    get_tool_impact_analysis,
+    get_error_impact_analysis
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID, AGENT_DATASET_ID, \
@@ -47,7 +48,8 @@ analyst_tools = [
     detect_sequential_bottlenecks,
     run_sql_query,
     get_llm_impact_analysis,
-    get_tool_impact_analysis
+    get_tool_impact_analysis,
+    get_error_impact_analysis
 ]
 
 # Create the deep-dive Playbook Investigator Agent
@@ -92,7 +94,8 @@ def _format_kpis_for_prompt(kpis: dict) -> str:
             lines.append(f"- {k}: {v}s")
     return "\n".join(lines)
 
-def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None, num_slowest_queries: int = 20, config: dict = None):
+def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None,
+                        num_slowest_queries: int = 20, num_error_records: int = 10, config: dict = None):
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
     if kpis is None:
         from .config import DEFAULT_KPIS
@@ -108,7 +111,8 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         baseline_period=baseline_period,
         bucket_size=bucket_size,
         kpis_string=kpis_string,
-        num_slowest_queries=num_slowest_queries
+        num_slowest_queries=num_slowest_queries,
+        num_error_records=num_error_records
     )
     playbook_agent.instruction = hydrated_investigator_prompt
 
