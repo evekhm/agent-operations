@@ -26,8 +26,8 @@ from .agent_tools.analytics.latency import (
     analyze_latency_performance
 )
 from .agent_tools.analytics.sql import run_sql_query
-from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID, AGENT_DATASET_ID, \
-    AGENT_TABLE_ID
+from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
+    AGENT_TABLE_ID, AGENT_VERSION
 from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
 
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
@@ -69,7 +69,7 @@ playbook_agent = Agent(
 report_creator_agent = Agent(
     name="report_creator_agent",
     model=MODEL_ID,
-    instruction=REPORT_CREATOR_PROMPT, # Automatically injects {playbook_findings}
+    instruction=lambda: REPORT_CREATOR_PROMPT.format(agent_version=AGENT_VERSION), # Automatically injects {playbook_findings} and {agent_version}
     description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
     tools=[],
     output_key="final_report",
@@ -126,7 +126,8 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         playbook_findings="{playbook_findings}",
         kpis_string=kpis_string,
         config_dump=config_str,
-        time_period=time_period
+        time_period=time_period,
+        agent_version=AGENT_VERSION
     )
     report_creator_agent.instruction = hydrated_report_prompt
 
