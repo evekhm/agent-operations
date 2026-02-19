@@ -9,17 +9,18 @@ This module contains tools for analyzing:
 - Metadata discovery (Agents/Models)
 - Root Cause Analysis (AI.GENERATE)
 """
+import asyncio
 import json
 import logging
-import asyncio
 from typing import Optional
 
 import pandas as pd
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID, AGENT_NAME
+from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION,
+                       INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID)
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
-from ...utils.common import AnalysisEncoder, build_standard_where_clause
+from ...utils.common import AnalysisEncoder, build_standard_where_clause, sanitize_for_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -1404,6 +1405,12 @@ async def get_error_impact_analysis(
                 return []
             if 'timestamp' in df.columns:
                 df['timestamp'] = df['timestamp'].astype(str)
+            
+            # Sanitize all string columns to prevent markdown table breakage
+            for col in df.columns:
+                if df[col].dtype == object or df[col].dtype == str:
+                     df[col] = df[col].apply(sanitize_for_markdown)
+            
             return df.to_dict(orient="records")
 
         final_result = {

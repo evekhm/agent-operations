@@ -61,7 +61,7 @@ def build_standard_where_clause(
 
 
 
-def _sanitize_for_markdown(text: Any) -> str:
+def sanitize_for_markdown(text: Any) -> str:
     """Sanitize text to be safe for inclusion in Markdown tables."""
     if text is None:
         return ""
@@ -77,7 +77,8 @@ class AnalysisEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         if isinstance(obj, (datetime, pd.Timestamp)):
-            return obj.isoformat()
+            # Remove +00:00 suffix if present to save space in reports
+            return obj.isoformat().replace("+00:00", "")
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
