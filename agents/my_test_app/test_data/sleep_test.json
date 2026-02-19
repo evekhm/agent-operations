@@ -1,6 +1,7 @@
 {
   "state": {},
   "queries": [
-    "Sleep 5 seconds"
+    "Sleep 2.5 seconds",
+    "Sleep 2 seconds"
   ]
 }
