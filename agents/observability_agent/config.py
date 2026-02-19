@@ -19,18 +19,22 @@ if not PROJECT_ID:
 
 # BigQuery
 DATASET_ID = os.getenv('DATASET_ID')
+DATASET_LOCATION = os.getenv('DATASET_LOCATION', 'us-central1')
 AGENT_EVENTS_TABLE_ID = os.getenv('TABLE_ID')
 AGENT_EVENTS_VIEW_ID = os.getenv('AGENT_EVENTS_VIEW_ID', 'agent_events_view')
 LLM_EVENTS_VIEW_ID = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
 TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
-DATASET_LOCATION = os.getenv('DATASET_LOCATION', 'us-central1')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 
 
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
 DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
 LOCATION = os.getenv('LOCATION', "us")
+
+#BQ Analytics
+AGENT_DATASET_ID = os.getenv('AGENT_DATASET_ID', DATASET_ID)
+AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', AGENT_EVENTS_TABLE_ID)
 
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"

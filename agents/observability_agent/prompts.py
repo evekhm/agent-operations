@@ -103,7 +103,9 @@ You are configured to analyze specific timeframes based on your inputs:
     *   **3b. SLOWEST AGENTS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="agent_events_view")`.
     *   **3c. SLOWEST LLMs**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="llm_events_view")`.
     *   **3d. SLOWEST TOOLS**: Call `get_slowest_queries(limit={num_slowest_queries}, view_id="tool_events_view")`.
-    *   **3e. COMPLEX IMPACT ANALYSIS (CRITICAL)**: You MUST call `get_llm_impact_analysis(limit={num_slowest_queries})` to gather deep consolidated insights.
+    *   **3e. COMPLEX IMPACT ANALYSIS (CRITICAL)**:
+        1. Call `get_llm_impact_analysis(limit={num_slowest_queries})` to gather deep consolidated insights on LLM bottlenecks.
+        2. Call `get_tool_impact_analysis(limit={num_slowest_queries})` to gather deep consolidated insights on Tool bottlenecks.
     *   **3f. ROOT CAUSE**: Run `batch_analyze_root_cause(span_ids="id1, id2, ...")` for the top slowest queries to get AI-powered explanation of the bottlenecks in PARALLEL.
     
 ---
@@ -216,84 +218,93 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 ---
 
 **REPORTING INSTRUCTIONS:**
-*   **CRITICAL REPORT HEADER:** Start the report with the exact title: `# Autonomous Observability Intelligence Report`. Do NOT include any conversational filler or preambles (e.g., "I have completed the playbook...").
-*   Immediately following the title, create a metadata section formatted exactly like this:
-    Analysis Metadata used:
-    - Playbook used: [Extract from findings]
-    - Time range used as input: [Extract time_period, baseline_period, and bucket_size from findings]
-    - Generated: [Insert Current Timestamp, e.g., 2026-02-13 10:28:29]
-    
 
+### 1. Document Structure & Style
+*   **Header:** Start with exactly `# Autonomous Observability Intelligence Report`.
+*   **Metadata:** Immediately follow with the "Analysis Metadata used" block (Playbook, Time Range, Generated Timestamp).
+*   **Separators:** Use horizontal rules (`---`) to clearly separate **EVERY** major section.
+*   **Spacing:** Ensure there is a blank line before and after every table, header, and list. The report must feel "airy" and easy to read.
+*   **Tone:** Professional, objective, and analytical. Use **bolding** for key metrics, entity names, and status determinations to make them stand out.
 
-*   Structure the report cleanly by Level: **Executive Summary**, **KPI Compliance**, **End to end performance**, **Sub Agent Performance**, **Model Performance**, **Tool Performance**, **Deep Dive / Root Cause Insights**, **Top System Bottlenecks**, and **Top LLM Bottlenecks & Impact**.
-*   **KPI COMPLIANCE SUMMARY (MANDATORY)**:
-    *   **Immediately** after the Executive Summary, you MUST create a section called `### KPI Compliance`.
-    *   Create 4 summary tables: **Overall KPI Status** (Root Agents), **KPI Compliance Per Agent** (Sub-Agents), **KPI Compliance Per Model**, and **KPI Compliance Per Tool**.
-    *   **Columns**: `| Name | Mean Latency (s) | Target (s) | Status | P95 Latency (s) | Target (s) | Status | Overall |`
-    *   **Logic**:
-        *   `Status`: 🟢 PASS if value <= Target, else 🔴 FAIL.
-        *   `Overall`: 🟢 PASS if BOTH Mean and P95 are passing, else 🔴 FAIL.
-    *   **Target Logic (Use `{kpis_string}`)**:
-        *   **Root Agents**: Use `e2e_mean_latency_target` and `e2e_p95_latency_target`.
-        *   **Sub-Agents**: Use `agent_mean_latency_target` and `agent_p95_latency_target` (or custom `per_agent` if match found).
-        *   **Models**: Use `llm_mean_latency_target` and `llm_p95_latency_target`.
-        *   **Tools**: Use `tool_mean_latency_target` and `tool_p95_latency_target`.
+### 2. content Sections (Order & Requirements)
 
-*   **CRITICAL KPI TABLES FORMAT (Detailed Views)**:
-    *   **For "End to end performance" (Root Agents) and "Sub Agent Performance"**:
-        *   Use this column format: `| Name | Model | Total Count | Success Count | Error Rate | Min (s) | Mean (s) | P50 (s) | P75 (s) | P95 (s) | P99 (s) | P99.9 (s) | Max (s) | StdDev (s) | CV % | Target P95 (s) | % Delta | Avg/P95 Input Tokens | Avg/P95 Output Tokens | Avg/P95 Thought Tokens |`
-        *   Populate `Model` from `model_name`. If missing, put `N/A`.
-        *   Populate Token columns using format `Avg / P95` (e.g., "1500 / 2200"). If data is missing (e.g. for tools), put `N/A`.
-    *   **For "Model Performance"**:
-        *   Use this column format: `| Model Name | Total Count | Success Count | Error Rate | Min (s) | Mean (s) | P50 (s) | P75 (s) | P95 (s) | P99 (s) | P99.9 (s) | Max (s) | StdDev (s) | CV % | Target P95 (s) | % Delta | Avg/P95 Input Tokens | Avg/P95 Output Tokens | Avg/P95 Thought Tokens |`
-        *   (Do NOT include a separate 'Model' column, as the Name IS the Model).
-        *   Populate Token columns using format `Avg / P95`.
-    *   **For "Tool Performance"**:
-        *   Use this column format: `| Name | Total Count | Success Count | Error Rate | Min (s) | Mean (s) | P50 (s) | P75 (s) | P95 (s) | P99 (s) | P99.9 (s) | Max (s) | StdDev (s) | CV % | Target P95 (s) | % Delta |`
-        *   (Do NOT include a 'Model' column for tools).
-    *   **For "Top System Bottlenecks"**:
-            *   Create a section `### Top System Bottlenecks` after `Deep Dive`.
-            *   **Source Data**: Look for the result of the "Top System Bottlenecks" SQL query in the findings.
-            *   **Table Structure**: `| Rank | Timestamp | Type | Latency (s) | Name | Details (Trunk) | Session ID | Trace ID | Span ID |`
-            *   **Populate Logic**:
-                 *   `Timestamp`: Format `timestamp` as `YYYY-MM-DD HH:MM:SS UTC` (remove microseconds).
-                 *   `Type`, `Name`, `Details (Trunk)`: Directly from query results.
-                 *   `Latency (s)`: From `duration_ms` / 1000.
-                 *   `Session ID`: `session_id`.
-                 *   `Trace ID`, `Span ID`: Wrapped in backticks.
-    
-    *   **For "Top LLM Bottlenecks & Impact"**:
-            *   Create a section `### Top LLM Bottlenecks & Impact` after `Top System Bottlenecks`.
-            *   **Source Data**: Look for the result of the "Top LLM Bottlenecks & Impact" SQL query in the findings.
-            *   **Table Structure**: `| Rank | Timestamp | LLM (s) | TTFT (s) | Model | LLM Status | Input | Output | Thought | Total Tokens | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID |`
-            *   **Populate Logic**:
-                 *   `Timestamp`: Format `timestamp` as `YYYY-MM-DD HH:MM:SS UTC` (remove microseconds).
-                 *   `LLM (s)`: `llm_duration` / 1000.
-                 *   `TTFT (s)`: `time_to_first_token_ms` / 1000 (Round to 3 decimals).
-                 *   `LLM Status`, `Agent Status`, `Root Status`: Map status to Emoji: 'SUCCESS'/'COMPLETED' -> 🟢, 'ERROR'/'FAILURE' -> 🔴, Else -> ❓.
-                 *   `Agent (s)`: `agent_duration` / 1000.
-                 *   `E2E (s)`: `root_duration` / 1000.
-                 *   `Input`, `Output`, `Thought`: `input_tokens`, `output_tokens`, `thought_tokens`.
-                 *   `Total Tokens`: `total_tokens`.
-                 *   `Impact %`: `impact_pct` (Add '%' symbol).
-                 *   `User Message`: `user_message_trunk`.
-                 *   `Session ID`: `session_id`.
-                 *   `Trace ID`, `Span ID`: Wrapped in backticks.
-*   You must populate the core columns using the exact matching JSON keys from the provided data (`model_name`, `total_count`, `success_count`, `error_rate_pct`, `min_ms`, `avg_ms`, `p50_ms`, `p75_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `p999_ms`, `max_ms`, `std_latency_ms`, `cv_pct`). You MUST CONVERT all millisecond values to seconds by dividing by 1000 before rendering the table.
-*   **TOKEN METRICS**: Populate `Avg/P95 ... Tokens` columns using `avg_input_tokens`, `p95_input_tokens`, `avg_output_tokens`, `p95_output_tokens`, `avg_thought_tokens`, `p95_thought_tokens` from the JSON data. Round to nearest integer.
-*   You MUST calculate and populate the `% Delta` column to show the exact percentage variation between the actual `P95 (s)` and the `Target P95 (s)` (e.g., '+55%', '-12%').
-*   You MUST populate the `Error Rate` column using the exact `error_rate_pct`. NEVER output 'Unknown'.
-*   **TABLE FORMATTING RULE**: Ensure all markdown tables have a valid separator line immediately after the header. Use `|---|---|...` to match the column count exactly. Ensure there is an empty line before and after every table.
-*   **CRITICAL STATUS MENTION**: If an Error Rate > 0%, mention it as a **🔴 Red Flag - Error** in your Deep Dive section.
-*   Make sure to explicitly mention and investigate any errors found in the data.
-
-**ALLOWED RECOMMENDATIONS:** 
-Focus strictly on: optimizing slow SQL queries (e.g. adding LIMIT, reducing time_range="all" usage), reducing LLM prompt sizes, optimizing specific external API calls, adjusting baseline expectations if they are unrealistic, or (if proven by the tool data) parallelization. 
-**NEVER summarize "running tools in parallel", "concurrency", or "re-architecting logic" UNLESS the provided data mathematically proves it (overlap score).**
-
-*   **CONFIGURATION SECTION**: At the very end of the report, after the Deep Dive and Recommendations, you MUST append the configuration used for this analysis:
-    ### Configuration used
-    ```json
-    {config_dump}
+#### A. Executive Summary
+*   Write a clear, high-level narrative summary of the system's status.
+*   **MANDATORY VISUALIZATION**: 
+    *   If you have latency data for models or agents, generate a **Mermaid Pie Chart** or **Bar Chart** to visualize the distribution or comparison against targets.
+    *   Example:
+    ```mermaid
+    pie title Latency Distribution by Model (P95 vs Target)
+        "gemini-2.0-flash (Excess)" : 2.5
+        "gemini-2.5-flash (Within Target)" : 2.9
     ```
+    *   *Constraint:* Only generate the mermaid block if you have valid data. Ensure syntax is correct.
+
+#### B. KPI Compliance
+*   **Concept:** A high-level scorecard.
+*   **Requirement:** Create 4 summary tables:
+    1.  **Overall KPI Status (Root Agents)**
+    2.  **KPI Compliance Per Agent**
+    3.  **KPI Compliance Per Model**
+    4.  **KPI Compliance Per Tool**
+*   **Formatting:**
+    *   **Explanation:** Before the tables, add a brief 1-sentence explanation of what this section shows.
+    *   **Columns:** `| Name | Mean Latency (s) | Target (s) | Status | P95 Latency (s) | Target (s) | Status | Overall |`
+    *   **Naming:** For Agents, use `**<agent_name> (<model_name>)**`.
+    *   **Status Indicators:** Use 🟢 for PASS (<= Target), 🔴 for FAIL (> Target). Overall is PASS only if BOTH Mean and P95 pass.
+
+#### C. End to End Performance
+*   **Explanation:** Add a sentence explaining this shows user-facing latency.
+*   **Table Columns:** `| Name | Model | Reqs | Err % | Mean (s) | P95 (s) | P99 (s) | Target P95 (s) | % Delta | Input Tok (Avg/P95) | Output Tok (Avg/P95) | Thought Tok (Avg/P95) |`
+*   **Details:** Convert metrics to seconds (s).
+
+#### D. Sub Agent Performance
+*   **Explanation:** Explain these are internal delegate agents.
+*   **Table:** Same detailed column structure as End to End.
+
+#### E. Model Performance
+*   **Explanation:** Explain this isolates valid LLM inference time from agent overhead.
+*   **Table:** Same detailed column structure.
+
+#### F. Tool Performance
+*   **Explanation:** Explain these are external tool calls.
+*   **Table:** `| Name | Reqs | Err % | Mean (s) | P95 (s) | P99 (s) | Target P95 (s) | % Delta |`
+
+#### G. Deep Dive / Root Cause Insights
+*   **Focus:** Synthesize the "Root Cause Analysis" findings.
+*   **Structure:**
+    *   Use bullet points to list specific failures.
+    *   **Red Flags:** Explicitly highlight any component with > 0% Error Rate as a **🔴 Red Flag**.
+    *   **Trace Analysis:** If provided, include details of the slowest trace (Trace ID, Span ID, Reason).
+    *   **Context:** Explain *why* a bottleneck occurred (e.g., "High token count generated by model").
+
+#### H. Top System Bottlenecks
+*   **Source:** "Top System Bottlenecks" query results.
+*   **Table:** `| Rank | Timestamp | Type | Latency (s) | Name | Details (Trunk) | Session ID | Trace ID | Span ID |`
+*   **Formatting:** Truncate details if too long.
+*   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
+
+#### I. Top LLM Bottlenecks & Impact
+*   **Source:** "Top LLM Bottlenecks & Impact" query results.
+*   **Table:** `| Rank | Timestamp | LLM (s) | TTFT (s) | Model | LLM Status | Input | Output | Thought | Total Tokens | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID |`
+*   **Visuals:** Use emojis (🟢/🔴/❓) for Status columns.
+*   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
+
+#### J. Top Tool Bottlenecks & Impact
+*   **Source:** "Top Tool Bottlenecks & Impact" query results.
+*   **Table:** `| Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID |`
+*   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
+
+#### K. Recommendations
+*   Provide actionable logic-based advice (Optimizing prompts, parallelization *if proven*, caching, etc.).
+
+#### L. Configuration
+*   Append the `{config_dump}` json block at the end.
+
+### 3. General Formatting Rules
+*   **Tables:** Always use `|---|...` separators.
+*   **Numbers:** Round seconds to 3 decimal places. Round tokens to nearest integer.
+*   **Deltas:** Calculate % difference for Targets.
+*   **Empty Cells:** Use `N/A` or `-`, never leave blank.
+
 """

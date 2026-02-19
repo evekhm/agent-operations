@@ -138,14 +138,17 @@ async def main():
         
         session_service = InMemorySessionService()
         
-        # Explicitly create the session first with app_name
+        initial_state = {
+            "playbook_findings": "Error: The playbook investigator agent aborted or failed before it could produce findings."
+        }
+
+        # Explicitly create the session first with app_name and initial state
         session = await session_service.create_session(
             user_id=user_id, 
             session_id=session_id, 
-            app_name="observability_analyst_app"
+            app_name="observability_analyst_app",
+            state=initial_state
         )
-        # Pre-populate state to prevent KeyError if playbook_agent aborts/fails before setting output_key
-        session.state["playbook_findings"] = "Error: The playbook investigator agent aborted or failed before it could produce findings."
 
         bq_config = BigQueryLoggerConfig(
             enabled=True,

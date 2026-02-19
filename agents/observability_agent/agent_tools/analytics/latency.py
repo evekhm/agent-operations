@@ -16,7 +16,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID
+from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION, INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID, AGENT_NAME
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -1155,7 +1155,7 @@ async def get_llm_impact_analysis(
             SUBSTR(I.content_text, 1, 100) as user_message_trunk
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` L
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON L.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON L.session_id = I.session_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON L.trace_id = I.trace_id
         WHERE
             {where_clause}
         ORDER BY L.duration_ms DESC
@@ -1204,4 +1204,84 @@ async def get_llm_impact_analysis(
 
     except Exception as e:
         logger.error(f"Error in get_llm_impact_analysis: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> str:
+    """
+    Fetches the top slowest Tool executions with joined context (Agent & Root Invocation).
+    Used to populate the 'Top Tool Bottlenecks & Impact' table.
+    """
+    try:
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            table_alias="T"
+        )
+
+        query = f"""
+        SELECT
+            T.duration_ms as tool_duration,
+            T.tool_name,
+            TO_JSON_STRING(T.tool_args) as tool_args,
+            COALESCE(TO_JSON_STRING(T.tool_result), '') as tool_result_str,
+            COALESCE(T.status, 'UNKNOWN') as tool_status,
+            T.agent_name,
+            A.duration_ms as agent_duration,
+            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            I.root_agent_name,
+            I.duration_ms as root_duration,
+            COALESCE(I.status, 'UNKNOWN') as root_status,
+            SAFE_DIVIDE(T.duration_ms, I.duration_ms) * 100 as impact_pct,
+            T.trace_id,
+            T.session_id,
+            T.span_id,
+            T.parent_span_id,
+            T.timestamp,
+            SUBSTR(I.content_text, 1, 100) as user_message_trunk
+        FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+        WHERE
+            {where_clause}
+        ORDER BY T.duration_ms DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+             return json.dumps({
+                "message": "No tool impact data found.",
+                "metadata": {"view_id": TOOL_EVENTS_VIEW_ID}
+            })
+
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                "tool_duration": float(row['tool_duration']),
+                "tool_name": row['tool_name'],
+                "tool_args": row['tool_args'],
+                "tool_status": row['tool_status'],
+                "agent_name": row['agent_name'],
+                "agent_duration": float(row['agent_duration']) if pd.notna(row['agent_duration']) else 0.0,
+                "agent_status": row['agent_status'],
+                "root_agent_name": row['root_agent_name'],
+                "root_duration": float(row['root_duration']) if pd.notna(row['root_duration']) else 0.0,
+                "root_status": row['root_status'],
+                "impact_pct": float(row['impact_pct']) if pd.notna(row['impact_pct']) else 0.0,
+                "trace_id": row['trace_id'],
+                "session_id": row['session_id'],
+                "span_id": row['span_id'],
+                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                "user_message_trunk": row['user_message_trunk']
+            })
+
+        result = {
+            "metadata": {"time_range": time_range, "view_id": TOOL_EVENTS_VIEW_ID},
+            "impact_analysis": records
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in get_tool_impact_analysis: {str(e)}")
         return json.dumps({"error": str(e)})

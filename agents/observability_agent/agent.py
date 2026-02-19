@@ -20,10 +20,12 @@ from .agent_tools.analytics.latency import (
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_latency_trend,
-    get_llm_impact_analysis
+    get_llm_impact_analysis,
+    get_tool_impact_analysis
 )
 from .agent_tools.analytics.sql import run_sql_query
-from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID
+from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, DATASET_ID, AGENT_EVENTS_TABLE_ID, AGENT_DATASET_ID, \
+    AGENT_TABLE_ID
 from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
 
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
@@ -44,7 +46,8 @@ analyst_tools = [
     analyze_latency_trend,
     detect_sequential_bottlenecks,
     run_sql_query,
-    get_llm_impact_analysis
+    get_llm_impact_analysis,
+    get_tool_impact_analysis
 ]
 
 # Create the deep-dive Playbook Investigator Agent
@@ -147,8 +150,8 @@ bq_config = BigQueryLoggerConfig(
 
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
-    dataset_id=DATASET_ID,
-    table_id=AGENT_EVENTS_TABLE_ID,
+    dataset_id=AGENT_DATASET_ID,
+    table_id=AGENT_TABLE_ID,
     config=bq_config,
     location="us"
 )
