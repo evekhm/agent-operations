@@ -29,10 +29,13 @@ from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
     AGENT_TABLE_ID, AGENT_VERSION
 from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
+from .utils.telemetry import setup_telemetry
 
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
 logging.basicConfig(level=getattr(logging, log_level, logging.ERROR))
 logger = logging.getLogger(__name__)
+
+setup_telemetry()
 
 # Initialize the exact tools the Observability Playbook Subagent needs
 analyst_tools = [
@@ -91,9 +94,27 @@ def _format_kpis_for_prompt(kpis: dict) -> str:
             for agent_name, agent_kpis in v.items():
                 lines.append(f"  - `{agent_name}`:")
                 for ak, av in agent_kpis.items():
-                    lines.append(f"    - {ak}: {av}s")
+                    if ak == "latency_target":
+                       lines.append(f"    - Target: < {av}s")
+                    elif ak == "percentile_target":
+                       lines.append(f"    - Level: {av}%")
+                    elif ak == "mean_latency_target": # Fallback for old configs
+                       lines.append(f"    - Mean Target: {av}s")
+                    else:
+                       lines.append(f"    - {ak}: {av}")
         else:
-            lines.append(f"- {k}: {v}s")
+            # Handle top-level category KPIs (end_to_end, agent, llm, tool)
+            lines.append(f"- {k.upper()} KPIs:")
+            if isinstance(v, dict):
+                for sub_k, sub_v in v.items():
+                    if sub_k == "latency_target":
+                        lines.append(f"  - Target: < {sub_v}s")
+                    elif sub_k == "percentile_target":
+                        lines.append(f"  - Level: {sub_v}%")
+                    else:
+                        lines.append(f"  - {sub_k}: {sub_v}")
+            else:
+                 lines.append(f"  - {v}")
     return "\n".join(lines)
 
 def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None,
@@ -108,13 +129,20 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         
     kpis_string = _format_kpis_for_prompt(kpis)
 
+    
+    # Extract global percentile for tool arguments (default to 95.0 if not found)
+    kpi_percentile = 95.0
+    if "end_to_end" in kpis and isinstance(kpis["end_to_end"], dict):
+        kpi_percentile = kpis["end_to_end"].get("percentile_target", 95.0)
+
     hydrated_investigator_prompt = PLAYBOOK_INVESTIGATOR_PROMPT.format(
         time_period=time_period,
         baseline_period=baseline_period,
         bucket_size=bucket_size,
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
-        num_error_records=num_error_records
+        num_error_records=num_error_records,
+        kpi_percentile=kpi_percentile
     )
     playbook_agent.instruction = hydrated_investigator_prompt
 
@@ -127,7 +155,9 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpis_string=kpis_string,
         config_dump=config_str,
         time_period=time_period,
-        agent_version=AGENT_VERSION
+        agent_version=AGENT_VERSION,
+        Level=str(kpi_percentile),
+        error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
     )
     report_creator_agent.instruction = hydrated_report_prompt
 

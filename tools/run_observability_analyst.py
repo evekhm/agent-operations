@@ -240,7 +240,8 @@ async def main():
             with open(report_path, "w") as f:
                 f.write(final_report)
             
-            print(f"\n📄 Report saved to: {report_path}")
+            rel_report_path = os.path.normpath(os.path.relpath(report_path))
+            print(f"\n📄 Report saved to: {rel_report_path}")
         else:
             print("\n⚠️ No report content generated.")
         
@@ -248,6 +249,11 @@ async def main():
         logger.error(f"Agent execution failed: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        from opentelemetry import trace
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            provider.force_flush(timeout_millis=3000)
 
 if __name__ == "__main__":
     asyncio.run(main())

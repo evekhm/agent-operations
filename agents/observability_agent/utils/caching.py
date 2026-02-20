@@ -174,13 +174,28 @@ def cached_tool(tool_name: Optional[str] = None, session_scope: bool = True):
                     return cached_result
                 
                 # Cache miss - execute function
-                result = await func(*args, **kwargs)
+                func_kwargs = kwargs.copy()
+                sig_params = inspect.signature(func).parameters
+                if 'tool_context' not in sig_params and 'tool_context' in func_kwargs:
+                    del func_kwargs['tool_context']
+                if 'ctx' not in sig_params and 'ctx' in func_kwargs:
+                    del func_kwargs['ctx']
+                
+                result = await func(*args, **func_kwargs)
                 
                 # Store in cache
                 if session_scope:
                     store_in_cache(ctx, cache_key, result)
                 
                 return result
+            
+            # Ensure ADK runner injects context by modifying the signature
+            sig = inspect.signature(func)
+            if 'tool_context' not in sig.parameters and 'ctx' not in sig.parameters:
+                new_params = list(sig.parameters.values())
+                new_params.append(inspect.Parameter('tool_context', inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None, annotation=ToolContext))
+                wrapper.__signature__ = sig.replace(parameters=new_params)
+                
             return wrapper
         else:
             @wraps(func)
@@ -226,13 +241,28 @@ def cached_tool(tool_name: Optional[str] = None, session_scope: bool = True):
                     return cached_result
                 
                 # Cache miss - execute function
-                result = func(*args, **kwargs)
+                func_kwargs = kwargs.copy()
+                sig_params = inspect.signature(func).parameters
+                if 'tool_context' not in sig_params and 'tool_context' in func_kwargs:
+                    del func_kwargs['tool_context']
+                if 'ctx' not in sig_params and 'ctx' in func_kwargs:
+                    del func_kwargs['ctx']
+                
+                result = func(*args, **func_kwargs)
                 
                 # Store in cache
                 if session_scope:
                     store_in_cache(ctx, cache_key, result)
                 
                 return result
+            
+            # Ensure ADK runner injects context by modifying the signature
+            sig = inspect.signature(func)
+            if 'tool_context' not in sig.parameters and 'ctx' not in sig.parameters:
+                new_params = list(sig.parameters.values())
+                new_params.append(inspect.Parameter('tool_context', inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None, annotation=ToolContext))
+                wrapper.__signature__ = sig.replace(parameters=new_params)
+
             return wrapper
     return decorator
 
