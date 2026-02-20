@@ -393,6 +393,9 @@ async def get_slowest_queries(
 
         target_table = view_id.strip()
 
+        if target_table == TOOL_EVENTS_VIEW_ID:
+            where_clause += " AND tool_name != 'transfer_to_agent'"
+
         # Dynamic column selection based on view_id
         if target_table == LLM_EVENTS_VIEW_ID:
             select_col_model = "model_name"
@@ -439,7 +442,7 @@ async def get_slowest_queries(
         df = await execute_bigquery(query)
 
         # Truncate massive columns with descriptive pointers so the agent relies on analyze_root_cause for full data inspection
-        for col in ['tool_args', 'response_content', 'prompt_content']:
+        for col in ['tool_args', 'response_content', 'prompt_content', 'full_request', 'full_response', 'instruction', 'content_text', 'user_message', 'error_message']:
             if col in df.columns:
                 df[col] = df[col].astype(str).apply(
                     lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
@@ -475,7 +478,8 @@ async def analyze_latency_grouped(
     model_name: Optional[str] = None,
     exclude_root: bool = False,
     view_id: Optional[str] = None,
-    latency_col: str = "duration_ms"
+    latency_col: str = "duration_ms",
+    percentile: float = 95.0
 ) -> str:
     """
     Break down latency metrics by a specific dimension (Agent, Root Agent, or Model).
@@ -493,7 +497,8 @@ async def analyze_latency_grouped(
     """
     target_table = view_id or LLM_EVENTS_VIEW_ID
     logger.info(f"[TOOL CALL-analyze_latency_grouped] group_by='{group_by}', time_range='{time_range}', "
-                f"model_name='{model_name}', exclude_root={exclude_root}, view_id='{target_table}', latency_col='{latency_col}'")
+                f"model_name='{model_name}', exclude_root={exclude_root}, view_id='{target_table}', "
+                f"latency_col='{latency_col}', percentile={percentile}")
     
     # Updated allowed_groups to include tool_name
     allowed_groups = ["agent_name", "root_agent_name", "model_name", "tool_name"]
@@ -512,6 +517,9 @@ async def analyze_latency_grouped(
         
         if exclude_root:
             where_clause += " AND agent_name != root_agent_name"
+            
+        if target_table == TOOL_EVENTS_VIEW_ID:
+            where_clause += " AND tool_name != 'transfer_to_agent'"
         
         # Build SELECT and GROUP BY clauses dynamically
         select_group_cols = ", ".join(group_columns)
@@ -534,6 +542,7 @@ async def analyze_latency_grouped(
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
           APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
+          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
           MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms"""
         
         # Conditionally add token metrics if querying LLM events
@@ -544,7 +553,9 @@ async def analyze_latency_grouped(
           AVG(candidates_token_count) as avg_output_tokens,
           APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
           AVG(thoughts_token_count) as avg_thought_tokens,
-          APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens
+          APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
+          AVG(total_token_count) as avg_total_tokens,
+          APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
              """
              
         query += f"""
@@ -557,6 +568,25 @@ async def analyze_latency_grouped(
         """
         
         df = await execute_bigquery(query)
+        
+        token_df = pd.DataFrame()
+        if str(target_table) != str(LLM_EVENTS_VIEW_ID) and any(g in ["agent_name", "root_agent_name"] for g in group_columns):
+            token_query = f"""
+            SELECT
+              {select_group_cols},
+              AVG(prompt_token_count) as avg_input_tokens,
+              APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
+              AVG(candidates_token_count) as avg_output_tokens,
+              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
+              AVG(thoughts_token_count) as avg_thought_tokens,
+              APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
+              AVG(total_token_count) as avg_total_tokens,
+              APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
+            FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
+            WHERE {where_clause}
+            GROUP BY {group_by_clause}
+            """
+            token_df = await execute_bigquery(token_query)
         
         if df.empty:
             return json.dumps({
@@ -580,9 +610,19 @@ async def analyze_latency_grouped(
                 "p90_ms": float(row['p90_ms']) if pd.notna(row['p90_ms']) else None,
                 "p95_ms": float(row['p95_ms']) if pd.notna(row['p95_ms']) else None,
                 "p99_ms": float(row['p99_ms']) if pd.notna(row['p99_ms']) else None,
-                "p999_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
+                "p99_9_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
+                "p_custom_ms": float(row['p_custom_ms']) if pd.notna(row['p_custom_ms']) else None,
                 "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None
             }
+            
+            token_row = None
+            if not token_df.empty:
+                mask = pd.Series([True] * len(token_df))
+                for col in group_columns:
+                    mask = mask & (token_df[col] == row[col])
+                matching = token_df[mask]
+                if not matching.empty:
+                    token_row = matching.iloc[0]
             
             # Add token metrics if available
             if str(target_table) == str(LLM_EVENTS_VIEW_ID):
@@ -593,6 +633,19 @@ async def analyze_latency_grouped(
                      "p95_output_tokens": float(row['p95_output_tokens']) if pd.notna(row['p95_output_tokens']) else 0.0,
                      "avg_thought_tokens": float(row['avg_thought_tokens']) if pd.notna(row['avg_thought_tokens']) else 0.0,
                      "p95_thought_tokens": float(row['p95_thought_tokens']) if pd.notna(row['p95_thought_tokens']) else 0.0,
+                     "avg_total_tokens": float(row['avg_total_tokens']) if pd.notna(row['avg_total_tokens']) else 0.0,
+                     "p95_total_tokens": float(row['p95_total_tokens']) if pd.notna(row['p95_total_tokens']) else 0.0,
+                 })
+            elif token_row is not None:
+                 record.update({
+                     "avg_input_tokens": float(token_row['avg_input_tokens']) if pd.notna(token_row['avg_input_tokens']) else 0.0,
+                     "p95_input_tokens": float(token_row['p95_input_tokens']) if pd.notna(token_row['p95_input_tokens']) else 0.0,
+                     "avg_output_tokens": float(token_row['avg_output_tokens']) if pd.notna(token_row['avg_output_tokens']) else 0.0,
+                     "p95_output_tokens": float(token_row['p95_output_tokens']) if pd.notna(token_row['p95_output_tokens']) else 0.0,
+                     "avg_thought_tokens": float(token_row['avg_thought_tokens']) if pd.notna(token_row['avg_thought_tokens']) else 0.0,
+                     "p95_thought_tokens": float(token_row['p95_thought_tokens']) if pd.notna(token_row['p95_thought_tokens']) else 0.0,
+                     "avg_total_tokens": float(token_row['avg_total_tokens']) if pd.notna(token_row['avg_total_tokens']) else 0.0,
+                     "p95_total_tokens": float(token_row['p95_total_tokens']) if pd.notna(token_row['p95_total_tokens']) else 0.0,
                  })
             # Add grouping columns to the record
             for col in group_columns:
@@ -1072,6 +1125,13 @@ async def get_failed_queries(
 
         df = await execute_bigquery(query)
         
+        # Truncate massive columns with descriptive pointers so the agent relies on analyze_root_cause for full data inspection
+        for col in ['tool_args', 'response_content', 'prompt_content', 'full_request', 'full_response', 'instruction', 'content_text', 'user_message', 'error_message']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).apply(
+                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
+                )
+        
         if df.empty:
             return json.dumps({
                 "message": "No failed queries found matching criteria.", 
@@ -1485,10 +1545,12 @@ async def get_error_impact_analysis(
             if 'timestamp' in df.columns:
                 df['timestamp'] = df['timestamp'].astype(str)
             
-            # Sanitize all string columns to prevent markdown table breakage
+            # Sanitize all string columns to prevent markdown table breakage and truncate massive payloads
             for col in df.columns:
                 if df[col].dtype == object or df[col].dtype == str:
-                     df[col] = df[col].apply(sanitize_for_markdown)
+                     df[col] = df[col].astype(str).apply(
+                         lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
+                     ).apply(sanitize_for_markdown)
             
             return df.to_dict(orient="records")
 

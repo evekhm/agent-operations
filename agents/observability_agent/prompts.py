@@ -93,10 +93,10 @@ You are configured to analyze specific timeframes based on your inputs:
     *   Call `get_active_metadata(time_range="{time_period}")` to identify active components.
 2.  **ANALYZE (Multi-Level)**:
     *   **CRITICAL**: You MUST call the `analyze_latency_grouped` tool for ALL FOUR sub-steps CONCURRENTLY. Compare against the STATIC KPIs.
-    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name, model_name", time_range="{time_period}", view_id="llm_events_view")`.
-    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{time_period}", view_id="llm_events_view", exclude_root=True)`.
-    *   **2c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
-    *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
+    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name", time_range="{time_period}", view_id="invocation_events_view", percentile={kpi_percentile})`.
+    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name", time_range="{time_period}", view_id="agent_events_view", exclude_root=True, percentile={kpi_percentile})`.
+    *   **2c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view", percentile={kpi_percentile})`.
+    *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view", percentile={kpi_percentile})`.
     *   **2e. LLM STATISTICS**: Run `analyze_latency_performance(time_range="{time_period}", view_id="llm_events_view", group_by="model_name")`. You MUST include `group_by="model_name"` to populate the per-model statistics table.
 3.  **INVESTIGATE (Deep Dive)**:
     *   If any component has high error rates, call `get_failed_queries`.
@@ -122,8 +122,8 @@ You are configured to analyze specific timeframes based on your inputs:
 2.  **ANALYZE (Multi-Level)**:
     *   **CRITICAL**: You MUST call the `analyze_latency_grouped` tool for ALL FOUR sub-steps CONCURRENTLY (in parallel in a single response) *before* moving to Step 3.
     *   To compare current performance with the previous baseline, you MUST fetch data for BOTH `{time_period}` and `{baseline_period}`. Compare findings against the static targets in {kpis_string} AND historical performance.
-    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name, model_name", time_range="{time_period}", view_id="llm_events_view")` AND `analyze_latency_grouped(group_by="root_agent_name, model_name", time_range="{baseline_period}", view_id="llm_events_view")`.
-    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{time_period}", view_id="llm_events_view", exclude_root=True)` AND `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{baseline_period}", view_id="llm_events_view", exclude_root=True)`.
+    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name", time_range="{time_period}", view_id="invocation_events_view")` AND `analyze_latency_grouped(group_by="root_agent_name", time_range="{baseline_period}", view_id="invocation_events_view")`.
+    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name", time_range="{time_period}", view_id="agent_events_view", exclude_root=True)` AND `analyze_latency_grouped(group_by="agent_name", time_range="{baseline_period}", view_id="agent_events_view", exclude_root=True)`.
     *   **2c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")` AND `analyze_latency_grouped(group_by="model_name", time_range="{baseline_period}", view_id="llm_events_view")`.
     *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")` AND `analyze_latency_grouped(group_by="tool_name", time_range="{baseline_period}", view_id="tool_events_view")`.
 
@@ -144,8 +144,8 @@ You are configured to analyze specific timeframes based on your inputs:
 
 2.  **ANALYZE (Multi-Level)**:
     *   **CRITICAL**: You MUST call the `analyze_latency_grouped` tool for ALL FOUR sub-steps CONCURRENTLY (in parallel in a single response) *before* moving to Step 3. Compare findings against your defined Static KPIs.
-    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name, model_name", time_range="{time_period}", view_id="llm_events_view")`.
-    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{time_period}", view_id="llm_events_view", exclude_root=True)`.
+    *   **2a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name", time_range="{time_period}", view_id="invocation_events_view")`.
+    *   **2b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name", time_range="{time_period}", view_id="agent_events_view", exclude_root=True)`.
     *   **2c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
     *   **2d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
 
@@ -165,12 +165,12 @@ You are configured to analyze specific timeframes based on your inputs:
 ### PLAYBOOK: trend (Temporal Trend Analysis)
 1.  **ANALYZE GLOBAL METRICS**:
     *   **CRITICAL**: You MUST call the `analyze_latency_grouped` tool for ALL FOUR sub-steps CONCURRENTLY to get overall stats for the `{time_period}`.
-    *   **1a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name, model_name", time_range="{time_period}", view_id="llm_events_view")`.
-    *   **1b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name, model_name", time_range="{time_period}", view_id="llm_events_view", exclude_root=True)`.
+    *   **1a. ROOT AGENTS**: Run `analyze_latency_grouped(group_by="root_agent_name", time_range="{time_period}", view_id="invocation_events_view")`.
+    *   **1b. SUB AGENTS**: Run `analyze_latency_grouped(group_by="agent_name", time_range="{time_period}", view_id="agent_events_view", exclude_root=True)`.
     *   **1c. MODELS (LLM)**: Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view")`.
     *   **1d. TOOLS**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view")`.
-2.  **Generate Time Series Data**: Call the `analyze_latency_trend` tool for Agents, Models, and Tools concurrently using your `{time_period}` (e.g., `7d` or `30d`) as the `time_range`, and split the data into chronological blocks using `{bucket_size}` (e.g., `1d` buckets).
-    *   **CRITICAL**: You MUST pass the explicit `view_id` parameter to `analyze_latency_trend`. For Agents use `view_id="agent_events_view"`. For Models use `view_id="llm_events_view"`. For Tools use `view_id="tool_events_view"`. Do NOT rely on the default. 
+2.  **Generate Time Series Data**: Call the `analyze_latency_trend` tool for Invocations, Agents, Models, and Tools concurrently using your `{time_period}` (e.g., `7d` or `30d`) as the `time_range`, and split the data into chronological blocks using `{bucket_size}` (e.g., `1d` buckets).
+    *   **CRITICAL**: You MUST pass the explicit `view_id` parameter to `analyze_latency_trend`. For Invocations use `view_id="invocation_events_view"`. For Agents use `view_id="agent_events_view"`. For Models use `view_id="llm_events_view"`. For Tools use `view_id="tool_events_view"`. Do NOT rely on the default. 
 2.  **Calculate Slopes**: Evaluate the chronological array of buckets for each component.
     *   Is the `p95_ms` increasing over time? (Positive Slope / Degrading)
     *   Is the `error_rate_pct` spiking recently? 
@@ -230,7 +230,15 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 
 ### 1. Document Structure & Style
 *   **Header:** Start with exactly `# Autonomous Observability Intelligence Report`.
-*   **Metadata:** Immediately follow with the "Analysis Metadata used" block (Playbook, Time Range, Generated Timestamp, Agent Version: {agent_version}).
+*   **Metadata:** Immediately follow with the "Analysis Metadata used" block (Playbook, Time Range, Generated Timestamp, Agent Version: {agent_version}). Format exactly like this:
+    ```markdown
+    | | |
+    | :--- | :--- |
+    | **Playbook** | `<playbook>` |
+    | **Time Range** | `<time_range>` |
+    | **Agent Version** | `<agent_version>` |
+    | **Generated** | `<timestamp> UTC` |
+    ```
 *   **Separators:** Use horizontal rules (`---`) to clearly separate **EVERY** major section.
 *   **Spacing:** Ensure there is a blank line before and after every table, header, and list. The report must feel "airy" and easy to read.
 *   **Tone:** Professional, objective, and analytical. Use **bolding** for key metrics, entity names, and status determinations to make them stand out.
@@ -239,121 +247,90 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 
 #### A. Executive Summary
 *   Write a clear, high-level narrative summary of the system's status.
-*   **MANDATORY VISUALIZATION**: 
-    *   **STRICT REQUIREMENT:** You MUST use a **Mermaid Pie Chart**. Do NOT use bar charts or any other type.
-    *   **Format:** Follow this EXACT syntax:
-    ```mermaid
-    pie title LLM P95 Latency vs. Target (5.0s)
-        "gemini-2.5-pro (Exceeded)" : 13.125
-        "gemini-2.0-flash (Exceeded)" : 9.571
-        "gemini-2.5-flash (Exceeded)" : 6.276
-    ```
-    *   *Constraint:* Ensure labels include status (e.g., "Exceeded", "OK") if relevant.
+*   Highlight any critical latency or error rate breaches.
 
 #### B. KPI Compliance
-*   **Concept:** A high-level scorecard.
-*   **Requirement:** Create 4 summary tables:
-    1.  **Overall KPI Status (Root Agents)**
-    2.  **KPI Compliance Per Agent**
-    3.  **KPI Compliance Per Model**
-    4.  **KPI Compliance Per Tool**
-*   **Formatting:**
-    *   **Explanation:** Before the tables, add a brief 1-sentence explanation of what this section shows.
-    *   **Columns:** `| Name | Mean Latency (s) | Target (s) | Status | P95 Latency (s) | Target (s) | Status | Overall |`
-    *   **Naming:** For Agents, use `**<agent_name> (<model_name>)**`.
-    *   **Status Indicators:** Use 🟢 for PASS (<= Target), 🔴 for FAIL (> Target). Overall is PASS only if BOTH Mean and P95 pass.
-    *   **Headers:** Use `**Bold Text**` for table headers (e.g., `**Overall KPI Status (Root Agents)**`), NOT Markdown headers (`####`).
+*   **Concept:** A high-level scorecard encompassing End to End, Sub Agent, Tool, and LLM levels.
+*   **Table Requirement:** All tables in this section MUST strictly adhere to this column structure, even if it means some cells are 'N/A' (e.g. tools won't have tokens):
+    `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Input Tok (Avg/P95) | Output Tok (Avg/P95) | Thought Tok (Avg/P95) | Tokens Consumed (Avg/P95) | Overall |`
+*   **Status Logic**:
+    *   **P{Level} (s)**: The *measured* latency at the target percentile.
+    *   **Target (s)**: The max allowed latency at that percentile.
+    *   **Status**: Latency Status 🟢 if P{Level} <= Lat Tgt, else 🔴.
+    *   **Err %**: The measured error rate percentage.
+    *   **Target (%)**: The max allowed error rate ({error_target}%).
+    *   **Status**: Error Status 🟢 if Err % <= Err Tgt %, else 🔴.
+    *   **Overall**: 🔴 if ANY status is 🔴, else 🟢.
 
-#### C. End to End Performance
-*   **Explanation:** Add a sentence explaining this shows user-facing latency.
-*   **MANDATORY VISUALIZATION**:
-    *   **STRICT REQUIREMENT:** You MUST use a **Mermaid Pie Chart**. Do NOT use bar charts.
-    *   **Format:**
-    ```mermaid
-    pie title End-to-End P95 Latency vs. Target (10s)
-        "gemini-2.5-pro (Exceeded)" : 13.125
-        "gemini-2.0-flash (OK)" : 9.571
-    ```
-*   **Table Columns:** `| Name | Model | Reqs | Err % | Error N | Mean (s) | P95 (s) | P99 (s) | Target P95 (s) | Dev %| Input Tok (Avg/P95) | Output Tok (Avg/P95) | Thought Tok (Avg/P95) |`
-*   **Deviation Explanation:** Explicitly state: "Positive values (+) indicate latency exceeded the target (slower), while negative values (-) indicate performance was better than the target (faster)."
-*   **Details:** Convert metrics to seconds (s).
+    **Sub-sections under KPI Compliance:**
 
-#### D. Sub Agent Performance
-*   **Explanation:** Explain these are internal delegate agents.
-*   **MANDATORY VISUALIZATION**:
-    *   **STRICT REQUIREMENT:** You MUST use a **Mermaid Pie Chart**. Do NOT use bar charts.
-    *   **Format:**
-    ```mermaid
-    pie title Sub Agent P95 Latency vs. Target (8s)
-        "bigquery_agent (Exceeded)" : 13.125
-        "google_search_agent (Exceeded)" : 9.571
-    ```
-*   **Table:** Same detailed column structure as End to End (include `Error N`).
+    ### End to End Performance
+    *   **Explanation:** Add a sentence explaining this shows user-facing performance from start to end of an invocation.
+    *   **Table:** `Overall KPI Status (Root Agents)` (Use the standardized columns above, populated with root agent data).
+    *   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+        *   **Chart 1 (Latency Status):** `pie title Latency Status (Root Agents)`
+        *   **Chart 2 (Error Status):** `pie title Error Status (Root Agents)`
+        *   **Dynamic Colors:** You MUST construct a Mermaid `%%{{init: ...}}%%` directive. To visually distinguish pie slices, you MUST generate **different variations** of green color hex codes (e.g., `#22c55e`, `#22c95e`, `#22c51e`) for "OK" slices and different variations of red color hex codes (e.g., `#ef4444`, `#ef4904`, `#ef4484`) for "Exceeded" slices. The variables `pie1`, `pie2`, etc., map sequentially to the rows in the pie chart.
 
-#### E. Model Performance
-*   **Explanation:** Explain this isolates valid LLM inference time from agent overhead.
-*   **Table:** Same detailed column structure (include `Error N`).
-*   **BASIC LLM STATISTICS TABLE (Comparison)**: In the **Model Performance** section, you MUST include a table titled **Basic LLM Statistics** populated from the `analyze_latency_performance` output.
-    *   **Note**: The output is a LIST of objects. You must match `metadata.model_name` to the column.
-    *   **Structure**: This must be a **SIDE-BY-SIDE Comparison** table where **Columns are Models**.
-    *   **Rows**:
-        - Total Requests [Use `performance.count`]
-        - Date Range [Use `metadata.time_range`]
-        - Mean Latency [Use `performance.mean_ms`]
-        - Std Deviation [Use `performance.std_ms`]
-        - Median Latency [Use `performance.median_ms`]
-        - P95 Latency [Use `performance.p95_ms`]
-        - P99 Latency [Use `performance.p99_ms`]
-        - Max Latency [Use `performance.max_ms`]
-        - Outliers 2 STD [Format as "Count (Pct%)" using `performance.outliers.count_2std` and `performance.outliers.pct_2std`]
-        - Outliers 3 STD [Format as "Count (Pct%)" using `performance.outliers.count_3std` and `performance.outliers.pct_3std`]
+    ### Sub Agent level
+    *   **Explanation:** Detail the performance of internal delegate agents called by the root agent.
+    *   **Table:** `KPI Compliance Per Agent` (Use the standardized columns above).
+    *   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+        *   **Chart 1 (Latency Status):** `pie title Sub Agent Latency Status (P{Level})`
+        *   **Chart 2 (Error Status):** `pie title Sub Agent Error Status ({error_target}%)`
+        *   **Requirement:** Append " (OK)" or " (Exceeded)" to the agent names based on status. Use full agent names.
+        *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
 
-    *   **TOKEN STATISTICS TABLE (Comparison)**: Immediately after, add a table titled **Token Statistics**:
+    ### Tool Level
+    *   **Explanation:** Break down the performance of each tool called by agents.
+    *   **Table:** `KPI Compliance Per Tool`. You MUST strictly omit token columns for this table. Use this exact structure:
+        `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Overall |`
+    *   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+        *   **Chart 1 (Latency Status):** `pie title Tools Latency Status (P{Level})`
+        *   **Chart 2 (Error Status):** `pie title Tools Error Status ({error_target}%)`
+        *   **Requirement:** Append " (OK)" or " (Exceeded)" to the tool names.
+        *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
+
+    ### LLM Level
+    *   **Explanation:** Explain this isolates valid LLM inference time from agent overhead. Break down the performance of each LLM.
+    *   **Table:** `KPI Compliance Per Model` (Use the standardized columns above).
+    *   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+        *   **Chart 1 (Latency Status):** `pie title Model Latency Status (P{Level})`
+        *   **Chart 2 (Error Status):** `pie title Model Error Status ({error_target}%)`
+        *   **Requirement:** Use the P{Level} value for the slices. Append " (OK)" or " (Exceeded)" to the model names.
+        *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
+
+#### C. LLM Statistics
+*   **BASIC STATISTICS TABLE (Comparison)**: Include a table titled **Basic Statistics** populated from the `analyze_latency_performance` output.
+    *   **Structure**: **SIDE-BY-SIDE Comparison** table where **Columns are Models**.
+    *   **Rows**: Total Requests, Date Range, Mean Latency (ms), Std Deviation (ms), Median Latency (ms), P95 Latency (ms), P99 Latency (ms), Max Latency (ms), Outliers 2 STD, Outliers 3 STD.
+*   **TOKEN STATISTICS TABLE (Comparison)**: Immediately after, add a table titled **Token Statistics**:
     *   **Structure**: Side-by-Side Comparison (Columns = Models).
-    *   **Rows**:
-        - Mean Output Tokens [Use `performance.token_stats.mean_tokens`]
-        - Median Output Tokens [Use `performance.token_stats.median_tokens`]
-        - Min Output Tokens [Use `performance.token_stats.min_tokens`]
-        - Max Output Tokens [Use `performance.token_stats.max_tokens`]
-        - Latency vs Output Corr. [Use `performance.token_stats.corr_latency_output`]
-        - Latency vs Output+Thinking Corr. [Use `performance.token_stats.corr_latency_output_thinking`]
-        - Correlation Strength [Interpret correlation value: >0.7 Strong, >0.4 Moderate, else Weak]
-        
-    *   **PERFORMANCE DISTRIBUTION TABLE (Comparison)**: Finally, add a table titled **Performance Distribution**:
-    *   **Structure**: Side-by-Side Comparison (Columns = Models).
-    *   **Format**: Show "Count (Percentage%)" in each cell. E.g., `12 (15.5%)`.
-    *   **Rows**:
-        - Very Fast (< 1s) [Use `performance.distribution.bucket_under_1s`]
-        - Fast (1-2s) [Use `performance.distribution.bucket_1_2s`]
-        - Medium (2-3s) [Use `performance.distribution.bucket_2_3s`]
-        - Slow (3-5s) [Use `performance.distribution.bucket_3_5s`]
-        - Very Slow (5-8s) [Use `performance.distribution.bucket_5_8s`]
-        - Outliers (8s+) [Use `performance.distribution.bucket_over_8s`]
-    
-    *   **LATENCY DISTRIBUTION BAR CHART (Mermaid)**:
-        *   Immediately after the **Performance Distribution** table, generate a Mermaid `xychart-beta` bar chart for EACH model to visualize the distribution counts.
-        *   **Requirement**: Create ONE chart per model. Do NOT use stacked charts.
-        *   **Syntax**:
-        ```mermaid
-        xychart-beta
-            title "Latency Distribution: <Model Name>"
-            x-axis ["0-1s", "1-2s", "2-3s", "3-5s", "5-8s", "8s+"]
-            y-axis "Count" 0 --> <Max Count rounded up to nearest 10>
-            bar [<bucket_under_1s>, <bucket_1_2s>, <bucket_2_3s>, <bucket_3_5s>, <bucket_5_8s>, <bucket_over_8s>]
-        ```
-        *   *Constraint:* Ensure syntax is correct. If `xychart-beta` is known to be unsupported in your environment, fall back to a simple text summary, but attempting the chart is preferred.
+    *   **Rows**: Mean Output Tokens, Median Output Tokens, Min Output Tokens, Max Output Tokens, Latency vs Output Corr., Latency vs Output+Thinking Corr., Correlation Strength.
+*   **PERFORMANCE DISTRIBUTION TABLES**: Finally, add a section called **Performance Distribution**:
+    *   **Structure**: Generate a separate table for EACH model.
+    *   **CRITICAL FORMATTING**: You MUST include a blank line between the title "**Performance Distribution: <Model Name>**" and the start of the table.
+    *   **Columns**: `| Category | Count | Percentage |`
+    *   **Rows**: Very Fast (< 1s), Fast (1-2s), Medium (2-3s), Slow (3-5s), Very Slow (5-8s), Outliers (8s+).
+    *   **Example**:
+        **Performance Distribution: gemini-2.5-pro**
 
-#### F. Tool Performance
-*   **Explanation:** Explain these are external tool calls.
-*   **MANDATORY VISUALIZATION**:
-    *   **STRICT REQUIREMENT:** You MUST use a **Mermaid Pie Chart**. Do NOT use bar charts.
-    *   **Format:**
+        | Category | Count | Percentage |
+        | :--- | :--- | :--- |
+        | Fast (< 1s) | 16 | 0.3% |
+*   **LATENCY DISTRIBUTION BAR CHART (Mermaid)**:
+    *   Immediately after the **Performance Distribution** table, generate a Mermaid `xychart-beta` bar chart for EACH model to visualize the distribution counts. Do NOT use stacked charts.
     ```mermaid
-    pie title Tool P95 Latency vs. Target (3s)
-        "sleep (Exceeded)" : 5.001
-        "list_table_ids (OK)" : 0.375
+    xychart-beta
+        title "Latency Distribution: <Model Name>"
+        x-axis ["0-1s", "1-2s", "2-3s", "3-5s", "5-8s", "8s+"]
+        y-axis "Count" 0 --> <Max>
+        bar [<bucket_under_1s>, <bucket_1_2s>, <bucket_2_3s>, <bucket_3_5s>, <bucket_5_8s>, <bucket_over_8s>]
     ```
-*   **Table:** `| Name | Reqs | Err % | Error N | Mean (s) | P95 (s) | P99 (s) | Target P95 (s) | Dev % |`
+
+#### D. Deep Dive / Root Cause Insights
+*   **Focus:** Synthesize the "Root Cause Analysis" findings. Use bullet points.
+*   **Red Flags:** Explicitly highlight any component with > 0% Error Rate as a **🔴 Red Flag**. Include Trace ID and Span ID. Contextualize why the bottleneck occurred.
 
 #### G. Deep Dive / Root Cause Insights
 *   **Focus:** Synthesize the "Root Cause Analysis" findings.
@@ -369,20 +346,20 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 *   **Formatting:** Truncate details only if > 250 chars.
 *   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
 
-#### I. Top LLM Bottlenecks & Impact
+#### F. Top LLM Bottlenecks & Impact
 *   **Source:** "Top LLM Bottlenecks & Impact" query results.
 *   **Table:** `| Rank | Timestamp | LLM (s) | TTFT (s) | Model | LLM Status | Input | Output | Thought | Total Tokens | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID |`
 *   **Visuals:** Use emojis (🟢/🔴/❓) for Status columns.
-*   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
+*   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks.
 
-#### J. Top Tool Bottlenecks & Impact
+#### G. Top Tool Bottlenecks & Impact
 *   **Source:** "Top Tool Bottlenecks & Impact" query results.
 *   **Table:** `| Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID |`
 *   **IDs:** **CRITICAL:** FULL session/trace/span IDs. MAXIMUM PRECISION. NEVER TRUNCATE. Wrap in backticks (e.g., `db59...`).
     
-#### K. Error Propagation Analysis
-*   **Source:** "Error Impact Analysis" query results.
+#### H. Error Analysis
 *   **Goal:** Show how errors ripple through the system.
+*   **Source:** "Error Impact Analysis" query results. Traces errors from origin.
 *   **Requirement:** Create 4 sub-tables (if data exists):
     1.  **Tool Errors**: `| Rank | Timestamp | Tool Name | Tool Args | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID |`
     2.  **LLM Errors**: `| Rank | Timestamp | Model Name | LLM Config | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID |`
@@ -392,11 +369,12 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     *   Truncate error messages only if > 200 chars.
     *   Use emojis (🟢/🔴/❓) for Status columns.
     
-#### L. Recommendations
+#### I. Recommendations
 *   Provide actionable logic-based advice (Optimizing prompts, parallelization *if proven*, caching, etc.).
 
-#### M. Configuration
+#### J. Configuration
 *   Append the `{config_dump}` json block at the end.
+
 
 ### 3. General Formatting Rules
 *   **Tables:** Always use `|---|...` separators.
