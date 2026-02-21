@@ -236,8 +236,8 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     | :--- | :--- |
     | **Playbook** | `<playbook>` |
     | **Time Range** | `<time_range>` |
-    | **Agent Version** | `<agent_version>` |
     | **Generated** | `<timestamp> UTC` |
+    | **Agent Version** | `<agent_version>` |
     ```
 *   **Separators:** Use horizontal rules (`---`) to clearly separate **EVERY** major section.
 *   **Spacing:** Ensure there is a blank line before and after every table, header, and list. The report must feel "airy" and easy to read.
@@ -377,6 +377,9 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 
 
 ### 3. General Formatting Rules
+*   **Trace IDs:** Whenever a Trace ID is displayed in ANY table, you MUST format it as a markdown link pointing to Google Cloud Trace Explorer. Use this exact URL format: `[<trace_id>](https://console.cloud.google.com/traces/explorer;traceId=<trace_id>?project={project_id})`.
+*   **Span IDs:** Whenever a Span ID is displayed in ANY table, you MUST format it as a markdown link. Note that you need the corresponding Trace ID to build this link. Use this exact URL format: `[<span_id>](https://console.cloud.google.com/traces/explorer;traceId=<trace_id>;spanId=<span_id>?project={project_id})`.
+*   **Other IDs:** Wrap Session IDs and Invocation IDs in backticks (e.g., `db59...`). FULL precision, NEVER truncate.
 *   **Tables:** Always use `|---|...` separators.
 *   **Numbers:** Round seconds to 3 decimal places. Round tokens to nearest integer.
 *   **Deltas:** Calculate % difference for Targets.

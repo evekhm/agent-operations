@@ -17,6 +17,12 @@ from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
 from google.genai import types
 
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    trace.set_tracer_provider(TracerProvider())
+except ImportError:
+    pass # OpenTelemetry is optional
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)

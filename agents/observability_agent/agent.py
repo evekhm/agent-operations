@@ -1,5 +1,14 @@
 import logging
 import os
+import json
+from datetime import datetime, timezone
+
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    trace.set_tracer_provider(TracerProvider())
+except ImportError:
+    pass # OpenTelemetry is optional
 
 from google.adk.agents import Agent, SequentialAgent
 from google.adk.apps import App
@@ -30,6 +39,9 @@ from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
     AGENT_TABLE_ID, AGENT_VERSION
 from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
 from .utils.telemetry import setup_telemetry
+from .utils.time import set_reference_time, parse_time_range
+import json
+from datetime import datetime, timezone, timedelta
 
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
 logging.basicConfig(level=getattr(logging, log_level, logging.ERROR))
@@ -72,7 +84,7 @@ playbook_agent = Agent(
 report_creator_agent = Agent(
     name="report_creator_agent",
     model=MODEL_ID,
-    instruction=lambda: REPORT_CREATOR_PROMPT.format(agent_version=AGENT_VERSION), # Automatically injects {playbook_findings} and {agent_version}
+    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).format(agent_version=AGENT_VERSION), # Automatically injects {playbook_findings} and {agent_version}
     description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
     tools=[],
     output_key="final_report",
@@ -127,6 +139,25 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     if config is None:
         config = {}
         
+    # Set a rounded reference time to ensure BigQuery caching works
+    # Rounding down to the current hour
+    now = datetime.now(timezone.utc)
+    rounded_now = now.replace(minute=0, second=0, microsecond=0)
+    set_reference_time(rounded_now)
+    
+    # Evaluate time periods into strict 'start to end' strings so they're explicitly documented in the prompt and report
+    def evaluate_period(period_str: str) -> str:
+        if not period_str:
+            return period_str
+        try:
+            parsed = json.loads(parse_time_range(period_str))
+            return f"{parsed['start_date']} to {parsed['end_date']}"
+        except Exception:
+            return period_str
+            
+    time_period_fixed = evaluate_period(time_period)
+    baseline_period_fixed = evaluate_period(baseline_period)
+        
     kpis_string = _format_kpis_for_prompt(kpis)
 
     
@@ -136,8 +167,8 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpi_percentile = kpis["end_to_end"].get("percentile_target", 95.0)
 
     hydrated_investigator_prompt = PLAYBOOK_INVESTIGATOR_PROMPT.format(
-        time_period=time_period,
-        baseline_period=baseline_period,
+        time_period=time_period_fixed,
+        baseline_period=baseline_period_fixed,
         bucket_size=bucket_size,
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
@@ -147,15 +178,17 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     playbook_agent.instruction = hydrated_investigator_prompt
 
     # Format config for display
-    import json
     config_str = json.dumps(config, indent=2, default=str)
+    
+    current_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    hydrated_report_prompt = REPORT_CREATOR_PROMPT.format(
+    hydrated_report_prompt = REPORT_CREATOR_PROMPT.replace("<timestamp>", current_timestamp).replace("<time_range>", time_period_fixed).format(
         playbook_findings="{playbook_findings}",
         kpis_string=kpis_string,
         config_dump=config_str,
-        time_period=time_period,
+        time_period=time_period_fixed,
         agent_version=AGENT_VERSION,
+        project_id=PROJECT_ID,
         Level=str(kpi_percentile),
         error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
     )
