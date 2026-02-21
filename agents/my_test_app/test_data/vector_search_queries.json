@@ -1,6 +1,11 @@
 {
   "state": {},
   "queries": [
-    "What is Agent Observability top 3 features?"
+    "What is Agent Observability top 3 features?",
+    "How do I create a new LlmAgent with ADK?",
+    "What is the difference between ParallelAgent and SequentialAgent in ADK?",
+    "How can I deploy my ADK agent to Vertex AI Agent Engine?",
+    "How do I configure structured JSON output for an ADK agent using pydantic?",
+    "What are the core concepts of the Google Agent Development Kit?"
   ]
 }

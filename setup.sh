@@ -30,15 +30,17 @@ fi
 # Define the region for Vertex AI Search
 REGION=${SEARCH_APP_REGION:-"global"}
 BUCKET_NAME="gs://${PROJECT_ID}-obs-docs"
+WEB_DATASTORE_ID=${WEB_DATASTORE_ID:-"${DATASTORE_ID}-web"}
 
 echo "Project ID:          $PROJECT_ID"
 echo "Datastore Region:    $REGION"
 echo "BQ Location Region:  $BQ_LOCATION"
 echo "Bucket Name:         $BUCKET_NAME"
 echo "Data Store ID:       $DATASTORE_ID"
+echo "Web Data Store ID:   $WEB_DATASTORE_ID"
 echo "----------------------------------------------------------"
 
-
+ACCESS_TOKEN=$(gcloud auth print-access-token)
 # Define the APIs needed for the project
 APIS=(
   "discoveryengine.googleapis.com"        # For specialized GenAI search and applications
@@ -69,7 +71,7 @@ done
 sleep 10
 
 # 2. Create BigQuery Dataset
-echo "[1/5] Creating BigQuery Dataset (if it doesn't exist)..."
+echo "[1/4] Creating BigQuery Dataset (if it doesn't exist)..."
 if [ -n "$DATASET_ID" ]; then
     bq show --dataset "${PROJECT_ID}:${DATASET_ID}" >/dev/null 2>&1 || {
         echo "Dataset ${DATASET_ID} not found. Creating..."
@@ -80,54 +82,93 @@ else
 fi
 
 # 3. Create GCS Bucket
-echo "[2/5] Creating GCS Bucket..."
-gcloud storage buckets create "$BUCKET_NAME" --location="$LOCATION" --project="$PROJECT_ID" || {
+echo "[2/4] Creating GCS Bucket..."
+gcloud storage buckets create "$GOOGLE_CLOUD_STAGING_BUCKET" --location="$LOCATION" --project="$PROJECT_ID" || {
     echo "Failed to create bucket. It might already exist or you lack permissions."
 }
 
-# 4. Copy docs into it
-echo "[3/5] Copying documents to GCS Bucket..."
-gcloud storage cp -r "$DOCS_PATH"/* "$BUCKET_NAME"
-
-# 5. Create Vertex AI Search Datastore
-echo "[4/5] Creating Vertex AI Data Store..."
 ACCESS_TOKEN=$(gcloud auth print-access-token)
 
+## 4. Copy docs into it
+#echo "[3/6] Copying documents to GCS Bucket..."
+#gcloud storage cp -r "$DOCS_PATH"/* "$BUCKET_NAME"
+#
+## 5. Create Vertex AI Search Datastore
+#echo "[4/6] Creating Vertex AI Data Store..."
+
+
+
+#curl -s -X POST \
+#  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+#  -H "Content-Type: application/json" \
+#  -H "X-Goog-User-Project: ${PROJECT_ID}" \
+#  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores?dataStoreId=${DATASTORE_ID}" \
+#  -d '{
+#    "displayName": "'"${DATASTORE_ID}"'",
+#    "industryVertical": "GENERIC",
+#    "solutionTypes": ["SOLUTION_TYPE_SEARCH"],
+#    "contentConfig": "CONTENT_REQUIRED",
+#    "documentProcessingConfig": {
+#        "chunkingConfig": {
+#            "layoutBasedChunkingConfig": {}
+#        }
+#    }
+#}'
+#
+#echo ""
+#echo "Waiting for datastore creation to propagate (15 seconds)..."
+#sleep 15
+#
+## 6. Import data from GCS into Datastore
+#echo "[5/5] Importing documents from GCS into Data Store..."
+#
+#curl -s -X POST \
+#  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+#  -H "Content-Type: application/json" \
+#  -H "X-Goog-User-Project: ${PROJECT_ID}" \
+#  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores/${DATASTORE_ID}/branches/default_branch/documents:import" \
+#  -d '{
+#    "gcsSource": {
+#      "inputUris": ["'"${BUCKET_NAME}"'/*"],
+#      "dataSchema": "content"
+#    },
+#    "reconciliationMode": "INCREMENTAL"
+#}'
+#
+#echo ""
+
+#  Create Vertex AI Web Data Store
+echo "[3/4] Creating Vertex AI Web Data Store..."
+if [ -z "$ACCESS_TOKEN" ]; then
+    ACCESS_TOKEN=$(gcloud auth print-access-token)
+fi
 curl -s -X POST \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -H "X-Goog-User-Project: ${PROJECT_ID}" \
-  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores?dataStoreId=${DATASTORE_ID}" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores?dataStoreId=${WEB_DATASTORE_ID}" \
   -d '{
-    "displayName": "'"${DATASTORE_ID}"'",
+    "displayName": "'"${WEB_DATASTORE_ID}"'",
     "industryVertical": "GENERIC",
     "solutionTypes": ["SOLUTION_TYPE_SEARCH"],
-    "contentConfig": "CONTENT_REQUIRED",
-    "documentProcessingConfig": {
-        "chunkingConfig": {
-            "layoutBasedChunkingConfig": {}
-        }
-    }
+    "contentConfig": "PUBLIC_WEBSITE"
 }'
 
 echo ""
-echo "Waiting for datastore creation to propagate (15 seconds)..."
+echo "Waiting for web datastore creation to propagate (15 seconds)..."
 sleep 15
 
-# 6. Import data from GCS into Datastore
-echo "[5/5] Importing documents from GCS into Data Store..."
-
+# 8. Add target site to Web Data Store
+echo "[4/4] Registering ADK documentation web link to Web Data Store..."
 curl -s -X POST \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -H "X-Goog-User-Project: ${PROJECT_ID}" \
-  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores/${DATASTORE_ID}/branches/default_branch/documents:import" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores/${WEB_DATASTORE_ID}/siteSearchEngine/targetSites" \
   -d '{
-    "gcsSource": {
-      "inputUris": ["'"${BUCKET_NAME}"'/*"],
-      "dataSchema": "content"
-    },
-    "reconciliationMode": "INCREMENTAL"
+    "providedUriPattern": "www.google.github.io/adk-docs/*",
+    "type": "INCLUDE",
+    "exactMatch": false
 }'
 
 echo ""

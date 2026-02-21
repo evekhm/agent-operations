@@ -39,9 +39,7 @@ DATASET_ID = os.environ.get("DATASET_ID")
 
 # TODO Describe/Automate a manual step to create Vertex ai search corpus
 SEARCH_APP_REGION = os.getenv("SEARCH_APP_REGION", "global")
-DATASTORE_ID = os.getenv(
-    "DATASTORE_ID", "observability-docs_1769629839308"
-)
+DATASTORE_ID = os.getenv("WEB_DATASTORE_ID")
 
 #SEARCH_APP = os.getenv("SEARCH_APP", "agentops_1769711212471")
 # search_engine = (
@@ -52,6 +50,7 @@ DATASTORE_ID = os.getenv(
 DATASTORE_PATH = f"projects/{PROJECT_ID}/locations/{SEARCH_APP_REGION}/collections/default_collection/dataStores/{DATASTORE_ID}"
 search_data_tool = VertexAiSearchTool(data_store_id=DATASTORE_PATH)
 
+print(f"DATASTORE_PATH={DATASTORE_PATH}")
 if PROJECT_ID is None:
     raise ValueError("Project ID is not set. Please set GOOGLE_CLOUD_PROJECT "
                      "or ensure application default credentials include a project.")
@@ -239,14 +238,20 @@ def create_agent() -> Agent:
         disallow_transfer_to_peers=True,
     )
 
-
     vertexai_search_agent = LlmAgent(
-        name="vertexai_search_observability_docs_agent",
+        name="vertexai_search_adk_web",
         model="gemini-2.0-flash",
-        description="Answers questions using a specific Vertex AI Search datastore that contains Agent Observability docs.",
-        instruction=f"You are a helpful assistant that answers questions based on information found in the document store: {DATASTORE_PATH}. Those are focus on Agent Observability features"
-                    " Use the search tool to find relevant information before answering. "
-                    "If the answer isn't in the documents, say that you couldn't find the information.",
+        description="Answers questions about the Python Agent Development Kit (ADK) by querying a dedicated Vertex AI Search datastore containing content from google.github.io/adk-docs/.",
+        instruction=(
+            f"You are an expert assistant specializing in the Agent Development Kit (ADK) for Python. "
+            f"Your knowledge is strictly limited to the information within the Vertex AI Search datastore: {DATASTORE_PATH}, "
+            "which contains documentation from www.google.github.io/adk-docs/. "
+            "ALWAYS use the 'search_data_tool' to query this datastore to answer questions about ADK Python features, development, and best practices. "
+            "Base your answers solely on the search results from the tool. "
+            "If the answer cannot be found within the datastore after a thorough search, respond with: "
+            "'I could not find information on this topic in the ADK Python documentation.' "
+            "Do not use any other knowledge or make assumptions."
+        ),
         tools=[search_data_tool],
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
