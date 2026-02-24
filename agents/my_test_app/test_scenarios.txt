@@ -1,0 +1,20 @@
+VALID_ALL|gemini-2.5-pro|NORMAL|$DEFAULT_REGION|What's the latest timestamp in `agent_events_test`?
+VALID_ALL|gemini-3.1-pro-preview|WRONG_CANDIDATE_COUNT_CONFIG|global|Test agent behavior with config HIGH_TEMP for 'scenario C'.
+VALID_ALL|gemini-2.5-flash|NORMAL|$DEFAULT_REGION|What is the current version of Python?|Explain the core components of an ADK application.
+NOK_ADK_DATASTORE|gemini-2.5-pro|NORMAL|$DEFAULT_REGION|What are common ADK deployment issues?|Describe ADK's configuration options.
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|How does Langfuse handle tracing data models in observability?
+VALID_ALL|gemini-2.5-flash|NORMAL|$DEFAULT_REGION|How many unique users interacted with the agent yesterday?|Try the unreliable tool with very_slow_topic input.
+VALID_ALL|gemini-2.5-pro|OVER_PROVISIONED|$DEFAULT_REGION|Explain transformer architecture.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|If `agent_events_test` shows recent activity, then look up 'new feature releases' on Google.
+VALID_ALL|gemini-2.5-flash|WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG|$DEFAULT_REGION|Using config WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG, calculate for 'test A'.
+VALID_ALL|gemini-2.5-pro|NORMAL|$DEFAULT_REGION|Get item_1, large_record_F.|Explain the benefits of AI agent tracing.
+VALID_ALL|gemini-3-pro-preview|HIGH_TEMP|global|Compare different AI observability platforms.|Provide examples of ADK configuration files.
+VALID_ALL|gemini-2.5-flash|NORMAL|$DEFAULT_REGION|How to deploy a Docker container to Google Cloud Run?|Query for user_id 'XYZ' in `user_interactions`.
+VALID_ALL|gemini-2.5-pro|NORMAL|$DEFAULT_REGION|What are the best open source observability solutions for agents?
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|Execute concurrent lookups for 'inventory_A', 'inventory_B', 'inventory_C'.
+VALID_ALL|gemini-2.5-flash|WRONG_CANDIDATE_COUNT_CONFIG|$DEFAULT_REGION|With WRONG_CANDIDATE_COUNT_CONFIG, process 'test B'.
+VALID_ALL|gemini-2.5-pro|NORMAL|$DEFAULT_REGION|Simulate a flaky action for 'test case 1'.|Describe event logging in AI agents.
+NOK_OBS_DATASTORE|gemini-3-pro-preview|NORMAL|global|What are the key metrics for AI agent health?|Explain real-time monitoring for AI agents.
+VALID_ALL|gemini-2.5-flash|HIGH_TEMP|$DEFAULT_REGION|Find the number of errors in BigQuery, if it's high, search Google for common causes.
+VALID_ALL|gemini-3.1-pro-preview|OVER_PROVISIONED|global|Retrieve customer_ID_123, order_ID_456 simultaneously.|Describe the deployment process for an ADK agent.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Who is the CEO of Google?|What is the role of OpenTelemetry in AI observability?

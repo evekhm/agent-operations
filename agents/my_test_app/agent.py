@@ -1,17 +1,16 @@
 import logging
 import os
+import random
 import sys
 import time
 from pathlib import Path
 
 import google.auth
 from dotenv import load_dotenv
+from google.adk.agents import Agent, LlmAgent, ParallelAgent
 from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
-
-import google.auth
-from google.adk.agents import Agent, LlmAgent, ParallelAgent
 from google.adk.tools import google_search
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
@@ -28,266 +27,296 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set environment variables
-
+# --- Configuration ---
 _, project_id = google.auth.default()
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=True)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=False)
 
 # --- Configuration ---
 PROJECT_ID = os.environ.get("PROJECT_ID", project_id)
 
-LOCATION = os.environ.get("LOCATION", "us-central1") # required for gemini-3 preview
-MODEL_ID = os.environ.get("AGENT_MODEL_ID", "gemini-2.5-pro")
+LOCATION = os.environ.get("LOCATION", "us-central1")
+MODEL_ID = os.environ.get("MODEL_ID", "gemini-2.5-pro")
 
-AGENT_EVENTS_TABLE_ID = os.environ.get("TABLE_ID")
-DATASET_ID = os.environ.get("DATASET_ID")
+TABLE_ID = os.environ.get("TABLE_ID", "agent_events")
+DATASET_ID = os.environ.get("DATASET_ID", "agent_analytics")
 
-# TODO Describe/Automate a manual step to create Vertex ai search corpus
 SEARCH_APP_REGION = os.getenv("SEARCH_APP_REGION", "global")
-DATASTORE_ID = os.getenv("WEB_DATASTORE_ID")
+DATASTORE_ID = os.getenv("DATASTORE_ID")
+WEB_DATASTORE_ID = os.getenv("WEB_DATASTORE_ID")
 
-#SEARCH_APP = os.getenv("SEARCH_APP", "agentops_1769711212471")
-# search_engine = (
-#     f'projects/{PROJECT_ID}/locations/{SEARCH_APP_REGION}/collections/default_collection/engines/{SEARCH_APP}'
-# )
-# search_engine_tool = VertexAiSearchTool(search_engine_id=search_engine)
+assert DATASTORE_ID, "DATASTORE_ID is not set"
+assert WEB_DATASTORE_ID, "WEB_DATASTORE_ID is not set"
+assert PROJECT_ID, "PROJECT_ID is not set"
 
 DATASTORE_PATH = f"projects/{PROJECT_ID}/locations/{SEARCH_APP_REGION}/collections/default_collection/dataStores/{DATASTORE_ID}"
 search_data_tool = VertexAiSearchTool(data_store_id=DATASTORE_PATH)
 
-print(f"DATASTORE_PATH={DATASTORE_PATH}")
-if PROJECT_ID is None:
-    raise ValueError("Project ID is not set. Please set GOOGLE_CLOUD_PROJECT "
-                     "or ensure application default credentials include a project.")
+WEB_DATASTORE_PATH = f"projects/{PROJECT_ID}/locations/{SEARCH_APP_REGION}/collections/default_collection/dataStores/{WEB_DATASTORE_ID}"
+search_web_data_tool = VertexAiSearchTool(data_store_id=WEB_DATASTORE_PATH)
 
-# --- CRITICAL: Set environment variables BEFORE Gemini instantiation ---
+print(f"DATASTORE_PATH={DATASTORE_PATH}")
+print(f"WEB_DATASTORE_PATH={WEB_DATASTORE_PATH}")
+print(f"MODEL_ID={MODEL_ID}")
+
 os.environ['GOOGLE_CLOUD_PROJECT'] = PROJECT_ID
 os.environ['GOOGLE_CLOUD_LOCATION'] = LOCATION
 os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'True'
 
-# --- Initialize the Plugin with Config ---
+# --- BigQuery Plugin Config ---
 bq_config = BigQueryLoggerConfig(
     enabled=True,
-    # event_allowlist=["LLM_REQUEST", "LLM_RESPONSE"], # Only log these events
-    max_content_length=500 * 1024, # 500 KB limit for inline text
-    batch_size=1, # Default is 1 for low latency, increase for high throughput
+    max_content_length=500 * 1024,
+    batch_size=1,
     shutdown_timeout=10.0
 )
-
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
     dataset_id=DATASET_ID,
-    table_id=AGENT_EVENTS_TABLE_ID,
+    table_id=TABLE_ID,
     config=bq_config,
     location="us"
 )
 
-logger.info("Starting Agent")
-# Add` shared library to path if we are running locally
-# This is necessary for adk web or direct execution to find the shared module
+# --- Add shared library to path ---
 CURRENT_DIR = Path(__file__).resolve().parent
 SHARED_DIR = CURRENT_DIR.parent.parent.parent / "shared" / "py" / "src"
 if SHARED_DIR.exists() and str(SHARED_DIR) not in sys.path:
     sys.path.append(str(SHARED_DIR))
 
-
-NOK_CANDIDATE_COUNT=5
-OK_CANDIDATE_COUNT=1
-NOK_MAX_OUTPUT_TOKENS=100000
-OK_MAX_OUTPUT_TOKENS=65000
-LITTLE_MAX_OUTPUT_TOKENS=5000
-
-WRONG_CONFIG1=types.GenerateContentConfig(
-    top_k=5,
-    top_p=0.1,
-    candidate_count=NOK_CANDIDATE_COUNT,
+# --- Generation Configs for Testing Hypotheses ---
+NORMAL_CONFIG = types.GenerateContentConfig(
+    max_output_tokens=8192,
+    labels={"config_setting": "normal"},
+)
+OVER_PROVISIONED_CONFIG = types.GenerateContentConfig( # For H2
     max_output_tokens=65000,
-    presence_penalty=0.1,
-    labels={"config_setting": "wrong_config1"},
+    labels={"config_setting": "over_provisioned"},
+)
+HIGH_TEMP_CONFIG = types.GenerateContentConfig( # For H13
+    temperature=0.9,
+    top_k=50,
+    max_output_tokens=8192,
+    labels={"config_setting": "high_temp"},
 )
 
-WRONG_CONFIG2=types.GenerateContentConfig(
+WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG=types.GenerateContentConfig(
     top_k=5,
     top_p=0.1,
-    candidate_count=OK_CANDIDATE_COUNT,
-    max_output_tokens=NOK_MAX_OUTPUT_TOKENS,
+    candidate_count=1,
+    max_output_tokens=100000, #NOK
     presence_penalty=0.1,
-    labels={"config_setting": "wrong_config2"},
+    labels={"config_setting": "wrong_max_output_tokens_count"},
 )
 
-OK_CONFIG1=types.GenerateContentConfig(
+WRONG_CANDIDATE_COUNT_CONFIG=types.GenerateContentConfig(
     top_k=5,
     top_p=0.1,
-    candidate_count=OK_CANDIDATE_COUNT,
-    max_output_tokens=OK_MAX_OUTPUT_TOKENS,
+    candidate_count=5, #NOK
+    max_output_tokens=8192,
     presence_penalty=0.1,
-    labels={"config_setting": "ok_config1"},
-)
-
-OK_CONFIG2=types.GenerateContentConfig(
-    top_k=5,
-    top_p=0.1,
-    candidate_count=OK_CANDIDATE_COUNT,
-    max_output_tokens=LITTLE_MAX_OUTPUT_TOKENS,
-    presence_penalty=0.1,
-    labels={"config_setting": "ok_config2"},
+    labels={"config_setting": "wrong_candidate_count"},
 )
 
 
-def get_agent_config() -> types.GenerateContentConfig:
-    config_name = os.environ.get("AGENT_CONFIG", "OK_CONFIG2")
+def get_agent_config(config_name: str) -> types.GenerateContentConfig:
     configs = {
-        "WRONG_CONFIG1": WRONG_CONFIG1,
-        "WRONG_CONFIG2": WRONG_CONFIG2,
-        "OK_CONFIG1": OK_CONFIG1,
-        "OK_CONFIG2": OK_CONFIG2,
+        "NORMAL": NORMAL_CONFIG,
+        "OVER_PROVISIONED": OVER_PROVISIONED_CONFIG,
+        "HIGH_TEMP": HIGH_TEMP_CONFIG,
+        "WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG": WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG,
+        "WRONG_CANDIDATE_COUNT_CONFIG": WRONG_CANDIDATE_COUNT_CONFIG,
     }
-    logger.info(f"Using agent config: {config_name}")
-    return configs.get(config_name, OK_CONFIG2)
+    return configs.get(config_name, NORMAL_CONFIG)
 
-
-# --- Initialize Tools and Model ---
+# --- Tools ---
 credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
 bigquery_toolset = BigQueryToolset(
     credentials_config=BigQueryCredentialsConfig(credentials=credentials)
 )
 
+def flaky_tool_simulation(query: str, tool_name: str = "unreliable_tool") -> str:
+    """Simulates a tool that sometimes fails or is slow (H8, H9)."""
+    logger.info(f"Performing flaky {tool_name} for: {query}")
+    rand_val = random.random()
+    if rand_val < 0.08: # 8% chance of timeout
+        logger.error(f"Flaky {tool_name}: TIMEOUT")
+        time.sleep(random.uniform(5, 10))
+        raise TimeoutError(f"{tool_name} timed out for query: {query}")
+    if rand_val < 0.16: # 8% chance of quota error
+        logger.error(f"Flaky {tool_name}: QUOTA ERROR")
+        raise RuntimeError(f"Quota exceeded for {tool_name} for query: {query}")
 
-def hello_tool(name: str) -> str:
-    """
-    A simple tool that returns a greeting.
-    
-    Args:
-        name: The name of the person to greet.
-    """
-    return f"Hello, {name}!"
+    if "very_slow_topic" in query: # H6 simulation
+        time.sleep(random.uniform(4, 8))
+    else:
+        time.sleep(random.uniform(0.5, 2))
 
+    return f"Simulated {tool_name} results for: {query}. More details can be found by searching for specific aspects."
 
-def raise_exception() -> str:
-    """Throws a runtime exception for testing purposes."""
-    logger.error("Throwing tool exception")
-    # Raise directly so the framework catches it and triggers on_tool_error_callback
-    raise RuntimeError("This is a test exception for Tool Error verification.")
+def simulated_db_lookup(item_id: str) -> str:
+    """Simulates a database lookup with variable latency (H6)."""
+    delay = random.uniform(0.2, 1.0)
+    if "large_record" in item_id:
+        delay += random.uniform(2, 4)
+    logger.info(f"DB Lookup for {item_id}, delaying for {delay:.2f}s")
+    time.sleep(delay)
+    return f"Data for item: {item_id}"
 
+def complex_calculation(data: str) -> str:
+    """Simulates a tool that does some complex processing."""
+    delay = random.uniform(1, 3)
+    logger.info(f"Performing complex calculation on {data}, delaying for {delay:.2f}s")
+    time.sleep(delay)
+    return f"Calculation result for {data}: {random.randint(100, 1000)}"
 
-def sleep(seconds: int) -> None:
-    """Sleeps for one minute."""
-    """Pauses the execution for a specified number of seconds.
+# --- Sub-Agents ---
 
-    Args:
-        seconds: The number of seconds to sleep.
-    """
-    logger.info(f"Going to sleep for {seconds} seconds...")
-    time.sleep(seconds)
-    logger.info("Finished sleeping")
+def log_after_model(**kwargs):
+    logger.info(f"*** AFTER MODEL CALLBACK ***")
+    response = kwargs.get('response', None) or kwargs.get('llm_response', None)
+    if response:
+        logger.info(f"Raw Response object: {response}")
 
+def log_after_tool(**kwargs):
+    logger.info(f"*** AFTER TOOL CALLBACK ***")
+    logger.info(f"Result: {kwargs.get('result', None)}")
 
-def build_parallel_team(agent_index: int) -> LlmAgent:
-    """Creates a dedicated analysis team for a specific latency dimension."""
-    # 1. Primer Agent
-    primer = LlmAgent(
-        name=f"sleep_sub_agent_{agent_index}",
+def create_documentation_agent():
+    return LlmAgent(
+        name="adk_documentation_agent",
         model=MODEL_ID,
-        description="A simple agent that can sleep.",
-        instruction="You are a helpful assistant. If asked to sleep, use the sleep_one_minute tool. If user does not mention units, always assume those are seconds. SLeep 1 means sleep one second.",
-        generate_content_config=types.GenerateContentConfig(
-            temperature=0,
-            labels={"llm.agent.name": f"sleep_sub_agent_{agent_index}"}
-        ),
-
-        tools=[sleep]
-    )
-    return primer
-
-def create_agent() -> Agent:
-    """
-    Factory function to create the ADK Agent instance.
-    """
-
-    exception_agent = LlmAgent(
-        name="raise_exception_agent",
-        model=MODEL_ID,
-        description="An agent that throws exceptions.",
-        instruction="You are a simplified agent. When asked to crash or throw error, call the raise_exception tool.",
-        tools=[raise_exception],
-        generate_content_config=types.GenerateContentConfig(
-            temperature=1,
-            max_output_tokens=65000,
-        ),
-    )
-
-    bigquery_agent = Agent(
-        model=MODEL_ID,
-        name="bigquery_agent",
-        description=(
-            "Agent to answer questions about BigQuery data and models and execute"
-            " SQL queries."
-        ),
-        instruction=f"""\
-            You are a data science agent with access to several BigQuery tools.
-            You have access to the dataset `{PROJECT_ID}.{DATASET_ID}`.
-            The main table containing agent events is `{AGENT_EVENTS_TABLE_ID}`.
-            Use `list_tables` to see other available tables if needed.
-            Make use of those tools to answer the user's questions.
-        """,
-        tools=[bigquery_toolset],
-    )
-
-    google_search_agent = Agent(
-        name="google_search_agent",
-        model="gemini-2.0-flash",
-        description="Agent to answer questions using Google Search.",
-        instruction="I can answer your questions by searching the internet. Just ask me anything!",
-        tools=[google_search],
-        disallow_transfer_to_parent=True,
-        disallow_transfer_to_peers=True,
-    )
-
-    vertexai_search_agent = LlmAgent(
-        name="vertexai_search_adk_web",
-        model="gemini-2.0-flash",
         description="Answers questions about the Python Agent Development Kit (ADK) by querying a dedicated Vertex AI Search datastore containing content from google.github.io/adk-docs/.",
         instruction=(
-            f"You are an expert assistant specializing in the Agent Development Kit (ADK) for Python. "
-            f"Your knowledge is strictly limited to the information within the Vertex AI Search datastore: {DATASTORE_PATH}, "
-            "which contains documentation from www.google.github.io/adk-docs/. "
-            "ALWAYS use the 'search_data_tool' to query this datastore to answer questions about ADK Python features, development, and best practices. "
-            "Base your answers solely on the search results from the tool. "
-            "If the answer cannot be found within the datastore after a thorough search, respond with: "
-            "'I could not find information on this topic in the ADK Python documentation.' "
-            "Do not use any other knowledge or make assumptions."
+            "You are an expert assistant specializing in the Agent Development Kit (ADK) for Python. "
+            f"Use the Vertex AI Search datastore at {DATASTORE_PATH} via the 'search_data_tool' to answer questions. "
+            "Always search first, and then formulate a helpful, professional response based on what you find."
         ),
         tools=[search_data_tool],
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
     )
 
-    sleep_team = ParallelAgent(
-        name="sleep_sub_agent",
-        description="Runs multiple agents in parallel to execute sleep action by the user.",
-        sub_agents=[build_parallel_team(ix) for ix in range(1, 4)])
-
-    agent = LlmAgent(
-        name="my_test_agent",
+def create_observability_agent():
+    return LlmAgent(
+        name="ai_observability_agent",
         model=MODEL_ID,
-        description="A helpful agent to generate some user interactions.",
+        description="Answers questions about AI Agent Observability, Tracing, and Langfuse by searching the Vertex AI Search Web Datastore.",
         instruction=(
-            "You are a helpful assistant. "
-            "Use the hello_tool to greet the user if they provide a name. "
-            "Otherwise, introduce yourself as the Test Agent and use sub agents to delegate the task."
-            "Use sub-agents to delegate tasks that you are not equipped to perform. If user asks to crash, call exception_agent "
+            "You are an expert assistant specializing in AI Observability. "
+            f"Use the Vertex AI Search datastore at {WEB_DATASTORE_PATH} via the 'search_web_data_tool' to extract information to answer questions. "
+            "Always search first, and then formulate a helpful, professional response based on what you find."
         ),
-        sub_agents=[vertexai_search_agent, google_search_agent, bigquery_agent, exception_agent, sleep_team],
-        tools=[hello_tool, sleep],
-        generate_content_config=get_agent_config(),
+        tools=[search_web_data_tool],
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
     )
 
-    
-    return agent
+def create_bigquery_agent():
+    return LlmAgent(
+        name="bigquery_data_agent",
+        model=MODEL_ID,
+        description="Analyzes data in BigQuery datasets.",
+        instruction=(
+            f"You are a data analyst. Use the BigQuery tools to answer questions about data in `{PROJECT_ID}.{DATASET_ID}`. "
+            f"The main table for events is `{TABLE_ID}`. Use `list_tables` if needed."
+        ),
+        tools=[bigquery_toolset],
+        generate_content_config=get_agent_config(os.environ.get("BQ_AGENT_CONFIG", "NORMAL")),
+
+    )
+
+def create_google_search_agent():
+    return LlmAgent(
+        name="google_search_agent",
+        model=MODEL_ID,
+        description="Performs general web searches using Google Search.",
+        instruction="Use the google_search tool to find information from the web.",
+        tools=[google_search],
+        generate_content_config=get_agent_config(os.environ.get("SEARCH_AGENT_CONFIG", "NORMAL")),
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True
+    )
+
+def create_unreliable_tool_agent():
+    return LlmAgent(
+        name="unreliable_tool_agent",
+        model=MODEL_ID,
+        description="Uses a simulated tool that is potentially slow or prone to failures. Use this agent when asked to simulate a slow response, failure, timeout, or flaky behavior for a request.",
+        instruction="Use the flaky_tool_simulation tool to perform the action. Be prepared for potential delays or errors. If it fails, report the failure.",
+        tools=[flaky_tool_simulation],
+        generate_content_config=get_agent_config(os.environ.get("UNRELIABLE_AGENT_CONFIG", "NORMAL")),
+    )
+
+def create_parallel_lookup_agent():
+    """Agent to test H4 and H7."""
+    sub_agents = []
+    for i in range(3): # Simulate 3 parallel workers
+        agent = LlmAgent(
+            name=f"lookup_worker_{i+1}",
+            model=MODEL_ID,
+            instruction="You will be given an item ID. Use the simulated_db_lookup tool to fetch the data for this single ID.",
+            tools=[simulated_db_lookup],
+            generate_content_config=types.GenerateContentConfig(labels={"config_setting": "lookup_worker"}),
+            disallow_transfer_to_parent=True,
+            disallow_transfer_to_peers=True,
+        )
+        sub_agents.append(agent)
+    return ParallelAgent(
+        name="parallel_db_lookup",
+        description="Looks up multiple item details from a simulated database in parallel.",
+        sub_agents=sub_agents,
+    )
+
+def create_config_test_agent(config_name: str):
+    return LlmAgent(
+        name=f"config_test_agent_{config_name.lower()}",
+        model=MODEL_ID,
+        description=f"Handles ANY user request that specifically mentions using the '{config_name}' configuration. If the prompt contains '{config_name}', you MUST route to this agent.",
+        instruction=f"Respond to the user's query. You are operating under the {config_name} configuration.",
+        tools=[complex_calculation], # Give it a tool to make it do something
+        generate_content_config=get_agent_config(config_name),
+    )
+
+# --- Root Agent ---
+def create_agent() -> Agent:
+    doc_agent = create_documentation_agent()
+    obs_agent = create_observability_agent()
+    bq_agent = create_bigquery_agent()
+    search_agent = create_google_search_agent()
+    unreliable_agent = create_unreliable_tool_agent()
+    parallel_agent = create_parallel_lookup_agent()
+    config_normal_agent = create_config_test_agent("NORMAL")
+    config_over_provisioned_agent = create_config_test_agent("OVER_PROVISIONED")
+    config_high_temp_agent = create_config_test_agent("HIGH_TEMP")
+    config_wrong_max_tokens_agent = create_config_test_agent("WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG")
+    config_wrong_candidate_agent = create_config_test_agent("WRONG_CANDIDATE_COUNT_CONFIG")
+    config_invalid_model_agent = create_config_test_agent("INVALID_MODEL_CONFIG")
+
+    root_agent = LlmAgent(
+        name="knowledge_qa_supervisor",
+        model=MODEL_ID,
+        description="Answers questions by delegating to specialized sub-agents.",
+        instruction=(
+            "You are a strict router. Your ONLY job is to route the user's input to the correct sub-agent based on these EXACT rules:\n"
+            "1. If the input contains a _CONFIG keyword (e.g., 'WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG', 'INVALID_MODEL_CONFIG', 'NORMAL', 'OVER_PROVISIONED', 'HIGH_TEMP'), you MUST route it to the corresponding 'config_test_agent_...'.\n"
+            "2. If the input mentions 'unreliable tool', 'flaky action', 'timeout', 'simulate', or asks to test a failure or a slow response, you MUST route it to 'unreliable_tool_agent'.\n"
+            "3. If the input asks to fetch/lookup multiple items in parallel (e.g., 'parallel lookup', 'Retrieve ... in parallel'), you MUST route it to 'parallel_db_lookup'.\n"
+            "4. If the input asks about BigQuery datasets, tables, or records (e.g., '`agent_events_test`', '`prod_events`'), you MUST route it to 'bigquery_data_agent'.\n"
+            "5. If the input asks about ADK documentation, how to use ADK tools, or ADK Application structure, you MUST route it to 'adk_documentation_agent'.\n"
+            "6. If the input asks about AI Agent Observability, Tracing, Data Models, or Langfuse, you MUST route it to 'ai_observability_agent'.\n"
+            "7. For general knowledge questions (e.g., 'Who is the CEO...', 'weather in...'), you MUST route it to 'google_search_agent'.\n"
+            "Failure to follow these exact deterministic routing rules is unacceptable."
+        ),
+        sub_agents=[
+            doc_agent, obs_agent, bq_agent, search_agent, unreliable_agent, parallel_agent,
+            config_normal_agent, config_over_provisioned_agent, config_high_temp_agent,
+            config_wrong_max_tokens_agent, config_wrong_candidate_agent, config_invalid_model_agent
+        ],
+        generate_content_config=types.GenerateContentConfig(labels={"config_setting": "root_agent"})
+    )
+    return root_agent
 
 # Perform the instantiation for ADK to find
 root_agent = create_agent()
-
-app = App(root_agent=root_agent, name="my_test_app",
-          plugins=[bq_logging_plugin, LoggingPlugin()], )
+app = App(root_agent=root_agent, name="my_test_app", plugins=[bq_logging_plugin, LoggingPlugin()])
