@@ -30,6 +30,7 @@ fi
 # Define the region for Vertex AI Search
 REGION=${SEARCH_APP_REGION:-"global"}
 BUCKET_NAME="gs://${PROJECT_ID}-obs-docs"
+BQ_LOCATION=$DATASET_LOCATION
 
 echo "Project ID:          $PROJECT_ID"
 echo "Datastore Region:    $REGION"
