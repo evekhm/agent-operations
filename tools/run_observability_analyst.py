@@ -262,7 +262,7 @@ async def main():
         # Save Report
         if final_report.strip():
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_path = os.path.join(dir_path, f"../reports/observability_report_{timestamp}.md")
+            report_path = os.path.join(dir_path, f"../reports/observability_{playbook}_report_{timestamp}.md")
             os.makedirs(os.path.dirname(report_path), exist_ok=True)
             
             with open(report_path, "w") as f:
