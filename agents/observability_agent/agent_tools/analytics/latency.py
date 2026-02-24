@@ -18,6 +18,7 @@ import pandas as pd
 
 from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION,
                        INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID)
+
 from ...utils.bq import execute_bigquery
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause, sanitize_for_markdown
@@ -733,11 +734,17 @@ async def get_active_metadata(
                 return []
             return df[column_name].tolist()
 
-        agents, root_agents, models = await asyncio.gather(
+        tasks = [
             fetch_distinct("agent_name"),
-            fetch_distinct("root_agent_name"),
-            fetch_distinct("model_name")
-        )
+            fetch_distinct("root_agent_name")
+        ]
+        if target_table in (LLM_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID):
+            tasks.append(fetch_distinct("model_name"))
+        
+        results = await asyncio.gather(*tasks)
+        agents = results[0]
+        root_agents = results[1]
+        models = results[2] if len(results) > 2 else []
         
         if not agents and not root_agents and not models:
             return json.dumps({"message": "No metadata found", "metadata": {"view_id": target_table}})
@@ -1428,6 +1435,12 @@ async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> 
                 "message": "No tool impact data found.",
                 "metadata": {"view_id": TOOL_EVENTS_VIEW_ID}
             })
+
+        for col in ['tool_args', 'response_content', 'tool_result']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).apply(
+                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
+                )
 
         records = []
         for _, row in df.iterrows():

@@ -199,28 +199,56 @@ async def main():
         )
         
         # Runner.run_async requires user_id and session_id
-        async for event in runner.run_async(
-            user_id=user_id, 
-            session_id=session_id, 
-            new_message=user_msg
-        ):
-            if event.content:
-                # Handle Content object
-                text_chunk = ""
-                if hasattr(event.content, "parts"):
-                    for part in event.content.parts:
-                        if part.text:
-                            text_chunk += part.text
-                        elif part.function_call:
-                            print(f"\n[Tool Call: {part.function_call.name}]", end="", flush=True)
-                # Handle string (legacy fallback)
-                elif isinstance(event.content, str):
-                    text_chunk = event.content
-                
-                if text_chunk:
-                    print(text_chunk, end="", flush=True)
-                    response_text += text_chunk
-        
+        try:
+            async for event in runner.run_async(
+                user_id=user_id, 
+                session_id=session_id, 
+                new_message=user_msg
+            ):
+                if event.content:
+                    # Handle Content object
+                    text_chunk = ""
+                    if hasattr(event.content, "parts"):
+                        for part in event.content.parts:
+                            if part.text:
+                                text_chunk += part.text
+                            elif part.function_call:
+                                print(f"\n[Tool Call: {part.function_call.name}]", end="", flush=True)
+                    # Handle string (legacy fallback)
+                    elif isinstance(event.content, str):
+                        text_chunk = event.content
+                    
+                    if text_chunk:
+                        print(text_chunk, end="", flush=True)
+                        response_text += text_chunk
+        except Exception as e:
+            print(f"\n\n⚠️ Playbook execution encountered an error: {e}")
+            print("🚀 Generating report from partial findings...")
+            from agents.observability_agent.agent import report_creator_agent
+            
+            report_runner = Runner(
+                agent=report_creator_agent,
+                session_service=session_service,
+                app_name="observability_analyst_app"
+            )
+            report_msg = types.Content(role="user", parts=[types.Part(text="Generate the final report from the findings gathered so far.")])
+            
+            async for event in report_runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=report_msg
+            ):
+                if event.content:
+                    text_chunk = ""
+                    if hasattr(event.content, "parts"):
+                        for part in event.content.parts:
+                            if part.text: text_chunk += part.text
+                    elif isinstance(event.content, str):
+                        text_chunk = event.content
+                    if text_chunk:
+                        print(text_chunk, end="", flush=True)
+                        response_text += text_chunk
+
         end_time = time.time()
         execution_time = end_time - start_time
         print(f"\n\n✅ **Analysis Complete** (Execution Time: {execution_time:.2f} seconds)")
