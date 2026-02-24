@@ -14,7 +14,7 @@ else
     echo "WARNING: .env file not found at $SCRIPT_DIR/.env"
 fi
 
-DOCS_PATH="$SCRIPT_DIR/project_context/docs"
+DOCS_PATH="$SCRIPT_DIR/project_context/search-test-docs"
 if [ ! -d "$DOCS_PATH" ]; then
     echo "ERROR: Directory $DOCS_PATH not found!"
     exit 1
@@ -30,7 +30,6 @@ fi
 # Define the region for Vertex AI Search
 REGION=${SEARCH_APP_REGION:-"global"}
 BUCKET_NAME="gs://${PROJECT_ID}-obs-docs"
-WEB_DATASTORE_ID=${WEB_DATASTORE_ID:-"${DATASTORE_ID}-web"}
 
 echo "Project ID:          $PROJECT_ID"
 echo "Datastore Region:    $REGION"
@@ -70,8 +69,8 @@ for API in "${APIS[@]}"; do
 done
 sleep 10
 
-# 2. Create BigQuery Dataset
-echo "[1/4] Creating BigQuery Dataset (if it doesn't exist)..."
+# Create BigQuery Dataset
+echo "Creating BigQuery Dataset (if it doesn't exist)..."
 if [ -n "$DATASET_ID" ]; then
     bq show --dataset "${PROJECT_ID}:${DATASET_ID}" >/dev/null 2>&1 || {
         echo "Dataset ${DATASET_ID} not found. Creating..."
@@ -81,64 +80,65 @@ else
     echo "WARNING: DATASET_ID not set in .env. Skipping dataset creation."
 fi
 
-# 3. Create GCS Bucket
-echo "[2/4] Creating GCS Bucket..."
+# Create GCS Buckets
+echo "Creating GCS Bucket..."
 gcloud storage buckets create "$GOOGLE_CLOUD_STAGING_BUCKET" --location="$LOCATION" --project="$PROJECT_ID" || {
     echo "Failed to create bucket. It might already exist or you lack permissions."
 }
+gcloud storage buckets create "$BUCKET_NAME" --location="$LOCATION" --project="$PROJECT_ID" || {
+    echo "Failed to create bucket. It might already exist or you lack permissions."
+}
+
+# Copy docs into it
+echo "Copying documents to GCS Bucket..."
+gcloud storage cp -r "$DOCS_PATH"/* "$BUCKET_NAME"
 
 ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-## 4. Copy docs into it
-#echo "[3/6] Copying documents to GCS Bucket..."
-#gcloud storage cp -r "$DOCS_PATH"/* "$BUCKET_NAME"
-#
-## 5. Create Vertex AI Search Datastore
-#echo "[4/6] Creating Vertex AI Data Store..."
+# 5. Create Vertex AI Search Datastore
+echo "Creating Vertex AI Data Store for pdf documents..."
+curl -s -X POST \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "X-Goog-User-Project: ${PROJECT_ID}" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores?dataStoreId=${DATASTORE_ID}" \
+  -d '{
+    "displayName": "'"${DATASTORE_ID}"'",
+    "industryVertical": "GENERIC",
+    "solutionTypes": ["SOLUTION_TYPE_SEARCH"],
+    "contentConfig": "CONTENT_REQUIRED",
+    "documentProcessingConfig": {
+        "chunkingConfig": {
+            "layoutBasedChunkingConfig": {}
+        }
+    }
+}'
 
+echo ""
+echo "Waiting for datastore creation to propagate (15 seconds)..."
+sleep 15
 
+# 6. Import data from GCS into Datastore
+echo "Importing documents from GCS into Data Store..."
 
-#curl -s -X POST \
-#  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-#  -H "Content-Type: application/json" \
-#  -H "X-Goog-User-Project: ${PROJECT_ID}" \
-#  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores?dataStoreId=${DATASTORE_ID}" \
-#  -d '{
-#    "displayName": "'"${DATASTORE_ID}"'",
-#    "industryVertical": "GENERIC",
-#    "solutionTypes": ["SOLUTION_TYPE_SEARCH"],
-#    "contentConfig": "CONTENT_REQUIRED",
-#    "documentProcessingConfig": {
-#        "chunkingConfig": {
-#            "layoutBasedChunkingConfig": {}
-#        }
-#    }
-#}'
-#
-#echo ""
-#echo "Waiting for datastore creation to propagate (15 seconds)..."
-#sleep 15
-#
-## 6. Import data from GCS into Datastore
-#echo "[5/5] Importing documents from GCS into Data Store..."
-#
-#curl -s -X POST \
-#  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-#  -H "Content-Type: application/json" \
-#  -H "X-Goog-User-Project: ${PROJECT_ID}" \
-#  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores/${DATASTORE_ID}/branches/default_branch/documents:import" \
-#  -d '{
-#    "gcsSource": {
-#      "inputUris": ["'"${BUCKET_NAME}"'/*"],
-#      "dataSchema": "content"
-#    },
-#    "reconciliationMode": "INCREMENTAL"
-#}'
-#
-#echo ""
+curl -s -X POST \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "X-Goog-User-Project: ${PROJECT_ID}" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/collections/default_collection/dataStores/${DATASTORE_ID}/branches/default_branch/documents:import" \
+  -d '{
+    "gcsSource": {
+      "inputUris": ["'"${BUCKET_NAME}"'/*"],
+      "dataSchema": "content"
+    },
+    "reconciliationMode": "INCREMENTAL"
+}'
+
+echo ""
+
 
 #  Create Vertex AI Web Data Store
-echo "[3/4] Creating Vertex AI Web Data Store..."
+echo "Creating Vertex AI Web Data Store for ADK web site index..."
 if [ -z "$ACCESS_TOKEN" ]; then
     ACCESS_TOKEN=$(gcloud auth print-access-token)
 fi
@@ -159,7 +159,7 @@ echo "Waiting for web datastore creation to propagate (15 seconds)..."
 sleep 15
 
 # 8. Add target site to Web Data Store
-echo "[4/4] Registering ADK documentation web link to Web Data Store..."
+echo "Registering ADK documentation web link to Web Data Store..."
 curl -s -X POST \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
@@ -177,3 +177,18 @@ echo "Setup Complete!"
 echo "Data store creation and import process started."
 echo "=========================================================="
 echo ""
+
+
+#TODO via service account
+# Required permission for BigQuery Access for BQ Plugin
+# gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  #    --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" \
+  #    --role="roles/bigquery.dataEditor" \
+  #    --condition=None
+
+
+# You need to assign the roles/bigquery.dataEditor role to your Agent's Service Account. This role is a "one-stop shop" for this issue because it includes:
+  #bigquery.tables.updateData: Allows appending rows.
+  #bigquery.tables.get: Allows the agent to see the table schema.
+  #bigquery.tables.create: Necessary if your plugin needs to build the table from scratch.
+  #A
