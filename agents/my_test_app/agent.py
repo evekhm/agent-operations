@@ -17,11 +17,15 @@ from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
 from google.genai import types
 
 try:
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    trace.set_tracer_provider(TracerProvider())
-except ImportError:
-    pass # OpenTelemetry is optional
+    # Add project root to sys.path to import app_utils
+    _root_dir = Path(__file__).resolve().parent.parent.parent
+    if str(_root_dir) not in sys.path:
+        sys.path.insert(0, str(_root_dir))
+    
+    from app_utils.telemetry import setup_telemetry
+    setup_telemetry()
+except ImportError as e:
+    logging.warning(f"OpenTelemetry is optional, could not import: {e}")
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
