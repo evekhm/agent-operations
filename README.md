@@ -143,7 +143,11 @@ TABLE_ID="agent_events_v2"
 
 ## Generate Observability Reports
 
-You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks
+You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks.
+
+> **Tip**
+> To view generated reports it is recommended to use the [Markdown Viewer](https://chromewebstore.google.com/detail/markdown-viewer/ckkdlimhmcjmikdlpkmbgfkaikojcbjk?hl=en-US&utm_source=ext_sidebar) Chrome Extension.
+> Use **Github Wide** as Theme and make sure to enable **'mermaid'** and **'emoji'** as Content.
 
 ### Command Line Arguments
 You can provide CLI arguments when running the analyst script to dynamically overwrite the configurations:

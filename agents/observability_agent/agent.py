@@ -1,16 +1,14 @@
 import logging
 import os
-import json
-from datetime import datetime, timezone
 
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
-    trace.set_tracer_provider(TracerProvider())
+
 except ImportError:
     pass # OpenTelemetry is optional
 
-from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents import Agent, SequentialAgent, ParallelAgent
 from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
@@ -37,8 +35,9 @@ from .agent_tools.analytics.latency import (
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
-    AGENT_TABLE_ID, AGENT_VERSION
-from .prompts import PLAYBOOK_INVESTIGATOR_PROMPT, REPORT_CREATOR_PROMPT
+    AGENT_TABLE_ID, AGENT_VERSION, DATASET_ID, TABLE_ID
+from .prompts import (INVOCATION_ANALYST_PROMPT, AGENT_ANALYST_PROMPT, LLM_ANALYST_PROMPT, TOOL_ANALYST_PROMPT,
+                      REPORT_CREATOR_PROMPT)
 from .utils.telemetry import setup_telemetry
 from .utils.time import set_reference_time, parse_time_range
 import json
@@ -71,33 +70,70 @@ analyst_tools = [
     analyze_empty_llm_responses
 ]
 
-# Create the deep-dive Playbook Investigator Agent
-playbook_agent = Agent(
-    name="playbook_agent",
+# Create specialized dimension analysts for Scatter-Gather parallel execution
+invocation_analyst = Agent(
+    name="invocation_analyst",
     model=MODEL_ID,
-    instruction=PLAYBOOK_INVESTIGATOR_PROMPT, # Will be hydrated dynamically
-    description="Executes deep-dive observability playbooks (health, incident, overview, trend, latest) on the agent events and telemetry data inside BigQuery. Collects the raw findings.",
+    instruction=INVOCATION_ANALYST_PROMPT,
+    description="Analyzes Root Agent performance, trace concurrency, and end-to-end metrics.",
     tools=analyst_tools,
-    output_key="playbook_findings",
+    output_key="invocation_findings",
     disallow_transfer_to_peers=True
+)
+
+agent_analyst = Agent(
+    name="agent_analyst",
+    model=MODEL_ID,
+    instruction=AGENT_ANALYST_PROMPT,
+    description="Analyzes Sub-Agent performance and detects sequential bottlenecks.",
+    tools=analyst_tools,
+    output_key="agent_findings",
+    disallow_transfer_to_peers=True
+)
+
+llm_analyst = Agent(
+    name="llm_analyst",
+    model=MODEL_ID,
+    instruction=LLM_ANALYST_PROMPT,
+    description="Analyzes LLM performance, token usage, LLM impact on performance, and empty responses.",
+    tools=analyst_tools,
+    output_key="llm_findings",
+    disallow_transfer_to_peers=True
+)
+
+tool_analyst = Agent(
+    name="tool_analyst",
+    model=MODEL_ID,
+    instruction=TOOL_ANALYST_PROMPT,
+    description="Analyzes Tool performance, errors, and error impact propagation.",
+    tools=analyst_tools,
+    output_key="tool_findings",
+    disallow_transfer_to_peers=True
+)
+
+# Parallel Swarm
+playbook_swarm = ParallelAgent(
+    name="playbook_swarm",
+    sub_agents=[invocation_analyst, agent_analyst, llm_analyst, tool_analyst],
+    description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
 # Create the Report Creator Agent that takes findings and structures them into markdown
 report_creator_agent = Agent(
     name="report_creator_agent",
     model=MODEL_ID,
-    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).format(agent_version=AGENT_VERSION), # Automatically injects {playbook_findings} and {agent_version}
+    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).format(agent_version=AGENT_VERSION, datastore_id=DATASET_ID, table_id=TABLE_ID), # Automatically injects {playbook_findings} and {agent_version}
     description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
     tools=[],
     output_key="final_report",
     disallow_transfer_to_peers=True
 )
 
-# Group the investigator and report creator into a strict sequential pipeline
+# Group the investigator swarm and report creator into a strict sequential pipeline
 investigate_and_report_pipeline = SequentialAgent(
     name="investigation_workflow",
-    sub_agents=[playbook_agent, report_creator_agent],
-    description="Pipeline that first investigates the system and then generates a report."
+    sub_agents=[playbook_swarm, report_creator_agent],
+    description="Pipeline that first investigates the system constraints concurrently and then generates a merged report."
 )
 
 def _format_kpis_for_prompt(kpis: dict) -> str:
@@ -168,7 +204,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     if "end_to_end" in kpis and isinstance(kpis["end_to_end"], dict):
         kpi_percentile = kpis["end_to_end"].get("percentile_target", 95.0)
 
-    hydrated_investigator_prompt = PLAYBOOK_INVESTIGATOR_PROMPT.format(
+    hydrated_invocation_prompt = INVOCATION_ANALYST_PROMPT.format(
         time_period=time_period_fixed,
         baseline_period=baseline_period_fixed,
         bucket_size=bucket_size,
@@ -177,7 +213,40 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         num_error_records=num_error_records,
         kpi_percentile=kpi_percentile
     )
-    playbook_agent.instruction = hydrated_investigator_prompt
+    invocation_analyst.instruction = hydrated_invocation_prompt
+
+    hydrated_agent_prompt = AGENT_ANALYST_PROMPT.format(
+        time_period=time_period_fixed,
+        baseline_period=baseline_period_fixed,
+        bucket_size=bucket_size,
+        kpis_string=kpis_string,
+        num_slowest_queries=num_slowest_queries,
+        num_error_records=num_error_records,
+        kpi_percentile=kpi_percentile
+    )
+    agent_analyst.instruction = hydrated_agent_prompt
+
+    hydrated_llm_prompt = LLM_ANALYST_PROMPT.format(
+        time_period=time_period_fixed,
+        baseline_period=baseline_period_fixed,
+        bucket_size=bucket_size,
+        kpis_string=kpis_string,
+        num_slowest_queries=num_slowest_queries,
+        num_error_records=num_error_records,
+        kpi_percentile=kpi_percentile
+    )
+    llm_analyst.instruction = hydrated_llm_prompt
+
+    hydrated_tool_prompt = TOOL_ANALYST_PROMPT.format(
+        time_period=time_period_fixed,
+        baseline_period=baseline_period_fixed,
+        bucket_size=bucket_size,
+        kpis_string=kpis_string,
+        num_slowest_queries=num_slowest_queries,
+        num_error_records=num_error_records,
+        kpi_percentile=kpi_percentile
+    )
+    tool_analyst.instruction = hydrated_tool_prompt
 
     # Format config for display
     config_str = json.dumps(config, indent=2, default=str)
@@ -185,12 +254,14 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     current_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     hydrated_report_prompt = REPORT_CREATOR_PROMPT.replace("<timestamp>", current_timestamp).replace("<time_range>", time_period_fixed).format(
-        playbook_findings="{playbook_findings}",
+        playbook_findings="{invocation_findings}\\n\\n{agent_findings}\\n\\n{llm_findings}\\n\\n{tool_findings}",
         kpis_string=kpis_string,
         config_dump=config_str,
         time_period=time_period_fixed,
         agent_version=AGENT_VERSION,
         project_id=PROJECT_ID,
+        datastore_id=DATASET_ID,
+        table_id=TABLE_ID,
         Level=str(kpi_percentile),
         error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
     )
