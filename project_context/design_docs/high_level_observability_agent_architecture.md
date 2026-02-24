@@ -136,7 +136,7 @@ The user-perceived "turn" or "transaction". It aggregates the entire processing 
 
 ## The Conceptual Tool Engine
 
-The Observability Agent does not write raw SQL queries from scratch. Instead, it relies on a suite of **pre-packaged analytical tools** that map its high-level analytical intentions to highly optimized SQL executions against the four views.
+The Observability Agent leverages the `bigquery_agent_analytics` Python SDK as its primary interaction layer with BigQuery. Instead of writing raw SQL queries from scratch, it relies on a suite of **pre-packaged analytical tools** that wrap the SDK's `Client`, `CodeEvaluator`, `LLMAsJudge`, and `BigQueryAIClient` components. This abstraction simplifies trace querying (`client.get_trace()`) and evaluation, significantly reducing the risk of SQL generation hallucinations by mapping high-level analytical intentions to optimized SDK methods against the four views.
 
 ### How the Agent "Thinks"
 
@@ -280,7 +280,7 @@ When evaluating long-term architectural decay or the success of a recent optimiz
 Regardless of the active Playbook, when the agent identifies a failing component (Red Flag), it systematically tests a battery of advanced SRE theories specific to the "Agentic Shift":
 
 *   **H1: Token Size Drives Latency**: Investigates strong correlations between input/output token counts and generation time.
-*   **H2: KV Cache Fragmentation (Over-provisioning)**: Incorporates the concept that `maxOutputTokens` is not just a limit, but a memory reservation. Over-provisioning this value forces the backend to reserve GPU RAM covering the maximum possible sequence length, strictly reducing the batch sizes the GPU can handle and increasing queuing latency even if the model produces a short response.
+*   **H2: KV Cache Fragmentation (Over-provisioning)**: Incorporates the concept that `maxOutputTokens` is not just a limit, but a memory reservation. Over-provisioning this value forces the backend to reserve GPU RAM covering the maximum possible sequence length, strictly reducing the batch sizes the GPU can handle and increasing queuing latency even if the model produces a short response. (Supported by NVIDIA and vLLM research on KV cache management).
 *   **H3: Non-Linear Prefill vs. Linear Decode Context Bloat**: Determines if latency is driven primarily by non-linear input context (prefill latency jumps) or by the model generating excessive, verbose output (linear decoding latency).
 *   **H4: Agent Orchestration Overhead**: Analyzes if end-to-end latency is dominated by agent handoffs or sequential tool chains rather than raw LLM generation.
 *   **H5: Excessive Tool Iteration**: Checks if agents are caught in autonomous reasoning loops or using tools excessively (e.g., >10x per request).
@@ -289,7 +289,7 @@ Regardless of the active Playbook, when the agent identifies a failing component
 *   **H8: Tool Failure Cost / Reliability**: Identifies tools with high error rates (<95% success) or extreme P95 execution times (>5000ms).
 *   **H9: High Error Rate Impact**: Categorizes errors (QUOTA, TIMEOUT) and correlates them to latency spikes.
 *   **H10: Configuration Drift**: Tracks if unannounced changes in model defaults or environment variables are shifting the performance baseline.
-*   **H11: The Reasoning Budget Overhead (Gemini 2.5+)**: Tests if latency is driven by excessive internal 'thinking' loops vs. output tokens. If the `thinkingBudget` is unmanaged, it can cause unpredictable latency spikes even for simple prompts.
+*   **H11: The Reasoning Budget Overhead (Gemini 2.5+)**: Tests if latency is driven by excessive internal 'thinking' loops vs. output tokens. If the `thinkingBudget` is unmanaged (e.g., `undefined` with `gemini-2.5-flash`), it can cause unpredictable latency spikes even for simple prompts, often consuming 250+ tokens of overhead before genuine output.
 *   **H12: Systemic Daily Degradation**: Looks for peak-hour variances or consistent degradation over multi-day periods.
 *   **H13: Sub-optimal LLM Parameters (GenerationConfig)**: Isolates issues caused by specific settings that degrade performance (such as `temperature`, `top_k`).
 
@@ -377,8 +377,8 @@ The agent succeeds when it can definitively answer:
 Beyond basic SQL queries, the BigQuery Agent Analytics plugin enables **AI-powered analytics** using BigQuery ML and Gemini integration. This transforms the platform from descriptive ("what happened?") to prescriptive ("why did it happen and what should we do?").
 
 ### The Quality Flywheel: Linking Observability to Evaluation
-**Capability**: Closing the loop between production monitoring and offline testing.
-Production traces should not just be monitored for speed and errors; high-quality traces should be exported directly to the **Vertex AI Eval** service. This allows the system to automatically curate "Golden Datasets" of successful, complex agent interactions from real users, fueling continuous offline evaluating and fine-tuning.
+**Capability**: Closing the loop between production monitoring and offline testing via the SDK's `EvalSuite` and `GraderPipeline`.
+Production traces should not just be monitored for speed and errors; anomalous or high-quality traces flagged by the Observability Agent can be routed directly into the `GraderPipeline` for automated regression testing. This allows the system to automatically curate "Golden Datasets" of successful, complex agent interactions from real users, fueling continuous offline evaluating and fine-tuning.
 
 ---
 
@@ -499,45 +499,12 @@ WHERE event_type = 'USER_MESSAGE_RECEIVED'
 
 ### 4. Semantic Search & Memory
 
-**Capability**: Convert conversation histories into vector embeddings for semantic similarity search and agent memory retrieval.
+**Capability**: Convert conversation histories into vector embeddings for semantic similarity search and agent memory retrieval natively leveraging the SDK's `BigQueryMemoryService` and `ContextManager`.
 
 **Workflow**:
-1. **Generate Embeddings**:
-   ```sql
-   CREATE MODEL embedding_model
-   REMOTE WITH CONNECTION `project.us.bqml_connection`
-   OPTIONS (endpoint = 'text-embedding-004');
-
-   CREATE TABLE session_embeddings AS
-   SELECT
-     session_id,
-     full_conversation,
-     ml_generate_embedding_result AS embeddings
-   FROM ML.GENERATE_EMBEDDING(
-     MODEL embedding_model,
-     (SELECT session_id, full_conversation AS content FROM agent_sessions)
-   );
-   ```
-
-2. **Semantic Search**:
-   ```sql
-   -- Find sessions similar to "User wants to return an order"
-   SELECT
-     session_id,
-     distance,
-     full_conversation
-   FROM VECTOR_SEARCH(
-     TABLE session_embeddings,
-     'embeddings',
-     (SELECT ml_generate_embedding_result FROM ML.GENERATE_EMBEDDING(
-       MODEL embedding_model,
-       (SELECT 'User wants to return an order' AS content)
-     )),
-     top_k => 5,
-     distance_type => 'COSINE'
-   )
-   ORDER BY distance ASC;
-   ```
+Instead of managing raw SQL `ML.GENERATE_EMBEDDING` queues directly, the agent leverages the SDK:
+1. **Initialize Memory Service**: The `BigQueryMemoryService` natively handles caching, episodes, and semantic context retrieval.
+2. **Semantic Search**: `ContextManager` uses these embeddings to retrieve similar past conversations or build cohesive User Profiles out of the box.
 
 **Applications**:
 - **Agent Memory**: Retrieve similar past conversations to inform current responses
@@ -548,7 +515,7 @@ WHERE event_type = 'USER_MESSAGE_RECEIVED'
 
 ### 5. Structured Memory Extraction
 
-**Capability**: Convert unstructured conversation logs into structured JSON for downstream processing.
+**Capability**: Convert unstructured conversation logs into structured episodic memory for downstream processing via `BigQueryMemoryService` UserProfileBuilder.
 
 **Example**:
 ```sql

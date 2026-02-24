@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Stress test script that runs multiple instances of `adk run` logic in parallel.
-Usage: python3 stress_test.py [num_concurrent_users]
+Usage: python3 test_suit.py [num_concurrent_users]
 
 This version accesses the ADK Runner API directly to ensure unique user_ids per session.
 It also instantiates plugins per-thread to avoid event loop binding issues.

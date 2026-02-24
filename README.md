@@ -132,26 +132,37 @@ TABLE_ID="agent_events_v2"
       ```shell
       ./setup.sh
       ```
-  * Data Generation using sample `starter-agent` of the `my_test_app`
+  * Data Generation using `my_test_app` agent (~ 15 minutes, ~114 invocations):
 
     ```bash
-    ./agents/my_test_app/run_stress_test_suite.sh
+    ./agents/my_test_app/run_test_suite.sh
     ```
 
-    >> Advanced:
-    To run with concurrency (e.g. 10 users):
-    >>```bash
-    >>./agents/my_test_app/run_stress_test_suite.sh 10
-    >>```
+>  Uses [`test_scenarios.txt`](agents/my_test_app/test_scenarios.txt) file to simulate use cases
+>  The file was generated using `agents/my_test_app/generate_test_scenarios.py`
 
 ## Generate Observability Reports
 
 You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks
 
+### Command Line Arguments
+You can provide CLI arguments when running the analyst script to dynamically overwrite the configurations:
+
+| Argument | Description | Example |
+| :--- | :--- | :--- |
+| `--playbook` | Force explicitly route to Playbook `overview`, `health`, `incident`, `trend`, or `latest` | `--playbook health` |
+| `--time_period` | Time range for Current Reality | `--time_period 24h` |
+| `--baseline_period` | Time range for Historical Baseline | `--baseline_period 7d` |
+| `--bucket_size` | Bucket size for Playbook C (trend) | `--bucket_size 1d` |
+
+You can also check default configuration settings setup in [config.json](agents/observability_agent/config.json).
+
 ### Playbook: overview (Default System Overview)
-By default, the agent executes the `overview` playbook, which provides a straightforward aggregation of latency and error metrics for the specified `--time_period` without attempting to mathematically compare it to a historical baseline.
+By default, the agent executes the `overview` playbook, which provides a straightforward aggregation of latency and
+error metrics for the specified time period and KPIs as provided in [config.json](agents/observability_agent/config.json).
+
 ```shell
-tools/run_observability_analyst.sh --time_period 24h
+tools/run_observability_analyst.sh
 ```
 
 ### Playbook: health (Healthcheck)

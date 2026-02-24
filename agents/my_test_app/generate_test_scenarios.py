@@ -153,19 +153,35 @@ def generate_test_lines(output_file="test_scenario.txt", **kwargs):
     return final_lines
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Dynamically generate pipe-delimited test scenarios.")
+    parser.add_argument("--output-file", type=str, default=os.path.join(_dir_path, "test_scenarios.txt"), help="Output file path.")
+    parser.add_argument("--total-lines", type=int, default=15, help="Total number of test scenario lines to generate.")
+    parser.add_argument("--max-questions", type=int, default=3, help="Maximum number of sub-questions per scenario.")
+    parser.add_argument("--adk-pct", type=int, default=15, help="Percentage of ADK datastore knowledge questions.")
+    parser.add_argument("--obs-pct", type=int, default=15, help="Percentage of Observability datastore knowledge questions.")
+    parser.add_argument("--bq-pct", type=int, default=15, help="Percentage of BigQuery knowledge questions.")
+    parser.add_argument("--google-search-pct", type=int, default=15, help="Percentage of Google Search questions.")
+    parser.add_argument("--unreliable-pct", type=int, default=5, help="Percentage of unreliable tool questions.")
+    parser.add_argument("--parallel-pct", type=int, default=10, help="Percentage of parallel execution questions.")
+    parser.add_argument("--config-test-pct", type=int, default=15, help="Percentage of config testing questions.")
+    parser.add_argument("--complex-pct", type=int, default=10, help="Percentage of complex/multi-step questions.")
+    
+    args = parser.parse_args()
+
     # Example usage: Customize parameters here
     generated_lines = generate_test_lines(
-        output_file=os.path.join(_dir_path, "test_scenarios_v15.txt"),
-        total_lines=15,
-        max_questions=3,
-        adk_pct=15,
-        obs_pct=15,
-        bq_pct=15,
-        google_search_pct=15,
-        unreliable_pct=5,
-        parallel_pct=10,
-        config_test_pct=15,
-        complex_pct=10,
+        output_file=args.output_file,
+        total_lines=args.total_lines,
+        max_questions=args.max_questions,
+        adk_pct=args.adk_pct,
+        obs_pct=args.obs_pct,
+        bq_pct=args.bq_pct,
+        google_search_pct=args.google_search_pct,
+        unreliable_pct=args.unreliable_pct,
+        parallel_pct=args.parallel_pct,
+        config_test_pct=args.config_test_pct,
+        complex_pct=args.complex_pct,
         config_weights={
             "NORMAL": 60,
             "OVER_PROVISIONED": 10,

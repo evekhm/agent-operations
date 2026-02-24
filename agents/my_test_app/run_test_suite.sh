@@ -1,21 +1,40 @@
 #!/usr/bin/env bash
 
-# Wrapper script to run stress_test.py with various configuration combinations.
+# Wrapper script to run test_suit.py with various configuration combinations.
 
-# Usage: ./run_stress_test_suite.sh [NUM_USERS] [INPUT_FILE]
-# If NUM_USERS is not provided, it defaults to 1 concurrent users.
-# INPUT_FILE is an optional text file containing pip-separated configurations/questions.
+# Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]
+#   -n : number_active_users_for_load_test (default: 1)
+#   -f : output_file (optional text file containing pipe-separated configurations/questions, default: test_scenarios.txt)
+#   -h : Show this help message
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NUM_USERS=${1:-1}
-TEST_FILE="${SCRIPT_DIR}/test_scenarios.txt"
 
-# If first arg is a file (e.g. they forgot the number of users), use it as the file and default to 4 users
-if [ -f "$1" ]; then
-    INPUT_FILE="$1"
-    NUM_USERS=${2:-1}
-else
-    INPUT_FILE=${2:-"$TEST_FILE"}
-fi
+# Set defaults
+NUM_USERS=1
+INPUT_FILE="${SCRIPT_DIR}/test_scenarios.txt"
+
+# Parse arguments
+while getopts "n:f:h" opt; do
+  case ${opt} in
+    n )
+      NUM_USERS=$OPTARG
+      ;;
+    f )
+      INPUT_FILE=$OPTARG
+      ;;
+    h )
+      echo "Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]"
+      echo "  -n : number_active_users_for_load_test (default: 1)"
+      echo "  -f : output_file (optional text file containing pipe-separated configurations/questions, default: test_scenarios.txt)"
+      exit 0
+      ;;
+    \? )
+      echo "Invalid option: -$OPTARG" 1>&2
+      echo "Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]" 1>&2
+      exit 1
+      ;;
+  esac
+done
+shift $((OPTIND -1))
 
 START_TIME=$(date +%s)
 
