@@ -17,10 +17,11 @@ if not PROJECT_ID:
     except Exception:
         PROJECT_ID = None
 
-# BigQuery
+# BigQuery to be analyzed
 DATASET_ID = os.getenv('DATASET_ID')
 DATASET_LOCATION = os.getenv('DATASET_LOCATION', 'us-central1')
-AGENT_EVENTS_TABLE_ID = os.getenv('TABLE_ID')
+TABLE_ID = os.getenv('TABLE_ID')
+
 AGENT_EVENTS_VIEW_ID = os.getenv('AGENT_EVENTS_VIEW_ID', 'agent_events_view')
 LLM_EVENTS_VIEW_ID = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
 TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
@@ -32,13 +33,13 @@ AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
 DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
 LOCATION = os.getenv('LOCATION', "us")
 
-#BQ Analytics
+#Agent produced BQ Analytics
 AGENT_DATASET_ID = os.getenv('AGENT_DATASET_ID', DATASET_ID)
-AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', AGENT_EVENTS_TABLE_ID)
+AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', "observability_agent_events")
 
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"
-assert AGENT_EVENTS_TABLE_ID, "TABLE_ID is not set for the BigQuery Analytics Plugin"
+assert TABLE_ID, "TABLE_ID is not set for the BigQuery Analytics Plugin"
 assert DATASET_ID, "DATASET_ID is not set for the BigQuery Analytics Plugin"
 
 # Set env vars for Google generic libs

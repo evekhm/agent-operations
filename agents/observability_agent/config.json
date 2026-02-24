@@ -24,8 +24,8 @@
             "error_target": 5.0
           }
         },
-        "num_slowest_queries": 5,
-        "num_error_queries": 5
+        "num_slowest_queries": 20,
+        "num_error_queries": 20
     },
     "queries": [
         "Some additional instructions to add to the prompt."

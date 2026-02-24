@@ -21,8 +21,8 @@ from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerCon
 from google.genai import types # Import types for Content
 from agents.observability_agent.config import (
     PROJECT_ID, 
-    DATASET_ID, 
-    AGENT_EVENTS_TABLE_ID,
+    DATASET_ID,
+    AGENT_TABLE_ID,
     DEFAULT_KPIS
 )
 # Import the newly refactored root agent and config setter
@@ -42,6 +42,14 @@ def load_analyst_config() -> dict:
     Priority (Lowest to Highest):
     1. Default: hardcoded fallback
     2. Local file: agents/observability_agent/config.json
+    3. Try Env Var: LATENCY_ANALYSIS_CONFIG_FILE
+    4. CLI Arguments
+    """
+    config = {
+        "time_period": "7d",
+        "kpis": DEFAULT_KPIS
+    }
+
     # 2. Try Local config.json (relative to this file -> ../agents/observability_agent/config.json)
     # This is the canonical config location for the agent.
     agent_config_path = os.path.join(os.path.dirname(__file__), "../agents/observability_agent/config.json")
@@ -53,14 +61,6 @@ def load_analyst_config() -> dict:
                 config.update(loaded)
         except Exception as e:
             logger.error(f"Failed to load config from {agent_config_path}: {e}")
-
-    # 3. Try Env Var: LATENCY_ANALYSIS_CONFIG_FILE
-    4. CLI Arguments
-    """
-    config = {
-        "time_period": "7d",
-        "kpis": DEFAULT_KPIS
-    }
 
     env_path = os.getenv("LATENCY_ANALYSIS_CONFIG_FILE")
     if env_path and os.path.exists(env_path):
@@ -163,7 +163,7 @@ async def main():
         bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
             project_id=PROJECT_ID,
             dataset_id=DATASET_ID,
-            table_id=AGENT_EVENTS_TABLE_ID,
+            table_id=AGENT_TABLE_ID,
             config=bq_config,
             location="us"
         )

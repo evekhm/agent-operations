@@ -1,7 +1,7 @@
 import os
 import logging
 from google.cloud import bigquery
-from ..config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_TABLE_ID, \
+from ..config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, TABLE_ID, \
     AGENT_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID
 from .bq import check_table_exists
 
@@ -24,7 +24,7 @@ def _ensure_view_exists(view_id, sql_file_name):
     with open(sql_path, 'r') as f:
         sql_template = f.read()
 
-    primary_table = AGENT_EVENTS_TABLE_ID
+    primary_table = TABLE_ID
     
     table_ref = f"{PROJECT_ID}.{DATASET_ID}.{primary_table}"
     if not check_table_exists(client, table_ref):

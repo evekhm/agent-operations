@@ -15,6 +15,7 @@ from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 
+from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
     detect_sequential_bottlenecks
@@ -66,7 +67,8 @@ analyst_tools = [
     get_llm_impact_analysis,
     get_tool_impact_analysis,
     get_error_impact_analysis,
-    analyze_latency_performance
+    analyze_latency_performance,
+    analyze_empty_llm_responses
 ]
 
 # Create the deep-dive Playbook Investigator Agent
@@ -140,9 +142,9 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         config = {}
         
     # Set a rounded reference time to ensure BigQuery caching works
-    # Rounding down to the current hour
+    # Rounding UP to the next hour to include recently generated data
     now = datetime.now(timezone.utc)
-    rounded_now = now.replace(minute=0, second=0, microsecond=0)
+    rounded_now = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     set_reference_time(rounded_now)
     
     # Evaluate time periods into strict 'start to end' strings so they're explicitly documented in the prompt and report
@@ -218,6 +220,9 @@ bq_config = BigQueryLoggerConfig(
     batch_size=1, # Default is 1 for low latency, increase for high throughput
     shutdown_timeout=10.0
 )
+
+print(f"AGENT_DATASET_ID={AGENT_DATASET_ID}")
+print(f"AGENT_TABLE_ID={AGENT_TABLE_ID}")
 
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
