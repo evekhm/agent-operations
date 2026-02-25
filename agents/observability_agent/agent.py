@@ -14,7 +14,20 @@ from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from google.adk.tools import ToolContext
+from google.genai.types import HttpRetryOptions
 
+# Define robust exponential backoff strategy for 429 RESOURCE_EXHAUSTED errors
+# Max 5 attempts, starting at 2s, max 60s, base 2 multiplier.
+api_retry_options = HttpRetryOptions(
+    attempts=5,
+    initial_delay=2.0,
+    max_delay=60.0,
+    exp_base=2.0,
+    jitter=0.5,
+    http_status_codes=[429, 500, 502, 503, 504]
+)
+
+from google.adk.models.google_llm import Gemini
 from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
