@@ -43,7 +43,7 @@ You are a test case generator. Your task is to generate {TOTAL_LINES} lines, eac
             *   *Examples:* "Get item_1, large_record_F", "Lookup item_8, item_9"
 
         *   **Config Testing ({CONFIG_TEST_PCT}%):** Questions for config test agents.
-            *   *Examples:* "Using config WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG, calculate for 'test A'", "With WRONG_CANDIDATE_COUNT_CONFIG, process 'test B'"
+            *   *Examples:* "Using config WRONG_MAX_TOKENS, calculate for 'test A'", "With WRONG_CANDIDATES, process 'test B'"
 
         *   **Complex/Chained ({COMPLEX_PCT}%):** Questions requiring multiple sub-agents.
             *   *Examples:* "Find the number of errors in BigQuery, if it's high, search Google for common causes."

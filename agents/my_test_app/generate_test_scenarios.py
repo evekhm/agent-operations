@@ -35,8 +35,8 @@ def fill_prompt_template(
             "NORMAL": 60,
             "OVER_PROVISIONED": 10,
             "HIGH_TEMP": 16,
-            "WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG": 2,
-            "WRONG_CANDIDATE_COUNT_CONFIG": 2,
+            "WRONG_MAX_TOKENS": 2,
+            "WRONG_CANDIDATES": 2,
         }
 
     return TEST_CASE_GENERATION_PROMPT.format(
@@ -186,8 +186,8 @@ if __name__ == "__main__":
             "NORMAL": 60,
             "OVER_PROVISIONED": 10,
             "HIGH_TEMP": 10,
-            "WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG": 10,
-            "WRONG_CANDIDATE_COUNT_CONFIG": 10,
+            "WRONG_MAX_TOKENS": 10,
+            "WRONG_CANDIDATES": 10,
         }
     )
     print("--- First 3 Generated Lines ---")

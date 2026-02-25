@@ -26,8 +26,8 @@ Available pre-defined configurations for `AGENT_CONFIG` include:
 - `NORMAL` (default)
 - `OVER_PROVISIONED`
 - `HIGH_TEMP`
-- `WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG`
-- `WRONG_CANDIDATE_COUNT_CONFIG`
+- `WRONG_MAX_TOKENS`
+- `WRONG_CANDIDATES`
 
 ### Automated Configuration Matrix Testing
 A wrapper script is provided to automatically run the stress test across multiple configurations and models for benchmarking.

@@ -104,7 +104,7 @@ HIGH_TEMP_CONFIG = types.GenerateContentConfig( # For H13
     labels={"config_setting": "high_temp"},
 )
 
-WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG=types.GenerateContentConfig(
+WRONG_MAX_TOKENS=types.GenerateContentConfig(
     top_k=5,
     top_p=0.1,
     candidate_count=1,
@@ -113,7 +113,7 @@ WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG=types.GenerateContentConfig(
     labels={"config_setting": "wrong_max_output_tokens_count"},
 )
 
-WRONG_CANDIDATE_COUNT_CONFIG=types.GenerateContentConfig(
+WRONG_CANDIDATES=types.GenerateContentConfig(
     top_k=5,
     top_p=0.1,
     candidate_count=5, #NOK
@@ -128,8 +128,8 @@ def get_agent_config(config_name: str) -> types.GenerateContentConfig:
         "NORMAL": NORMAL_CONFIG,
         "OVER_PROVISIONED": OVER_PROVISIONED_CONFIG,
         "HIGH_TEMP": HIGH_TEMP_CONFIG,
-        "WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG": WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG,
-        "WRONG_CANDIDATE_COUNT_CONFIG": WRONG_CANDIDATE_COUNT_CONFIG,
+        "WRONG_MAX_TOKENS": WRONG_MAX_TOKENS,
+        "WRONG_CANDIDATES": WRONG_CANDIDATES,
     }
     return configs.get(config_name, NORMAL_CONFIG)
 
@@ -293,8 +293,8 @@ def create_agent() -> Agent:
     config_normal_agent = create_config_test_agent("NORMAL")
     config_over_provisioned_agent = create_config_test_agent("OVER_PROVISIONED")
     config_high_temp_agent = create_config_test_agent("HIGH_TEMP")
-    config_wrong_max_tokens_agent = create_config_test_agent("WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG")
-    config_wrong_candidate_agent = create_config_test_agent("WRONG_CANDIDATE_COUNT_CONFIG")
+    config_wrong_max_tokens_agent = create_config_test_agent("WRONG_MAX_TOKENS")
+    config_wrong_candidate_agent = create_config_test_agent("WRONG_CANDIDATES")
     config_invalid_model_agent = create_config_test_agent("INVALID_MODEL_CONFIG")
 
     root_agent = LlmAgent(
@@ -303,7 +303,7 @@ def create_agent() -> Agent:
         description="Answers questions by delegating to specialized sub-agents.",
         instruction=(
             "You are a strict router. Your ONLY job is to route the user's input to the correct sub-agent based on these EXACT rules:\n"
-            "1. If the input contains a _CONFIG keyword (e.g., 'WRONG_MAX_OUTPUT_TOKENS_COUNT_CONFIG', 'INVALID_MODEL_CONFIG', 'NORMAL', 'OVER_PROVISIONED', 'HIGH_TEMP'), you MUST route it to the corresponding 'config_test_agent_...'.\n"
+            "1. If the input contains a _CONFIG keyword (e.g., 'WRONG_MAX_TOKENS', 'INVALID_MODEL_CONFIG', 'NORMAL', 'OVER_PROVISIONED', 'HIGH_TEMP'), you MUST route it to the corresponding 'config_test_agent_...'.\n"
             "2. If the input mentions 'unreliable tool', 'flaky action', 'timeout', 'simulate', or asks to test a failure or a slow response, you MUST route it to 'unreliable_tool_agent'.\n"
             "3. If the input asks to fetch/lookup multiple items in parallel (e.g., 'parallel lookup', 'Retrieve ... in parallel'), you MUST route it to 'parallel_db_lookup'.\n"
             "4. If the input asks about BigQuery datasets, tables, or records (e.g., '`agent_events_test`', '`prod_events`'), you MUST route it to 'bigquery_data_agent'.\n"
