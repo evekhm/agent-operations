@@ -123,6 +123,8 @@ async def batch_generate_test_lines(total_lines_needed, kwargs):
         current_kwargs = kwargs.copy()
         current_kwargs['total_lines'] = lines_to_request
         filled_prompt = fill_prompt_template(**current_kwargs)
+        # Add a subtle random seed to the prompt to encourage variety between batches
+        filled_prompt += f"\n\nNote: For this specific batch, try to think of topics related to index {lines_scheduled}."
         tasks.append(llm_call(filled_prompt))
         lines_scheduled += lines_to_request
         
