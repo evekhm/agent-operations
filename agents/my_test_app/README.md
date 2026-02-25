@@ -10,7 +10,7 @@ The stress test script is orchestrated using `run_test_suite.sh`, which parses p
 
 **To run the stress test (e.g., executing the default scenarios):**
 ```bash
-./agents/my_test_app/run_test_suite.sh
+./agents/my_test_app/generate_data.sh
 ```
 This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
     
@@ -34,14 +34,14 @@ A wrapper script is provided to automatically run the stress test across multipl
 
 To run the suite with the default configurations :
 ```bash
-./agents/my_test_app/run_test_suite.sh
+./agents/my_test_app/generate_data.sh
 ```
 
 **Available Arguments:**
 - `-n`: Number of active users for load test (default: `1`).
 - `-f`: Output file, an optional text file containing pipe-separated configurations/questions (default: `test_scenarios.txt`).
 
-This script will iterate through the models and `AGENT_CONFIG` variants, invoking the `test_suit.py` script automatically.
+This script will iterate through the models and `AGENT_CONFIG` variants, invoking the `generate_data.py` script automatically.
 
 ### Unreliable Tool Simulation
 The root agent includes an `unreliable_tool_agent` designed to simulate system failures, timeouts, and flaky behavior. By explicitly requesting actions like "simulate a flaky action", "timeout", or test a failure using an "unreliable tool" in the prompt, the root agent will accurately route to this specialized test case scenario.
@@ -84,6 +84,6 @@ python agents/my_test_app/generate_test_scenarios.py \
 Once your output file is generated, you can feed this input directly to the stress test suite alongside the concurrency limit:
 
 ```bash
-./agents/my_test_app/run_test_suite.sh -f agents/my_test_app/test_scenarios_large.txt
+./agents/my_test_app/generate_data.sh -f agents/my_test_app/test_scenarios_large.txt
 ```
 The testing suite will automatically parse each pip-delimited line from the input file and execute the parallel stress tests for each scenario configuration!

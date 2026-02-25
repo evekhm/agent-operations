@@ -135,7 +135,7 @@ TABLE_ID="agent_events_v2"
   * Data Generation using `my_test_app` agent (~ 15 minutes, ~114 invocations):
 
     ```bash
-    ./agents/my_test_app/run_test_suite.sh
+    ./agents/my_test_app/generate_data.sh
     ```
 
 >  Uses [`test_scenarios.txt`](agents/my_test_app/test_scenarios.txt) file to simulate use cases

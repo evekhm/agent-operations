@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Wrapper script to run test_suit.py with various configuration combinations.
+# Wrapper script to run generate_data.py with various configuration combinations.
 
-# Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]
+# Usage: ./generate_data.sh [-n number_active_users_for_load_test] [-f output_file]
 #   -n : number_active_users_for_load_test (default: 1)
 #   -f : output_file (optional text file containing pipe-separated configurations/questions, default: test_scenarios.txt)
 #   -h : Show this help message
@@ -22,14 +22,14 @@ while getopts "n:f:h" opt; do
       INPUT_FILE=$OPTARG
       ;;
     h )
-      echo "Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]"
+      echo "Usage: ./generate_data.sh [-n number_active_users_for_load_test] [-f output_file]"
       echo "  -n : number_active_users_for_load_test (default: 1)"
       echo "  -f : output_file (optional text file containing pipe-separated configurations/questions, default: test_scenarios.txt)"
       exit 0
       ;;
     \? )
       echo "Invalid option: -$OPTARG" 1>&2
-      echo "Usage: ./run_test_suite.sh [-n number_active_users_for_load_test] [-f output_file]" 1>&2
+      echo "Usage: ./generate_data.sh [-n number_active_users_for_load_test] [-f output_file]" 1>&2
       exit 1
       ;;
   esac
@@ -163,7 +163,7 @@ for SCENARIO_RAW in "${SCENARIOS[@]}"; do
     export PYTHONWARNINGS="ignore"
     
     # Execute the stress test script
-    python3 "${SCRIPT_DIR}/test_suit.py" "$NUM_USERS" --replay-file "$FINAL_REPLAY_FILE"
+    python3 "${SCRIPT_DIR}/generate_data.py" "$NUM_USERS" --replay-file "$FINAL_REPLAY_FILE"
     
     # Capture exit code
     EXIT_CODE=$?
