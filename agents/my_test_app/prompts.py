@@ -48,8 +48,12 @@ You are a test case generator. Your task is to generate {TOTAL_LINES} lines, eac
         *   **Complex/Chained ({COMPLEX_PCT}%):** Questions requiring multiple sub-agents.
             *   *Examples:* "Find the number of errors in BigQuery, if it's high, search Google for common causes."
 
-    *   Vary the phrasing and complexity. Ensure questions are distinct within a single line.
+    *   Vary the phrasing and complexity. Ensure questions are distinct within a single line and unique across all {TOTAL_LINES} lines in this batch.
+    
+    *   **CRITICAL: DO NOT use the provided examples verbatim.** They are provided for format inspiration only. Create entirely new, creative, and realistic questions.
+    
+    *   **Diversity:** Explore a wide range of topics, scenarios, and user intents within each category. Avoid repetitive patterns or themes.
 
-Please generate {TOTAL_LINES} lines adhering to all the above rules.
+Please generate {TOTAL_LINES} unique and creative lines adhering to all the above rules.
 
 """
