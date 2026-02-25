@@ -5,3 +5,5 @@
 /.venv/
 /tools/.cache/
 /reports/
+/logs/
+/.env

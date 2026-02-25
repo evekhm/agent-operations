@@ -112,9 +112,9 @@ gcloud auth login
 gcloud auth application-default login    
 ```
 
-* Update environment variables inside [.env](.env)  file:
-```text
-PROJECT_ID=...
+* Create `.env` file from `.env.sample` and update `PROJECT_ID`:
+```bash
+sed "s/<YOUR_PROJECT_ID>/$PROJECT_ID/" .env.sample > .env
 ```
   
 * When integrating with existing environment and agent using [BigQuery Agent Analytics plugin](https://google.github.io/adk-docs/integrations/bigquery-agent-analytics/), make sure to point to the corresponding resources and update `.env` file accordingly:
