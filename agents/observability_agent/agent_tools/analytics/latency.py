@@ -485,7 +485,8 @@ async def analyze_latency_grouped(
     Break down latency metrics by a specific dimension (Agent, Root Agent, or Model).
     
     Args:
-        group_by (str): Dimension to group by. One of: "agent_name", "root_agent_name", "model_name".
+        group_by (str): Dimension to group by. One of: "agent_name", "root_agent_name", "model_name", "tool_name".
+                        Can also be comma-separated like "agent_name,model_name".
         time_range (str): Time range.
         model_name (str): Optional. Filter by specific model (useful when grouping by agent).
         exclude_root (bool): Optional. If True, excludes rows where agent_name matches root_agent_name.
@@ -525,47 +526,113 @@ async def analyze_latency_grouped(
         select_group_cols = ", ".join(group_columns)
         group_by_clause = ", ".join([str(i+1) for i in range(len(group_columns))])
 
-        query = f"""
-        SELECT
-          {select_group_cols},
-          COUNT(*) as total_count,
-          COUNTIF(status = 'ERROR') as error_count,
-          COUNTIF(status != 'ERROR' AND status != 'PENDING') as success_count,
-          ROUND(COUNTIF(status = 'ERROR') / NULLIF(COUNTIF(status != 'PENDING'), 0) * 100, 2) as error_rate_pct,
-          AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as avg_ms,
-          STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as std_latency_ms,
-          ROUND((STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
-          MIN(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as min_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
-          APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
-          MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms"""
-        
-        # Conditionally add token metrics if querying LLM events
-        if str(target_table) == str(LLM_EVENTS_VIEW_ID):
-             query += """,
-          AVG(prompt_token_count) as avg_input_tokens,
-          APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
-          AVG(candidates_token_count) as avg_output_tokens,
-          APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
-          AVG(thoughts_token_count) as avg_thought_tokens,
-          APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
-          AVG(total_token_count) as avg_total_tokens,
-          APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
-             """
+        # SPECIAL CASE: Grouping by Agent AND Model requires a JOIN between Agent View and LLM View
+        # This is because 'model_name' is not in Agent View, and 'agent_name' in LLM View might be the sub-agent name (which is fine)
+        # So we MUST join if target_table is AGENT_EVENTS_VIEW_ID and 'model_name' is in group_by.
+
+        if str(target_table) == str(AGENT_EVENTS_VIEW_ID) and "model_name" in group_columns:
+             # Construct the JOIN query
+             # We need to map group columns to A or L aliases
+             # agent_name -> A.agent_name
+             # model_name -> L.model_name
              
-        query += f"""
-        FROM
-          `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE
-          {where_clause}
-        GROUP BY {group_by_clause}
-        ORDER BY avg_ms DESC
-        """
+             select_clauses = []
+             group_indices = []
+             
+             for idx, col in enumerate(group_columns):
+                 if col == "agent_name":
+                     select_clauses.append("A.agent_name")
+                 elif col == "model_name":
+                     select_clauses.append("L.model_name")
+                 elif col == "root_agent_name":
+                     select_clauses.append("A.root_agent_name")
+                 else:
+                     select_clauses.append(f"A.{col}") # Default to Agent table
+                 group_indices.append(str(idx + 1))
+                 
+             select_group_sql = ", ".join(select_clauses)
+             group_by_sql = ", ".join(group_indices)
+             
+             # Re-build where clause with Alias 'A'
+             where_clause_joined = build_standard_where_clause(
+                time_range=time_range,
+                filter_config={"model_name": (model_name, "=")},
+                table_alias="A"
+             )
+             
+             if exclude_root:
+                where_clause_joined += " AND A.agent_name != A.root_agent_name"
+
+             query = f"""
+                SELECT
+                  {select_group_sql},
+                  COUNT(DISTINCT A.span_id) as total_count,
+                  COUNTIF(A.status = 'ERROR') as error_count,
+                  COUNTIF(A.status != 'ERROR' AND A.status != 'PENDING') as success_count,
+                  ROUND(COUNTIF(A.status = 'ERROR') / NULLIF(COUNT(DISTINCT A.span_id), 0) * 100, 2) as error_rate_pct,
+                  AVG(A.{latency_col}) as avg_ms,
+                  STDDEV(A.{latency_col}) as std_latency_ms,
+                  0.0 as cv_pct, -- approximation
+                  MIN(A.{latency_col}) as min_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(500)] as p50_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(750)] as p75_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(900)] as p90_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(950)] as p95_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(990)] as p99_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(999)] as p999_ms,
+                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
+                  MAX(A.{latency_col}) as max_ms
+                FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A
+                JOIN `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS L
+                ON A.span_id = L.parent_span_id
+                WHERE {where_clause_joined}
+                GROUP BY {group_by_sql}
+                ORDER BY avg_ms DESC
+             """
+        
+        else:
+            # ORIGINAL LOGIC for single table
+            query = f"""
+            SELECT
+              {select_group_cols},
+              COUNT(*) as total_count,
+              COUNTIF(status = 'ERROR') as error_count,
+              COUNTIF(status != 'ERROR' AND status != 'PENDING') as success_count,
+              ROUND(COUNTIF(status = 'ERROR') / NULLIF(COUNTIF(status != 'PENDING'), 0) * 100, 2) as error_rate_pct,
+              AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as avg_ms,
+              STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as std_latency_ms,
+              ROUND((STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
+              MIN(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as min_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
+              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
+              MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms"""
+            
+            # Conditionally add token metrics if querying LLM events
+            if str(target_table) == str(LLM_EVENTS_VIEW_ID):
+                 query += """,
+              AVG(prompt_token_count) as avg_input_tokens,
+              APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
+              AVG(candidates_token_count) as avg_output_tokens,
+              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
+              AVG(thoughts_token_count) as avg_thought_tokens,
+              APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
+              AVG(total_token_count) as avg_total_tokens,
+              APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
+                 """
+                 
+            query += f"""
+            FROM
+              `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+            WHERE
+              {where_clause}
+            GROUP BY {group_by_clause}
+            ORDER BY avg_ms DESC
+            """
         
         df = await execute_bigquery(query)
         
@@ -594,74 +661,42 @@ async def analyze_latency_grouped(
                 "metadata": {"view_id": target_table, "group_by": group_by}
             })
             
-        records = []
-        for _, row in df.iterrows():
-            record = {
-                "total_count": int(row['total_count']),
-                "success_count": int(row['success_count']),
-                "error_count": int(row['error_count']),
-                "error_rate_pct": float(row['error_rate_pct']) if pd.notna(row['error_rate_pct']) else 0.0,
-                "min_ms": float(row['min_ms']) if pd.notna(row['min_ms']) else None,
-                "avg_ms": float(row['avg_ms']) if pd.notna(row['avg_ms']) else None,
-                "std_latency_ms": float(row['std_latency_ms']) if pd.notna(row['std_latency_ms']) else None,
-                "cv_pct": float(row['cv_pct']) if pd.notna(row['cv_pct']) else None,
-                "p50_ms": float(row['p50_ms']) if pd.notna(row['p50_ms']) else None,
-                "p75_ms": float(row['p75_ms']) if pd.notna(row['p75_ms']) else None,
-                "p90_ms": float(row['p90_ms']) if pd.notna(row['p90_ms']) else None,
-                "p95_ms": float(row['p95_ms']) if pd.notna(row['p95_ms']) else None,
-                "p99_ms": float(row['p99_ms']) if pd.notna(row['p99_ms']) else None,
-                "p99_9_ms": float(row['p999_ms']) if pd.notna(row['p999_ms']) else None,
-                "p_custom_ms": float(row['p_custom_ms']) if pd.notna(row['p_custom_ms']) else None,
-                "max_ms": float(row['max_ms']) if pd.notna(row['max_ms']) else None
-            }
-            
-            token_row = None
-            if not token_df.empty:
-                mask = pd.Series([True] * len(token_df))
-                for col in group_columns:
-                    mask = mask & (token_df[col] == row[col])
-                matching = token_df[mask]
-                if not matching.empty:
-                    token_row = matching.iloc[0]
-            
-            # Add token metrics if available
-            if str(target_table) == str(LLM_EVENTS_VIEW_ID):
-                 record.update({
-                     "avg_input_tokens": float(row['avg_input_tokens']) if pd.notna(row['avg_input_tokens']) else 0.0,
-                     "p95_input_tokens": float(row['p95_input_tokens']) if pd.notna(row['p95_input_tokens']) else 0.0,
-                     "avg_output_tokens": float(row['avg_output_tokens']) if pd.notna(row['avg_output_tokens']) else 0.0,
-                     "p95_output_tokens": float(row['p95_output_tokens']) if pd.notna(row['p95_output_tokens']) else 0.0,
-                     "avg_thought_tokens": float(row['avg_thought_tokens']) if pd.notna(row['avg_thought_tokens']) else 0.0,
-                     "p95_thought_tokens": float(row['p95_thought_tokens']) if pd.notna(row['p95_thought_tokens']) else 0.0,
-                     "avg_total_tokens": float(row['avg_total_tokens']) if pd.notna(row['avg_total_tokens']) else 0.0,
-                     "p95_total_tokens": float(row['p95_total_tokens']) if pd.notna(row['p95_total_tokens']) else 0.0,
-                 })
-            elif token_row is not None:
-                 record.update({
-                     "avg_input_tokens": float(token_row['avg_input_tokens']) if pd.notna(token_row['avg_input_tokens']) else 0.0,
-                     "p95_input_tokens": float(token_row['p95_input_tokens']) if pd.notna(token_row['p95_input_tokens']) else 0.0,
-                     "avg_output_tokens": float(token_row['avg_output_tokens']) if pd.notna(token_row['avg_output_tokens']) else 0.0,
-                     "p95_output_tokens": float(token_row['p95_output_tokens']) if pd.notna(token_row['p95_output_tokens']) else 0.0,
-                     "avg_thought_tokens": float(token_row['avg_thought_tokens']) if pd.notna(token_row['avg_thought_tokens']) else 0.0,
-                     "p95_thought_tokens": float(token_row['p95_thought_tokens']) if pd.notna(token_row['p95_thought_tokens']) else 0.0,
-                     "avg_total_tokens": float(token_row['avg_total_tokens']) if pd.notna(token_row['avg_total_tokens']) else 0.0,
-                     "p95_total_tokens": float(token_row['p95_total_tokens']) if pd.notna(token_row['p95_total_tokens']) else 0.0,
-                 })
-            # Add grouping columns to the record
-            for col in group_columns:
-                record[col] = row[col]
-            records.append(record)
-            
-        result = {
-            "metadata": {"time_range": time_range, "view_id": target_table, "group_by": group_by},
-            "breakdown": records
-        }
-        return json.dumps(result, cls=AnalysisEncoder)
+        if not token_df.empty:
+            # Merge token metrics if available
+            try:
+                df = df.merge(token_df, on=group_columns, how='left')
+            except Exception as e:
+                logger.warning(f"Failed to merge token metrics: {e}")
+
+        # Sanitize for JSON serialization
+        records = df.to_dict(orient="records")
         
+        # Post-processing for dynamic keys and type safety
+        final_records = []
+        for rec in records:
+            # Handle dynamic percentile key
+            if 'p_custom_ms' in rec:
+                rec[f"p{percentile}_ms"] = rec.pop('p_custom_ms')
+            
+            # Ensure safe types (AnalysisEncoder handles most, but being explicit helps)
+            clean_rec = {}
+            for k, v in rec.items():
+                if pd.isna(v):
+                    clean_rec[k] = None
+                else:
+                    clean_rec[k] = v
+            final_records.append(clean_rec)
+        
+        records = final_records
+            
+        return json.dumps({
+            "metadata": {"view_id": target_table, "group_by": group_by, "time_range": time_range},
+            "data": records
+        }, cls=AnalysisEncoder)
+
     except Exception as e:
         logger.error(f"Error in analyze_latency_grouped: {str(e)}")
         return json.dumps({"error": str(e)})
-
 
 @cached_tool()
 async def get_active_metadata(
@@ -1567,3 +1602,4 @@ async def get_error_impact_analysis(
     except Exception as e:
         logger.error(f"Error in get_error_impact_analysis: {str(e)}")
         return json.dumps({"error": str(e)})
+

@@ -12,6 +12,7 @@ from google.adk.agents import Agent, SequentialAgent, ParallelAgent
 from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
+from google.adk.tools import ToolContext
 
 from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
@@ -118,11 +119,39 @@ playbook_swarm = ParallelAgent(
     description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
+def ensure_analyst_findings(context: ToolContext) -> str:
+    """Ensures that all analyst findings keys exist in session state to prevent Report Creator crash."""
+    required_keys = ["invocation_findings", "agent_findings", "llm_findings", "tool_findings"]
+    missing_keys = []
+    
+    # Check and fill missing keys
+    for key in required_keys:
+        if key not in context.session.state:
+            context.session.state[key] = f"**[MISSING DATA]** {key} was not generated due to an analyst failure."
+            missing_keys.append(key)
+            
+    if missing_keys:
+        return f"Repaired missing keys: {', '.join(missing_keys)}"
+    return "All findings keys present."
+
+context_ensurer = Agent(
+    name="context_ensurer",
+    model=MODEL_ID,
+    instruction="Call the `ensure_analyst_findings` tool to repair any missing session state keys before report generation.",
+    description="Ensures all required data is present in the session before report generation.",
+    tools=[ensure_analyst_findings],
+    include_contents='none' # Stateless, just fixing context
+)
+
 # Create the Report Creator Agent that takes findings and structures them into markdown
 report_creator_agent = Agent(
     name="report_creator_agent",
     model=MODEL_ID,
-    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).format(agent_version=AGENT_VERSION, datastore_id=DATASET_ID, table_id=TABLE_ID), # Automatically injects {playbook_findings} and {agent_version}
+    # Use .replace to avoid KeyError from str.format if other braces exist
+    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))\
+                                          .replace("{agent_version}", AGENT_VERSION)\
+                                          .replace("{datastore_id}", DATASET_ID)\
+                                          .replace("{table_id}", TABLE_ID),
     description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
     tools=[],
     output_key="final_report",
@@ -132,8 +161,8 @@ report_creator_agent = Agent(
 # Group the investigator swarm and report creator into a strict sequential pipeline
 investigate_and_report_pipeline = SequentialAgent(
     name="investigation_workflow",
-    sub_agents=[playbook_swarm, report_creator_agent],
-    description="Pipeline that first investigates the system constraints concurrently and then generates a merged report."
+    sub_agents=[playbook_swarm, context_ensurer, report_creator_agent],
+    description="Pipeline that first investigates the system constraints concurrently, ensures data integrity, and then generates a merged report."
 )
 
 def _format_kpis_for_prompt(kpis: dict) -> str:
