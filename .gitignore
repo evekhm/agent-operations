@@ -5,6 +5,8 @@
 /.venv/
 /tools/.cache/
 /reports/
+/logs/
+/.env
 /reports_v2/
 /reports_assets*/
 /report_assets*/
