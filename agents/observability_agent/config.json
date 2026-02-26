@@ -2,6 +2,7 @@
     "config": {
         "time_period": "7d",
         "playbook": "overview",
+        "chart_scale": 1.0,
         "kpis": {
           "end_to_end": {
             "latency_target": 10.0,

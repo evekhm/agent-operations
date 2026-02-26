@@ -35,7 +35,7 @@ LOCATION = os.getenv('LOCATION', "us")
 
 #Agent produced BQ Analytics
 AGENT_DATASET_ID = os.getenv('AGENT_DATASET_ID', DATASET_ID)
-AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', "observability_agent_events")
+AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
 
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"
@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 # Define DEFAULT_TIME_RANGE
 # _config = _load_config_data()
 DEFAULT_TIME_RANGE = "all" #TODO Convert to session specific period shared so it can be used for caching
+CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
 
 # =========================================
 # STATIC KPIs (SLOs)

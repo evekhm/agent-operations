@@ -13,13 +13,14 @@ import hashlib
 import logging
 import os
 import shutil
+import time
 from typing import cast, Awaitable
 
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
-from ..config import PROJECT_ID
+from ..config import PROJECT_ID, CACHE_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,8 @@ async def run_query_async(query: str, job_config=None, timeout: int = 1200) -> p
     return await cast(Awaitable[pd.DataFrame], loop.run_in_executor(run_query_async._executor, _sync_exec))
 
 
-async def execute_bigquery(query: str, timeout: int = 1200, job_config=None) -> pd.DataFrame:
+async def execute_bigquery(query: str, timeout: int = 1200, job_config=None,
+                           cache_ttl: int = CACHE_TTL) -> pd.DataFrame:
     """
     Execute a BigQuery query with persistent caching and timeout protection.
     
@@ -153,8 +155,13 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None) -> 
     # Check cache
     if os.path.exists(cache_path):
         try:
-            logger.info(f"[CACHE HIT] Loading results from {cache_path}")
-            return pd.read_json(cache_path, orient='records')
+            # Check TTL
+            last_modified = os.path.getmtime(cache_path)
+            if time.time() - last_modified < cache_ttl:
+                logger.info(f"[CACHE HIT] Loading results from {cache_path}")
+                return pd.read_json(cache_path, orient='records')
+            else:
+                logger.info(f"[CACHE EXPIRED] Cache file is older than {cache_ttl}s, re-executing")
         except Exception as e:
             logger.warning(f"[CACHE READ ERROR] Failed to read cache, re-executing: {e}")
     

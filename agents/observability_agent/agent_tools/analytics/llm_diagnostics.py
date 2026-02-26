@@ -173,7 +173,13 @@ async def fetch_slowest_requests(
           T.model_name,
           T.prompt_token_count,
           T.candidates_token_count,
-          T.request_preview
+          T.thoughts_token_count,
+          T.request_preview,
+          T.full_request,
+          T.full_response,
+          T.time_to_first_token_ms,
+          CAST(NULL as FLOAT64) as e2e_duration_ms, -- Placeholder, requires join if needed
+          T.status
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         WHERE {where_clause}
         ORDER BY latency_ms DESC
@@ -196,7 +202,12 @@ async def fetch_slowest_requests(
                 "model_name": row['model_name'],
                 "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
                 "response_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
-                "preview": row['request_preview']
+                "thought_tokens": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else 0,
+                "preview": row['request_preview'],
+                "full_request": row['full_request'],
+                "full_response": row['full_response'],
+                "time_to_first_token_ms": float(row['time_to_first_token_ms']) if pd.notna(row['time_to_first_token_ms']) else 0.0,
+                "status": row['status']
             })
             
         result = {
