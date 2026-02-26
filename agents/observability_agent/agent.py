@@ -31,7 +31,7 @@ from google.adk.models.google_llm import Gemini
 from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
-    detect_sequential_bottlenecks
+    # detect_sequential_bottlenecks
 )
 from .agent_tools.analytics.latency import (
     get_active_metadata,
@@ -76,7 +76,7 @@ analyst_tools = [
     batch_analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
-    detect_sequential_bottlenecks,
+    # detect_sequential_bottlenecks,
     run_sql_query,
     get_llm_impact_analysis,
     get_tool_impact_analysis,
@@ -133,11 +133,12 @@ playbook_swarm = ParallelAgent(
     description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
-def aggregate_parallel_results(agent: Agent, session: Session, *args, **kwargs):
+def aggregate_parallel_results(agent: Agent, context: ToolContext, *args, **kwargs):
     """
     Callback to aggregate the results of the parallel swarm into a single string
     that the Report Creator can consume.
     """
+    session = context.session
     # ParallelAgent results are typically stored in the session state under the agent's name
     # The structure is usually a list of results from sub-agents.
 
@@ -152,15 +153,15 @@ def aggregate_parallel_results(agent: Agent, session: Session, *args, **kwargs):
     merged_findings = "\n\n".join([str(res) for res in swarm_results if res])
 
     # Store in the key expected by the prompt
-    session.state["agent_findings"] = merged_findings
-    print(f"DEBUG: Aggregated {len(swarm_results)} findings into 'agent_findings' ({len(merged_findings)} chars).")
+    session.state["playbook_findings"] = merged_findings
+    print(f"DEBUG: Aggregated {len(swarm_results)} findings into 'playbook_findings' ({len(merged_findings)} chars).")
 
 # Attach the callback
 playbook_swarm.after_agent_callback = aggregate_parallel_results
 
 def ensure_analyst_findings(context: ToolContext) -> str:
     """Ensures that all analyst findings keys exist in session state to prevent Report Creator crash."""
-    required_keys = ["invocation_findings", "agent_findings", "llm_findings", "tool_findings"]
+    required_keys = ["invocation_findings", "playbook_findings", "llm_findings", "tool_findings"]
     missing_keys = []
 
     # Check and fill missing keys
@@ -232,7 +233,8 @@ def _format_kpis_for_prompt(kpis: dict) -> str:
     return "\n".join(lines)
 
 def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str, kpis: dict = None,
-                        num_slowest_queries: int = 20, num_error_records: int = 10, config: dict = None):
+                        num_slowest_queries: int = 20, num_error_records: int = 10,
+                        num_queries_to_analyze_rca: int = 5, config: dict = None):
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
     if kpis is None:
         from .config import DEFAULT_KPIS
@@ -275,6 +277,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
         num_error_records=num_error_records,
+        num_queries_to_analyze_rca=num_queries_to_analyze_rca,
         kpi_percentile=kpi_percentile
     )
     invocation_analyst.instruction = hydrated_invocation_prompt
@@ -286,6 +289,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
         num_error_records=num_error_records,
+        num_queries_to_analyze_rca=num_queries_to_analyze_rca,
         kpi_percentile=kpi_percentile
     )
     agent_analyst.instruction = hydrated_agent_prompt
@@ -297,6 +301,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
         num_error_records=num_error_records,
+        num_queries_to_analyze_rca=num_queries_to_analyze_rca,
         kpi_percentile=kpi_percentile
     )
     llm_analyst.instruction = hydrated_llm_prompt
@@ -308,6 +313,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpis_string=kpis_string,
         num_slowest_queries=num_slowest_queries,
         num_error_records=num_error_records,
+        num_queries_to_analyze_rca=num_queries_to_analyze_rca,
         kpi_percentile=kpi_percentile
     )
     tool_analyst.instruction = hydrated_tool_prompt
