@@ -121,8 +121,9 @@ async def main():
         baseline_period=baseline_period,
         bucket_size=bucket_size,
         kpis=kpis,
-        num_slowest_queries=config.get("num_slowest_queries", 20),
-        num_error_records=config.get("num_error_queries", 10),
+        num_slowest_queries=config.get("num_slowest_queries", 5),
+        num_error_records=config.get("num_error_queries", 5),
+        num_queries_to_analyze_rca=config.get("num_queries_to_analyze_rca", 5),
         config=config
     )
     
@@ -231,6 +232,13 @@ async def main():
                 session_service=session_service,
                 app_name="observability_analyst_app"
             )
+            
+            # Manually ensure findings keys exist if the swarm crashed
+            required_keys = ["invocation_findings", "agent_findings", "llm_findings", "tool_findings"]
+            for key in required_keys:
+                if key not in session.state:
+                    session.state[key] = f"**[ERROR]** {key} could not be generated due to a critical failure in the analysis phase: {e}"
+            
             report_msg = types.Content(role="user", parts=[types.Part(text="Generate the final report from the findings gathered so far.")])
             
             async for event in report_runner.run_async(

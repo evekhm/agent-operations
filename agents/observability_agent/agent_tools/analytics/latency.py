@@ -12,6 +12,7 @@ This module contains tools for analyzing:
 import asyncio
 import json
 import logging
+import time
 from typing import Optional
 
 import pandas as pd
@@ -565,12 +566,22 @@ async def analyze_latency_grouped(
                 where_clause_joined += " AND A.agent_name != A.root_agent_name"
 
              query = f"""
+                WITH LLM_Aggregated AS (
+                    SELECT 
+                        parent_span_id, 
+                        model_name,
+                        SUM(candidates_token_count) as candidates_token_count,
+                        SUM(thoughts_token_count) as thoughts_token_count,
+                        SUM(total_token_count) as total_token_count
+                    FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}`
+                    GROUP BY 1, 2
+                )
                 SELECT
                   {select_group_sql},
                   COUNT(DISTINCT A.span_id) as total_count,
-                  COUNTIF(A.status = 'ERROR') as error_count,
-                  COUNTIF(A.status != 'ERROR' AND A.status != 'PENDING') as success_count,
-                  ROUND(COUNTIF(A.status = 'ERROR') / NULLIF(COUNT(DISTINCT A.span_id), 0) * 100, 2) as error_rate_pct,
+                  COUNT(DISTINCT CASE WHEN A.status = 'ERROR' THEN A.span_id END) as error_count,
+                  COUNT(DISTINCT CASE WHEN A.status != 'ERROR' AND A.status != 'PENDING' THEN A.span_id END) as success_count,
+                  ROUND(COUNT(DISTINCT CASE WHEN A.status = 'ERROR' THEN A.span_id END) / NULLIF(COUNT(DISTINCT A.span_id), 0) * 100, 2) as error_rate_pct,
                   AVG(A.{latency_col}) as avg_ms,
                   STDDEV(A.{latency_col}) as std_latency_ms,
                   0.0 as cv_pct, -- approximation
@@ -582,9 +593,18 @@ async def analyze_latency_grouped(
                   APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(990)] as p99_ms,
                   APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(999)] as p999_ms,
                   APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
-                  MAX(A.{latency_col}) as max_ms
+                  MAX(A.{latency_col}) as max_ms,
+                  -- Token Metrics
+                  AVG(L.candidates_token_count) as avg_output_tokens,
+                  APPROX_QUANTILES(L.candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
+                  MIN(L.candidates_token_count) as min_output_tokens,
+                  MAX(L.candidates_token_count) as max_output_tokens,
+                  -- Correlation Metrics
+                  CORR(A.{latency_col}, L.candidates_token_count - IFNULL(L.thoughts_token_count, 0)) as corr_latency_pure_output,
+                  CORR(A.{latency_col}, L.candidates_token_count) as corr_latency_output_plus_thoughts,
+                  CORR(A.{latency_col}, L.total_token_count) as corr_latency_total
                 FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A
-                JOIN `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS L
+                JOIN LLM_Aggregated AS L
                 ON A.span_id = L.parent_span_id
                 WHERE {where_clause_joined}
                 GROUP BY {group_by_sql}
@@ -615,15 +635,21 @@ async def analyze_latency_grouped(
             
             # Conditionally add token metrics if querying LLM events
             if str(target_table) == str(LLM_EVENTS_VIEW_ID):
-                 query += """,
+                 query += f""",
               AVG(prompt_token_count) as avg_input_tokens,
               APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
               AVG(candidates_token_count) as avg_output_tokens,
               APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
+              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
+              MIN(candidates_token_count) as min_output_tokens,
+              MAX(candidates_token_count) as max_output_tokens,
               AVG(thoughts_token_count) as avg_thought_tokens,
               APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
               AVG(total_token_count) as avg_total_tokens,
-              APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
+              APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens,
+              CORR({latency_col}, prompt_token_count) as corr_latency_input,
+              CORR({latency_col}, candidates_token_count) as corr_latency_output,
+              CORR({latency_col}, total_token_count) as corr_latency_total
                  """
                  
             query += f"""
@@ -646,6 +672,9 @@ async def analyze_latency_grouped(
               APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
               AVG(candidates_token_count) as avg_output_tokens,
               APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
+              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
+              MIN(candidates_token_count) as min_output_tokens,
+              MAX(candidates_token_count) as max_output_tokens,
               AVG(thoughts_token_count) as avg_thought_tokens,
               APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
               AVG(total_token_count) as avg_total_tokens,
@@ -669,6 +698,10 @@ async def analyze_latency_grouped(
             except Exception as e:
                 logger.warning(f"Failed to merge token metrics: {e}")
 
+        # Helper for safer float conversion
+        def safe_float(val):
+            return float(val) if pd.notna(val) else None
+
         # Sanitize for JSON serialization
         records = df.to_dict(orient="records")
         
@@ -686,6 +719,13 @@ async def analyze_latency_grouped(
                     clean_rec[k] = None
                 else:
                     clean_rec[k] = v
+
+            # Add correlation metrics if present
+            if 'corr_latency_pure_output' in rec:
+                clean_rec['corr_latency_pure_output'] = safe_float(rec.get('corr_latency_pure_output'))
+                clean_rec['corr_latency_output_plus_thoughts'] = safe_float(rec.get('corr_latency_output_plus_thoughts'))
+                clean_rec['corr_latency_total'] = safe_float(rec.get('corr_latency_total'))
+
             final_records.append(clean_rec)
         
         records = final_records
@@ -719,7 +759,7 @@ async def get_active_metadata(
     
     try:
         where_clause = build_standard_where_clause(time_range=time_range)
-        import asyncio
+
         async def fetch_distinct(column_name: str, limit: int = 50) -> list[str]:
             """Fetch distinct values for a given column from the events view."""
             query = f"""
@@ -729,22 +769,38 @@ async def get_active_metadata(
             LIMIT {limit}
             """
             
-            df = await execute_bigquery(query)
-            if df.empty:
-                return []
-            return df[column_name].tolist()
+            try:
+                df = await execute_bigquery(query)
+                if df.empty:
+                    return []
+                return df[column_name].tolist()
+            except Exception as e:
+                # If column doesn't exist (e.g. model_name in agent_events_view), return empty list
+                # This is safer than hardcoding view names
+                if "Unrecognized name" in str(e):
+                    return []
+                raise e
 
-        tasks = [
+        # Parallel execution for all potential columns
+        # We try to fetch model_name even for agent_events_view, but catch the error if it doesn't exist
+        # This makes the tool robust to view schema changes
+        agents, root_agents, models = await asyncio.gather(
             fetch_distinct("agent_name"),
-            fetch_distinct("root_agent_name")
-        ]
-        if target_table in (LLM_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID):
-            tasks.append(fetch_distinct("model_name"))
-        
-        results = await asyncio.gather(*tasks)
-        agents = results[0]
-        root_agents = results[1]
-        models = results[2] if len(results) > 2 else []
+            fetch_distinct("root_agent_name"),
+            fetch_distinct("model_name"),
+            return_exceptions=True
+        )
+
+        # Handle exceptions from gather if any (though fetch_distinct catches most)
+        def _process_result(res):
+            if isinstance(res, Exception):
+                logger.warning(f"Metadata fetch failed: {res}")
+                return []
+            return res
+
+        agents = _process_result(agents)
+        root_agents = _process_result(root_agents)
+        models = _process_result(models)
         
         if not agents and not root_agents and not models:
             return json.dumps({"message": "No metadata found", "metadata": {"view_id": target_table}})
@@ -800,7 +856,12 @@ async def analyze_root_cause(
         WHERE {id_column} = '{span_id}'
         """
         
-        df = await execute_bigquery(query)
+        # print(f"DEBUG: Executing AI.GENERATE for span {span_id}...", flush=True)
+        try:
+            df = await execute_bigquery(query)
+        except Exception as query_err:
+            print(f"DEBUG: BigQuery AI.GENERATE failed for {span_id}: {query_err}", flush=True)
+            raise query_err
         
         if df.empty:
             return json.dumps({"message": f"Span {span_id} not found", "metadata": {"view_id": target_table}})
@@ -858,8 +919,18 @@ async def batch_analyze_root_cause(
         for span_id, view_id in zip(id_list, view_list):
             tasks.append(analyze_root_cause(span_id=span_id, view_id=view_id))
             
+        # Custom logging for user visibility
+        start_time = time.time()
+        logger.info(f"Starting AI Root Cause Analysis on {len(id_list)} traces (View IDs: {view_list})...")
+        # logger.info(f"Starting batch_analyze_root_cause for {len(id_list)} spans.")
+
         # Run in parallel
+        # print(f"DEBUG: Awaiting {len(tasks)} analysis tasks...", flush=True)
         results_json = await asyncio.gather(*tasks)
+        
+        duration = time.time() - start_time
+        logger.info(f"Finished AI Root Cause Analysis in {duration:.2f}s.")
+        logger.info(f"Finished batch_analyze_root_cause in {duration:.2f}s")
         
         # Parse JSONs back to dicts to return a composite JSON list
         results = [json.loads(r) for r in results_json]
@@ -1385,8 +1456,16 @@ async def get_llm_impact_analysis(
         return json.dumps(result, cls=AnalysisEncoder)
 
     except Exception as e:
-        logger.error(f"Error in get_llm_impact_analysis: {str(e)}")
-        return json.dumps({"error": str(e)})
+        error_str = str(e)
+        if "429" in error_str or "Resource exhausted" in error_str:
+            logger.warning(f"get_llm_impact_analysis hit quota: {error_str}")
+            return json.dumps({
+                "message": "LLM Impact Analysis skipped due to quota limits (429).",
+                "metadata": {"view_id": target_table},
+                "impact_analysis": []
+            })
+        logger.error(f"Error in get_llm_impact_analysis: {error_str}")
+        return json.dumps({"error": error_str})
 
 async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> str:
     """
@@ -1439,7 +1518,7 @@ async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> 
         for col in ['tool_args', 'response_content', 'tool_result']:
             if col in df.columns:
                 df[col] = df[col].astype(str).apply(
-                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
+                    lambda x: x if len(x) <= 800 else f"[TRUNCATED: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to see full content.]"
                 )
 
         records = []
@@ -1597,7 +1676,7 @@ async def get_error_impact_analysis(
             for col in df.columns:
                 if df[col].dtype == object or df[col].dtype == str:
                      df[col] = df[col].astype(str).apply(
-                         lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
+                         lambda x: x if len(x) <= 800 else f"[TRUNCATED: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to see full content.]"
                      ).apply(sanitize_for_markdown)
             
             return df.to_dict(orient="records")
