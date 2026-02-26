@@ -10,6 +10,7 @@ It also instantiates plugins per-thread to avoid event loop binding issues.
 import asyncio
 import argparse
 import concurrent.futures
+import multiprocessing
 import time
 import sys
 import json
@@ -165,9 +166,10 @@ def main():
         for i in range(args.users)
     ]
 
-    # Use ProcessPoolExecutor for better isolation and to handle global state/locks in plugins correctly
-    # This avoids 'Lock bound to different event loop' issues by giving each user their own process/loop.
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.users) as executor:
+    # Use ProcessPoolExecutor with 'spawn' context to avoid gRPC fork issues
+    # This avoids 'Lock bound to different event loop' and gRPC channel inheritance issues.
+    mp_context = multiprocessing.get_context('spawn')
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.users, mp_context=mp_context) as executor:
         # Submit all tasks
         futures = {executor.submit(run_single_user_wrapper, item): item[0] for item in work_items}
         
