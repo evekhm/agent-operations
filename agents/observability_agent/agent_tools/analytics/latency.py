@@ -520,8 +520,7 @@ async def analyze_latency_grouped(
         
         if exclude_root:
             where_clause += " AND agent_name != root_agent_name"
-            # Explicitly exclude root agents which typically have no parent span in the trace structure
-            where_clause += " AND parent_span_id IS NOT NULL"
+
             
         if target_table == TOOL_EVENTS_VIEW_ID:
             where_clause += " AND tool_name != 'transfer_to_agent'"

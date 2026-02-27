@@ -81,7 +81,7 @@ def check_table_exists(client, table_ref) -> bool:
 # QUERY EXECUTION & CACHING
 # ==============================================================================
 
-CACHE_DIR = os.path.join(os.getcwd(), ".cache", "queries")
+CACHE_DIR = os.path.join("/tmp", ".cache", "queries")
 
 def clear_query_cache():
     """Clear the persistent query cache."""
@@ -141,7 +141,7 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None,
     # ensure cache dir exists
     print(f"\n================ SQL QUERY ================\n"
           f"{query}\n"
-          f"===========================================")
+          f"===========================================\n", flush=True)
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR, exist_ok=True)
 

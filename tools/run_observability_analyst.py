@@ -337,7 +337,8 @@ async def main():
             # Use timestamp from config or now
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             playbook_name = config.get("playbook", "overview")
-            report_path = os.path.join(dir_path, f"../reports/observability_{playbook_name}_report_{timestamp}.md")
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            report_path = os.path.join(base_dir, f"../reports/observability_{playbook_name}_report_{timestamp}.md")
             os.makedirs(os.path.dirname(report_path), exist_ok=True)
             
             with open(report_path, "w") as f:

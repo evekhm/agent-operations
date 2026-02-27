@@ -1,8 +1,17 @@
 {
     "config": {
-        "time_period": "7d",
         "playbook": "overview",
-        "chart_scale": 1.0,
+        "data_retrieval": {
+          "time_period": "7d",
+          "num_slowest_queries": 20,
+          "num_error_queries": 20,
+          "num_empty_llm_responses": 20,
+          "num_queries_to_analyze_rca": 0
+        },
+        "presentation": {
+            "chart_scale": 1.0,
+            "max_column_width_chars": 250
+          },
         "kpis": {
           "end_to_end": {
             "latency_target": 10.0,
@@ -24,10 +33,7 @@
             "percentile_target": 95.5,
             "error_target": 5.0
           }
-        },
-        "num_slowest_queries": 5,
-        "num_error_queries": 5,
-        "num_queries_to_analyze_rca": 1
+        }
     },
     "queries": [
         "Some additional instructions to add to the prompt."
