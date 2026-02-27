@@ -506,7 +506,7 @@ class ReportGenerator:
             A.status AS agent_status,
             COALESCE(I.root_agent_name, R.agent_name) AS root_agent_name,
             COALESCE(I.status, R.status) AS root_status,
-            COALESCE(I.content_text_summary, R.instruction) AS user_message,
+            COALESCE(CAST(I.content_text_summary AS STRING), CAST(R.instruction AS STRING)) AS user_message,
             L.trace_id,
             L.span_id
         FROM `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS L
@@ -537,7 +537,7 @@ class ReportGenerator:
             A.error_message,
             COALESCE(I.root_agent_name, R.agent_name) AS root_agent_name,
             COALESCE(I.status, R.status) AS root_status,
-            COALESCE(I.content_text_summary, R.instruction) AS user_message,
+            COALESCE(CAST(I.content_text_summary AS STRING), CAST(R.instruction AS STRING)) AS user_message,
             A.trace_id,
             A.span_id
         FROM `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS A
