@@ -1,39 +1,46 @@
-
 import logging
 import os
 from typing import List, Dict
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import numpy as np
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ChartGenerator")
 
-# Configure Plotting Style
-plt.style.use('seaborn-v0_8-darkgrid')
-sns.set_theme(style="whitegrid")
+# Configure Professional Plotting Style
+plt.style.use('seaborn-v0_8-whitegrid')
+sns.set_theme(style="whitegrid", palette="muted")
+plt.rcParams.update({
+    'font.size': 9,
+    'axes.titlesize': 11,
+    'axes.titleweight': 'bold',
+    'axes.labelsize': 10,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'legend.title_fontsize': 10,
+    'figure.titlesize': 12,
+    'figure.titleweight': 'bold'
+})
 
-# Consistent Pastel Palette
-PASTEL_COLORS = [
-    '#AEC6CF', # Pastel Blue
-    '#77DD77', # Pastel Green
-    '#FF6961', # Pastel Red
-    '#CB99C9', # Pastel Purple
-    '#FFB347', # Pastel Orange
-    '#FDFD96', # Pastel Yellow
-    '#F49AC2', # Pastel Pink
-    '#B0E0E6', # Powder Blue
-    '#CFCFC4'  # Pastel Gray
-]
-PASTEL_OK = '#77DD77'
-PASTEL_ERR = '#FF6961'
+# Professional Palette
+OK_COLOR = '#2ca02c' # Muted Green
+ERR_COLOR = '#d62728' # Muted Red
+NEUTRAL_COLOR = '#1f77b4' # Muted Blue
 
 class ChartGenerator:
     def __init__(self, output_dir: str, scale: float = 1.0):
         self.output_dir = output_dir
         self.scale = scale
         os.makedirs(self.output_dir, exist_ok=True)
+        # Standard Sizes (Width, Height)
+        self.SIZE_PIE = (6.5, 4.5)
+        self.SIZE_SMALL = (6, 4)
+        self.SIZE_MEDIUM = (8, 6)
+        self.SIZE_LARGE = (10, 8)
 
     def _get_figsize(self, w, h):
         return (w * self.scale, h * self.scale)
@@ -49,7 +56,7 @@ class ChartGenerator:
         plt.close()
         return path
 
-    def generate_pie_chart(self, data: pd.Series, title: str, filename: str, colors: Dict[str, str] = None):
+    def generate_pie_chart(self, data: pd.Series, title: str, filename: str, colors: Dict[str, str] = None, figsize=None):
         if data.empty:
             logger.warning(f"No data for pie chart: {title}")
             return None
@@ -61,37 +68,54 @@ class ChartGenerator:
             logger.warning(f"No positive data for pie chart: {title}")
             return None
 
-        plt.figure(figsize=self._get_figsize(6, 4.5))
+        # Force a wider image size so pie chart PNGs don't clip long legends on the right
+        base_size = (10.0, 4.5)
+        fig = plt.figure(figsize=self._get_figsize(*base_size))
+        
+        # Absolute positioning: Pie chart strictly on the left half of the canvas
+        ax = fig.add_axes([0.0, 0.1, 0.35, 0.75])
+        
         color_list = None
         if colors:
-            color_list = [colors.get(x, '#cccccc') for x in data.index]
-
-        wedges, texts, autotexts = plt.pie(
+             # Use provided color dict or fallback to seaborn palette
+            color_list = [colors.get(x, sns.color_palette("muted")[i % len(sns.color_palette("muted"))]) for i, x in enumerate(data.index)]
+            
+        wedges, texts = ax.pie(
             data, 
-            labels=None, # No labels on pie
-            autopct='%1.1f%%', 
+            labels=None, # No labels on pie itself to avoid overlap
             startangle=90, 
             colors=color_list,
-            textprops=dict(color="black"),
-            radius=0.9 # Smaller radius as requested (was 1.2)
+            wedgeprops=dict(width=0.4, edgecolor='w'), # Donut shape looks cleaner
+            radius=1.0 # Force uniform radius
         )
         
-        # Determine label text color based on wedge color brightness could be nice, but black is safe for now.
-        plt.setp(autotexts, size=7, weight="bold") # Smaller font
-        plt.setp(texts, size=8)
-        
-        # Add Legend
-        plt.legend(
+        # Calculate percentages for the legend
+        total = sum(data)
+        legend_labels = [f"{idx} ({(val/total)*100:.1f}%)" for idx, val in zip(data.index, data)]
+
+        # Calculate optimal number of columns for the legend (max ~12 items per column vertically)
+        ncols = max(1, (len(data) // 13) + 1)
+
+        # Add Legend to the right half of the canvas
+        ax_legend = fig.add_axes([0.35, 0.1, 0.65, 0.75])
+        ax_legend.axis('off')
+        ax_legend.legend(
             wedges, 
-            data.index, 
+            legend_labels, 
             title=None, 
             loc="center left", 
-            bbox_to_anchor=(1.1, 0, 0.5, 1), # Move legend slightly further right
-            fontsize=7 # Smaller legend font
+            fontsize=9,
+            ncol=ncols
         )
         
-        plt.title(title, fontsize=12, fontweight='bold')
-        return self.save_plot(filename)
+        # Absolute title positioning
+        fig.text(0.0, 0.95, title, fontsize=9, fontweight='bold', ha='left', va='top')
+        
+        # Save explicitly bypassing tight_layout so the canvas bounds are identical for all charts
+        path = os.path.join(self.output_dir, filename)
+        plt.savefig(path, dpi=150)
+        plt.close(fig)
+        return path
 
     def generate_bar_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str, color: str = None, figsize=None):
         if df.empty:
@@ -101,22 +125,22 @@ class ChartGenerator:
         df = df.copy()
         df[y_col] = df[y_col].fillna(0)
         
-        # Use provided figsize or default (10, 6)
-        base_size = figsize if figsize else (10, 6)
+        base_size = figsize if figsize else self.SIZE_MEDIUM
         plt.figure(figsize=self._get_figsize(*base_size))
         
-        sns.barplot(data=df, x=x_col, y=y_col, color=color or "skyblue")
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel(y_col, fontsize=12)
+        sns.barplot(data=df, x=x_col, y=y_col, color=color or NEUTRAL_COLOR)
+        plt.title(title, pad=15)
+        plt.xlabel(x_col.replace('_', ' ').title())
+        plt.ylabel(y_col.replace('_', ' ').title())
         plt.xticks(rotation=45, ha='right')
         return self.save_plot(filename)
 
-    def generate_horizontal_bar_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str, c_col: str = None, cmap: str = 'viridis', figsize=None):
+    def generate_horizontal_bar_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str, c_col: str = None, cmap: str = 'Blues', figsize=None):
         if df.empty: return None
         
-        # Use provided figsize or default (10, len(df) * 0.5 + 2)
-        base_size = figsize if figsize else (10, max(6, len(df) * 0.5 + 2))
+        # Calculate dynamic height based on number of bars, but cap it so it doesn't get ridiculously tall
+        calculated_height = max(self.SIZE_MEDIUM[1], len(df) * 0.4 + 1)
+        base_size = figsize if figsize else (self.SIZE_MEDIUM[0], calculated_height)
         plt.figure(figsize=self._get_figsize(*base_size))
         
         # Color mapping if c_col is provided
@@ -131,34 +155,34 @@ class ChartGenerator:
                 cmap_obj = plt.cm.get_cmap(cmap)
             colors = cmap_obj(norm(df[c_col].values))
         
-        bars = plt.barh(df[y_col], df[x_col], color=colors if colors is not None else PASTEL_COLORS[0], edgecolor='grey', alpha=0.9)
+        bars = plt.barh(df[y_col], df[x_col], color=colors if colors is not None else NEUTRAL_COLOR, edgecolor='none', alpha=0.9)
         
-        plt.title(title, fontsize=12, fontweight='bold')
-        plt.xlabel(x_col.replace('_', ' ').title(), fontsize=10)
-        plt.yticks(fontsize=9)
-        plt.xticks(fontsize=9)
+        plt.title(title, pad=15)
+        plt.xlabel(x_col.replace('_', ' ').title())
         
-        # Add value labels if space permits
+        # Add value labels
         for i, bar in enumerate(bars):
             width = bar.get_width()
-            label = f"{width:.2f}s"
+            label = f"{width:.2f}"
+            if "ms" in x_col.lower() or "latency" in x_col.lower() or "(s)" in x_col:
+                 label += "s"
             if c_col and c_col in df.columns:
                 val = df.iloc[i][c_col]
-                label += f" ({int(val)})"
+                label += f" (n={int(val)})"
             
             # Smart positioning: inside if bar is wide enough, outside otherwise
-            # For now, simplistic approach: Outside
-            plt.text(width, bar.get_y() + bar.get_height()/2, 
+            plt.text(width + str(width).count('.')*0.01, bar.get_y() + bar.get_height()/2, 
                      f' {label}', 
-                     va='center', fontsize=8, color='black')
+                     va='center', fontsize=9, color='black')
             
         plt.gca().invert_yaxis() # Top to bottom
+        sns.despine(left=True, bottom=True) # Cleaner look for horizontal bars
         return self.save_plot(filename)
 
     def generate_stacked_bar_chart(self, df: pd.DataFrame, x_col: str, y_cols: List[str], title: str, filename: str, colors: List[str] = None, figsize=None):
         if df.empty: return None
         
-        base_size = figsize if figsize else (10, 8)
+        base_size = figsize if figsize else self.SIZE_LARGE
         plt.figure(figsize=self._get_figsize(*base_size))
         
         # Plot bottom layer first, then add subsequent layers
@@ -175,54 +199,60 @@ class ChartGenerator:
                 bottom=bottom, 
                 label=col, 
                 color=colors[i] if i < len(colors) else None,
-                edgecolor='black',
-                alpha=0.8
+                edgecolor='white',
+                linewidth=0.5,
+                alpha=0.9
             )
             if bottom is None:
                 bottom = df[col]
             else:
                 bottom += df[col]
                 
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel("Latency (s)", fontsize=12)
+        plt.title(title, pad=15)
+        plt.xlabel(x_col.replace('_', ' ').title())
+        plt.ylabel("Latency (s)")
         plt.xticks(rotation=45, ha='right')
-        plt.legend()
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        sns.despine()
         return self.save_plot(filename)
 
 
     def generate_xy_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str):
         if df.empty: return None
-        plt.figure(figsize=(10, 6))
-        sns.barplot(data=df, x=x_col, y=y_col, color="lightblue")
-        plt.title(title)
+        plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
+        sns.barplot(data=df, x=x_col, y=y_col, color=NEUTRAL_COLOR)
+        plt.title(title, pad=15)
+        sns.despine()
         return self.save_plot(filename)
 
     def generate_scatter_plot(self, df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, filename: str):
         if df.empty: return None
-        plt.figure(figsize=(10, 6))
-        sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, style=hue_col)
-        plt.title(title)
+        plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
+        sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, style=hue_col, s=80)
+        plt.title(title, pad=15)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        sns.despine()
         return self.save_plot(filename)
 
-    def generate_histogram(self, df: pd.DataFrame, col: str, title: str, filename: str, bins=50, color='skyblue'):
+    def generate_histogram(self, df: pd.DataFrame, col: str, title: str, filename: str, bins=50, color=NEUTRAL_COLOR):
         if df.empty: return None
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
         
         # Calculate statistics
         mean_val = df[col].mean()
         std_val = df[col].std()
         p95_val = df[col].quantile(0.95)
         
-        plt.hist(df[col], bins=bins, alpha=0.7, color=color, edgecolor='black')
-        plt.title(title, fontsize=14, fontweight='bold')
+        plt.hist(df[col], bins=bins, alpha=0.8, color=color, edgecolor='white')
+        plt.title(title, pad=15)
         plt.xlabel(col.replace('_', ' ').title())
         plt.ylabel('Frequency')
         
         # Add summary lines
-        plt.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.2f}')
-        plt.axvline(p95_val, color='orange', linestyle='-.', linewidth=2, label=f'P95: {p95_val:.2f}')
+        plt.axvline(mean_val, color=ERR_COLOR, linestyle='--', linewidth=2, label=f'Mean: {mean_val:.2f}')
+        plt.axvline(p95_val, color='#ff7f0e', linestyle='-.', linewidth=2, label=f'P95: {p95_val:.2f}')
         plt.legend()
+        sns.despine()
         
         return self.save_plot(filename)
 
@@ -241,21 +271,20 @@ class ChartGenerator:
         pivot_df = pivot_df.sort_values('total', ascending=False)
         pivot_df = pivot_df.drop(columns=['total'])
         
-        base_size = figsize if figsize else (12, 6)
+        base_size = figsize if figsize else self.SIZE_LARGE
         plt.figure(figsize=self._get_figsize(*base_size))
         
-        # Use pastel palette (cyclical if more categories than colors)
-        color_cycle = PASTEL_COLORS * (len(pivot_df.columns) // len(PASTEL_COLORS) + 1)
-        colors = color_cycle[:len(pivot_df.columns)]
+        colors = sns.color_palette("muted", len(pivot_df.columns))
         
-        pivot_df.plot(kind='bar', stacked=True, figsize=self._get_figsize(*base_size), color=colors, edgecolor='grey', width=0.8, rot=45)
+        pivot_df.plot(kind='bar', stacked=True, figsize=self._get_figsize(*base_size), color=colors, edgecolor='white', width=0.8, rot=45)
         
-        plt.title(title, fontsize=14, fontweight='bold')
+        plt.title(title, pad=15)
         plt.xlabel(x_col.replace('_', ' ').title())
         plt.ylabel('Count')
         plt.xticks(rotation=45, ha='right')
         # Move legend outside if too many items
-        plt.legend(title=hue_col.replace('_', ' ').title(), bbox_to_anchor=(1.02, 1), loc='upper left')
+        plt.legend(title=hue_col.replace('_', ' ').title(), bbox_to_anchor=(1.05, 1), loc='upper left')
+        sns.despine()
         
         return self.save_plot(filename)
 
@@ -266,12 +295,12 @@ class ChartGenerator:
         if order:
             counts = counts.reindex(order, fill_value=0)
             
-        base_size = figsize if figsize else (10, 6)
+        base_size = figsize if figsize else self.SIZE_MEDIUM
         plt.figure(figsize=self._get_figsize(*base_size))
         
-        bars = plt.bar(counts.index, counts.values, color=colors if colors else PASTEL_COLORS[0], edgecolor='grey')
+        bars = plt.bar(counts.index, counts.values, color=colors if colors else NEUTRAL_COLOR, edgecolor='white')
         
-        plt.title(title, fontsize=14, fontweight='bold')
+        plt.title(title, pad=15)
         plt.xlabel(col.replace('_', ' ').title())
         plt.ylabel('Count')
         plt.xticks(rotation=45, ha='right')
@@ -281,8 +310,8 @@ class ChartGenerator:
             height = bar.get_height()
             if height > 0:
                 plt.text(bar.get_x() + bar.get_width()/2., height,
-                         f'{int(height)}', ha='center', va='bottom')
-                 
+                         f'{int(height)}', ha='center', va='bottom', fontsize=9)
+        sns.despine()         
         return self.save_plot(filename)
 
     def generate_scatter_with_trend(self, df: pd.DataFrame, x_col: str, y_col: str, c_col: str, title: str, filename: str, scale='linear'):

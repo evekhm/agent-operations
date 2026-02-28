@@ -36,11 +36,14 @@ from agents.observability_agent.config import (
     PROJECT_ID,
     AGENT_VERSION,
     TABLE_ID,
-    TABLE_ID,
 )
-from agents.observability_agent.utils.views import ensure_all_views
 
-from report_charts import ChartGenerator, PASTEL_OK, PASTEL_ERR
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from agents.observability_agent.utils.views import ensure_all_views
+from report_charts import ChartGenerator, OK_COLOR, ERR_COLOR
 from report_data import ReportDataManager
 
 logger = logging.getLogger(__name__)
@@ -131,7 +134,8 @@ class ReportGenerator:
         if "kpis" in self.config and "end_to_end" in self.config["kpis"]:
              self.percentile = self.config["kpis"]["end_to_end"].get("percentile_target", 95.5)
         
-        self.max_column_width = int(os.getenv("MAX_COLUMN_WIDTH_CHARS", self.pres_config.get("max_column_width_chars", 250)))
+        self.max_column_width = int(os.getenv("MAX_COLUMN_WIDTH_CHARS",
+                                              self.pres_config.get("max_column_width_chars", 250)))
 
 
 
@@ -198,82 +202,49 @@ class ReportGenerator:
         df_disp = df.copy()
         total_reqs = df_disp['total_count'].sum()
         
-        # Requests & %
+        # Calculate derived columns
         df_disp['Requests'] = df_disp['total_count']
         df_disp['%'] = (df_disp['total_count'] / total_reqs * 100).round(1).astype(str) + "%"
-        
-        # Latency (ms -> s)
         df_disp['Mean (s)'] = (df_disp['avg_ms'] / 1000).round(3)
         
-        # Dynamic Percentile Column
+        # Percentile column
         raw_p_col = f"p{self.percentile}_ms"
-        disp_p_col = f"P{self.percentile} (s)"
-        
-        # Fallback if specific percentile col missing (should correspond to what was fetched)
+        # Fallback if specific percentile col missing
         if raw_p_col not in df_disp.columns:
-            # Try p95_ms as fallback if 95.5 was requested but somehow p95 returned?? 
-            # Actually analyze_latency_grouped guarantees the key name based on input.
-            # But let's be safe or just use it.
-            pass
+            raw_p_col = 'p95_ms' if 'p95_ms' in df_disp.columns else None
+            
+        disp_p_col = f"P{self.percentile} (s)"
+        if raw_p_col:
+            df_disp[disp_p_col] = (df_disp[raw_p_col] / 1000).round(3)
+        else:
+            df_disp[disp_p_col] = None
 
-        df_disp[disp_p_col] = (df_disp.get(raw_p_col, df_disp.get('p95_ms', 0)) / 1000).round(3)
         df_disp['Target (s)'] = target_latency_sec
-        
-        # Latency Status
         df_disp['Status'] = df_disp[disp_p_col].apply(lambda x: self._pass_fail(x, target_latency_sec, inverse=True))
         
-        # Replace NaN with "-" in Latency columns AFTER status check
-        df_disp['Mean (s)'] = df_disp['Mean (s)'].apply(lambda x: "-" if pd.isna(x) else x)
-        df_disp[disp_p_col] = df_disp[disp_p_col].apply(lambda x: "-" if pd.isna(x) else x)
-        
-        # Error & Status
         df_disp['Err %'] = df_disp['error_rate_pct']
         df_disp['Target (%)'] = target_error_pct
         df_disp['Err Status'] = df_disp['error_rate_pct'].apply(lambda x: self._pass_fail(x, target_error_pct, inverse=True))
         
-        # Overall Status (Red if either is Red)
         def get_overall(row):
             if row['Status'] == "🔴" or row['Err Status'] == "🔴":
                 return "🔴"
             return "🟢"
         df_disp['Overall'] = df_disp.apply(get_overall, axis=1)
-        
-        cols = [
-            'Name', 'Requests', '%', 'Mean (s)', disp_p_col, 'Target (s)', 'Status', 
-            'Err %', 'Target (%)', 'Err Status', 'Overall'
-        ]
-        
+
+        # Replace NaN with "-" in Latency columns AFTER status check
+        df_disp['Mean (s)'] = df_disp['Mean (s)'].apply(lambda x: "-" if pd.isna(x) else x)
+        df_disp[disp_p_col] = df_disp[disp_p_col].apply(lambda x: "-" if pd.isna(x) else x)
+
         if include_tokens:
-            # Token Stats (Avg/P95)
             df_disp['Input Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_input_tokens', 'p95_input_tokens'), axis=1)
             df_disp['Output Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_output_tokens', 'p95_output_tokens'), axis=1)
             df_disp['Thought Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_thought_tokens', 'p95_thought_tokens'), axis=1)
             df_disp['Tokens Consumed (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_total_tokens', 'p95_total_tokens'), axis=1)
-            
-            cols.insert(10, 'Status') # Insert extra status column alias if needed? User asked for "Status" twice.
-            # User format: ... Status | Err % | Target (%) | Status | Input ...
-            # My cols: ... Status | Err % | Target (%) | Err Status | Input ...
-            # I'll rename 'Err Status' to 'Status' just before returning, but might be confusing in code.
-            # Let's keep strict list.
-            
-            token_cols = ['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)']
-            # Insert before Overall
-            cols = cols[:-1] + token_cols + cols[-1:]
 
-        # Rename Name col
         df_disp = df_disp.rename(columns={name_col: 'Name'})
         
-        # Handle duplicate 'Status' formatting
-        # Pandas allows duplicate columns but markdown export might be tricky.
-        # Markdown allows it.
-        
-        # I'll use "Lat Status" and "Err Status" for clarity unless the user *strictly* enforced exact strings.
-        # User said "Status" twice.
-        # I'll use "Status" and "Status " (trailing space) or similar if I really want to match,
-        # but for now "Err Status" is cleaner and safer.
-        # I will modify the column list to match requested order.
-        
-        # Re-map columns for final output
+        # Define output columns
         final_cols_order = [
             'Name', 'Requests', '%', 'Mean (s)', disp_p_col, 'Target (s)', 'Status', 
             'Err %', 'Target (%)', 'Err Status'
@@ -282,8 +253,11 @@ class ReportGenerator:
             final_cols_order.extend(['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)'])
         final_cols_order.append('Overall')
         
-        final_df = df_disp.copy()
-        return self._bold_first_column(final_df[final_cols_order])
+        # Only select columns that exist to prevent KeyError if some token columns are missing
+        final_cols_valid = [c for c in final_cols_order if c in df_disp.columns]
+        
+        final_df = df_disp[final_cols_valid].copy()
+        return self._bold_first_column(final_df)
 
     def _format_links(self, df: pd.DataFrame) -> pd.DataFrame:
         """Formats trace_id and span_id as Markdown links."""
@@ -334,14 +308,10 @@ class ReportGenerator:
                     except: size_val = 0
 
             is_good = val <= target
-            status_str = "OK" if is_good else f"Exceeded > {target}" # More descriptive status
-            if metric_col == 'Err %':
-                 status_str = "OK" if is_good else f"Err > {target}%"
 
-            # Label matches requested format: "Name (Status)"
-            # Clean name from bold markdown if present
+            # Label matches requested format: "Name" (removing text status since color handles it)
             name = str(row['Name']).replace('**', '')
-            label = f"{name} ({status_str})"
+            label = name
             return label, size_val, is_good
 
         # Prepare data
@@ -410,8 +380,8 @@ class ReportGenerator:
         ok_items.sort(key=lambda x: x[1], reverse=True)
         bad_items.sort(key=lambda x: x[1], reverse=True)
 
-        ok_shades = generate_shades(PASTEL_OK, len(ok_items)) # Pastel Green
-        bad_shades = generate_shades(PASTEL_ERR, len(bad_items)) # Pastel Red
+        ok_shades = generate_shades(OK_COLOR, len(ok_items)) # Muted Green
+        bad_shades = generate_shades(ERR_COLOR, len(bad_items)) # Muted Red
         
         for i, item in enumerate(ok_items):
             colors[item[0]] = ok_shades[i]
@@ -461,6 +431,61 @@ class ReportGenerator:
             if pattern.lower() in clean_col.lower():
                  df[col] = df[col].apply(lambda x: f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x)
         return df
+
+    def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str, kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False, include_usage_chart: bool = True):
+        self.add_subsection(title)
+        if df.empty:
+            self.report_content.append(f"No {title.lower()} data available.\n")
+            return
+
+        target_latency = self.config.get(kpi_target_key, 2.0)
+        target_error = self.config.get(kpi_error_key, 5.0)
+
+        # 1. Performance Table
+        table_df = self._build_standard_table(
+            df, 
+            target_latency_sec=target_latency, 
+            target_error_pct=target_error,
+            name_col=name_col,
+            include_tokens=include_tokens
+        )
+        self.report_content.append(table_df.to_markdown(index=False))
+        self.report_content.append("\n<br>\n")
+        
+        # 2. Charts
+        chart_prefix = title.lower().replace(" ", "_").replace("level", "").strip()
+        
+        if include_usage_chart and 'total_count' in df.columns:
+            # Usage Distribution (Donut Chart)
+            usage_path = self.chart_gen.generate_pie_chart(
+                df.set_index(name_col)['total_count'],
+                f"{title}",
+                f"{chart_prefix}_usage.png"
+            )
+            if usage_path: self.add_image(f"{title} Usage", usage_path)
+
+        # Latency Status
+        self._add_status_pie_chart(
+            table_df, 
+            metric_col=f"P{self.percentile} (s)", 
+            target=target_latency, 
+            title=f"{title} Latency (Target: {target_latency}s)",
+            filename=f"{chart_prefix}_lat_status.png",
+            size_col="Requests"
+        )
+        
+        # Error Status
+        if 'Err %' in table_df.columns:
+            self._add_status_pie_chart(
+                table_df, 
+                metric_col="Err %", 
+                target=target_error, 
+                title=f"{title} Error (Target: {target_error}%)",
+                filename=f"{chart_prefix}_err_status.png",
+                size_col="Requests"
+            )
+        
+        self.report_content.append("\n---\n")
 
     def build_report(self):
         logger.info("   [BUILD] Starting build_report...")
@@ -537,129 +562,47 @@ class ReportGenerator:
             df_for_pie = std_table[std_table['Name'] != 'Root Agent']
             if not df_for_pie.empty:
                 # 1. Latency Status
-                self._add_status_pie_chart(df_for_pie, f'P{target_p} (s)', target_lat, f"E2E Latency Status (P{target_p})", "e2e_latency_pie.png", size_col=f'P{target_p} (s)')
+                self._add_status_pie_chart(df_for_pie, f'P{target_p} (s)', target_lat, f"E2E Latency (P{target_p})", "e2e_latency_pie.png", size_col=f'P{target_p} (s)')
                 # 2. Error Status
-                self._add_status_pie_chart(df_for_pie, 'Err %', target_err, f"E2E Error Status ({target_err:.0f}%)", "e2e_error_pie.png", size_col='Requests')
+                self._add_status_pie_chart(df_for_pie, 'Err %', target_err, f"E2E Error ({target_err:.0f}%)", "e2e_error_pie.png", size_col='Requests')
 
         self.report_content.append("\n---\n")
 
-        # Agent Level
-        self.add_subsection("Agent Level")
-        self.report_content.append("\n(AI_SUMMARY: Agent Level)\n")
-        if not self.df_agents.empty:
-            target_lat = self.config.get("kpis", {}).get("agent", {}).get("latency_target", 8.0)
-            target_err = self.config.get("kpis", {}).get("agent", {}).get("error_target", 5.0)
-            target_p = self.config.get("kpis", {}).get("agent", {}).get("percentile_target", 95.0)
-            
-            std_table = self._build_standard_table(
-                self.df_agents, target_lat, target_err, 'agent_name', include_tokens=True
-            )
-            headers = list(std_table.columns)
-            headers = [f"**{h}**" if h != 'Err Status' else '**Status**' for h in headers]
-            total_requests = self.df_agents['total_count'].sum() if 'total_count' in self.df_agents.columns else 0
-            self.report_content.append(f"**Total Requests:** {total_requests}\n")
-            self.report_content.append(std_table.to_markdown(index=False, headers=headers))
-            self.report_content.append("\n<br>\n")
-            
-            # Sub Agent Pie Charts
-            self._add_status_pie_chart(std_table, f'P{target_p} (s)', target_lat, f"Agent Latency Status (P{target_p})", "sub_agent_p95_pie.png", size_col=f'P{target_p} (s)')
-            # For Error Status, use Requests as size so we see all agents, colored by error rate
-            self._add_status_pie_chart(std_table, 'Err %', target_err, f"Error Status ({target_err:.0f}%)", "sub_agent_error_pie.png", size_col='Requests')
+        # --- Agent Level ---
+        self._render_performance_section(
+            title="Agent Level",
+            df=self.df_agents,
+            time_col="avg_ms",
+            name_col="agent_name",
+            kpi_target_key="kpis.agent.latency_target",
+            kpi_error_key="kpis.agent.error_target",
+            include_usage_chart=True # Default, but explicit
+        )
 
+        # --- Tool Level ---
+        self._render_performance_section(
+            title="Tool Level",
+            df=self.df_tools,
+            time_col="avg_ms",
+            name_col="tool_name",
+            kpi_target_key="kpis.tool.latency_target",
+            kpi_error_key="kpis.tool.error_target",
+            include_tokens=False,
+            include_usage_chart=True
+        )
         self.report_content.append("\n---\n")
 
-        # Tool Level
-        self.add_subsection("Tool Level")
-        self.report_content.append("\n(AI_SUMMARY: Tool Level)\n")
-        if not self.df_tools.empty:
-            target_lat = self.config.get("kpis", {}).get("tool", {}).get("latency_target", 3.0)
-            target_err = self.config.get("kpis", {}).get("tool", {}).get("error_target", 5.0)
-            target_p = self.config.get("kpis", {}).get("tool", {}).get("percentile_target", 95.0)
-            
-            std_table = self._build_standard_table(
-                self.df_tools, target_lat, target_err, 'tool_name', include_tokens=False
-            )
-            headers = list(std_table.columns)
-            headers = [f"**{h}**" if h != 'Err Status' else '**Status**' for h in headers]
-            total_requests = self.df_tools['total_count'].sum() if 'total_count' in self.df_tools.columns else 0
-            self.report_content.append(f"**Total Requests:** {total_requests}\n")
-            self.report_content.append(std_table.to_markdown(index=False, headers=headers))
-            self.report_content.append("\n<br>\n")
-             
-
-
-            # Tool Pie Charts
-            self._add_status_pie_chart(std_table, f'P{target_p} (s)', target_lat, f"Tool Latency (P{target_p})", "tool_latency_pie.png", size_col=f'P{target_p} (s)')
-            self._add_status_pie_chart(std_table, 'Err %', target_err, f"Tool Error Status ({target_err:.0f}%)", "tool_error_pie.png", size_col='Requests')
-
-            # Tool Latency Horizontal Bar Chart (P-value + Usage)
-            # Use P{target_p} (s) instead of Mean
-            p_col = f'P{target_p} (s)'
-            if p_col in std_table.columns:
-                 # Sort by P-value desc for chart
-                 df_display = std_table.sort_values(by=p_col, ascending=False).head(15).copy()
-                 # Clean Name for chart
-                 df_display['Name'] = df_display['Name'].astype(str).str.replace('**', '')
-                 
-                 path = self.chart_gen.generate_horizontal_bar_chart(
-                     df_display, 
-                     x_col=p_col, 
-                     y_col='Name', 
-                     title=f"Top Tool Latency ({p_col}) & Usage", 
-                     filename="tool_latency_horizontal.png", 
-                     c_col='Requests', # Color by usage
-                     cmap='Blues', # Softer than plasma
-                     figsize=(6, 4) # MUCH Smaller as requested
-                 )
-                 self.add_image("Tool Latency & Usage", path)
-
-        self.report_content.append("\n---\n")
-
-        # Model Level
-        self.add_subsection("Model Level")
-        self.report_content.append("\n(AI_SUMMARY: Model Level)\n")
-        if not self.df_models.empty:
-            target_lat = self.config.get("kpis", {}).get("llm", {}).get("latency_target", 5.0)
-            target_err = self.config.get("kpis", {}).get("llm", {}).get("error_target", 5.0)
-            target_p = self.config.get("kpis", {}).get("llm", {}).get("percentile_target", 95.0)
-            
-            std_table = self._build_standard_table(
-                self.df_models, target_lat, target_err, 'model_name', include_tokens=True
-            )
-            headers = list(std_table.columns)
-            headers = [f"**{h}**" if h != 'Err Status' else '**Status**' for h in headers]
-            total_requests = self.df_models['total_count'].sum() if 'total_count' in self.df_models.columns else 0
-            self.report_content.append(f"**Total Requests:** {total_requests}\n")
-            self.report_content.append(std_table.to_markdown(index=False, headers=headers))
-            self.report_content.append("\n<br>\n")
-            
-
-
-            # Model Pie Charts
-            self._add_status_pie_chart(std_table, f'P{target_p} (s)', target_lat, f"Model Latency Status (P{target_p})", "model_latency_pie.png", size_col=f'P{target_p} (s)')
-            self._add_status_pie_chart(std_table, 'Err %', target_err, f"Model Error Status ({target_err:.0f}%)", "model_error_pie.png", size_col='Requests')
-
-            # Model Latency Horizontal Bar Chart (P-value + Usage)
-            # Use P{target_p} (s) instead of Mean
-            p_col = f'P{target_p} (s)'
-            if p_col in std_table.columns:
-                 # Sort by P-value desc for chart
-                 df_display = std_table.sort_values(by=p_col, ascending=False).head(15).copy()
-                 # Clean Name for chart
-                 df_display['Name'] = df_display['Name'].astype(str).str.replace('**', '')
-                 
-                 path = self.chart_gen.generate_horizontal_bar_chart(
-                     df_display, 
-                     x_col=p_col, 
-                     y_col='Name', 
-                     title=f"Model Latency ({p_col}) & Usage", 
-                     filename="model_latency_horizontal.png", 
-                     c_col='Requests', # Color by usage
-                     cmap='Blues', # Softer than plasma
-                     figsize=(6, 4) # MUCH Smaller as requested
-                 )
-                 self.add_image("Model Latency & Usage", path)
-
+        # --- Model Level ---
+        self._render_performance_section(
+            title="Model Level",
+            df=self.df_models,
+            time_col="avg_ms",
+            name_col="model_name",
+            kpi_target_key="kpis.llm.latency_target",
+            kpi_error_key="kpis.llm.error_target",
+            include_tokens=True,
+            include_usage_chart=True
+        )
         self.report_content.append("\n---\n")
 
 
