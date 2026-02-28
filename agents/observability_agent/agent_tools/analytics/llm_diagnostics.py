@@ -16,7 +16,8 @@ from typing import Optional
 import pandas as pd
 from google.cloud import bigquery
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE
+from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID,
+                       DEFAULT_TIME_RANGE)
 from ...utils.bq import execute_bigquery, run_query_async
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
@@ -64,7 +65,7 @@ async def analyze_latency_groups(
             "root_agent_name": (root_agent_name, "="),
         }
         if threshold_ms > 0:
-            filter_config["latency_ms"] = (threshold_ms, ">")
+            filter_config["duration_ms"] = (threshold_ms, ">")
 
         where_clause = build_standard_where_clause(
             time_range=time_range,
@@ -77,10 +78,10 @@ async def analyze_latency_groups(
           T.root_agent_name,
           T.model_name,
           COUNT(*) as count,
-          AVG(latency_ms) as avg_latency_ms,
-          MIN(latency_ms) as min_latency_ms,
-          MAX(latency_ms) as max_latency_ms,
-          STDDEV(latency_ms) as std_latency_ms
+          AVG(duration_ms) as avg_latency_ms,
+          MIN(duration_ms) as min_latency_ms,
+          MAX(duration_ms) as max_latency_ms,
+          STDDEV(duration_ms) as std_latency_ms
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         WHERE {where_clause}
         GROUP BY root_agent_name, agent_name, model_name
@@ -156,20 +157,23 @@ async def fetch_slowest_requests(
             "model_name": (model_name, "=")
         }
         if min_latency_ms > 0:
-            filter_config["latency_ms"] = (min_latency_ms, ">")
+            filter_config["duration_ms"] = (min_latency_ms, ">")
 
         where_clause = build_standard_where_clause(
             time_range=time_range,
             filter_config=filter_config
         )
         
+        # Enhanced query with joins to ensure correct root agent name attribution
         query = f"""
         SELECT
-          CAST(T.span_id AS STRING) AS span_id, 
+          CAST(T.span_id AS STRING) AS span_id,
+          T.trace_id,
+          T.session_id, 
           T.timestamp,
-          T.latency_ms,
+          T.duration_ms,
           T.agent_name,
-          T.root_agent_name,
+          COALESCE(I.root_agent_name, R.agent_name, T.root_agent_name) AS root_agent_name,
           T.model_name,
           T.prompt_token_count,
           T.candidates_token_count,
@@ -178,11 +182,16 @@ async def fetch_slowest_requests(
           T.full_request,
           T.full_response,
           T.time_to_first_token_ms,
-          CAST(NULL as FLOAT64) as e2e_duration_ms, -- Placeholder, requires join if needed
-          T.status
+          CAST(NULL as FLOAT64) as e2e_duration_ms, 
+          T.status,
+          COALESCE(I.content_text_summary, TO_JSON_STRING(R.instruction)) AS user_message
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON REPLACE(T.trace_id, '-', '') = REPLACE(I.trace_id, '-', '')
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS R 
+            ON REPLACE(T.trace_id, '-', '') = REPLACE(R.trace_id, '-', '') 
+            AND R.parent_span_id IS NULL
         WHERE {where_clause}
-        ORDER BY latency_ms DESC
+        ORDER BY T.duration_ms DESC
         LIMIT {limit}
         """
 
@@ -195,15 +204,17 @@ async def fetch_slowest_requests(
         for _, row in df.iterrows():
             requests.append({
                 "span_id": row['span_id'],
+                "trace_id": row['trace_id'],
+                "session_id": row['session_id'],
                 "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0,
+                "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0,
                 "agent_name": row['agent_name'],
                 "root_agent_name": row['root_agent_name'],
                 "model_name": row['model_name'],
                 "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
                 "response_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
                 "thought_tokens": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else 0,
-                "preview": row['request_preview'],
+                "preview": str(row['full_request'])[:200] if row['full_request'] else "",
                 "full_request": row['full_request'],
                 "full_response": row['full_response'],
                 "time_to_first_token_ms": float(row['time_to_first_token_ms']) if pd.notna(row['time_to_first_token_ms']) else 0.0,
@@ -262,7 +273,7 @@ async def get_concurrent_request_impact(
             SELECT
                 TIMESTAMP_TRUNC(timestamp, MINUTE) as time_bucket,
                 COUNT(*) as concurrent_requests,
-                AVG(latency_ms) as avg_latency_in_bucket
+                AVG(duration_ms) as avg_latency_in_bucket
             FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
             WHERE {where_clause}
             GROUP BY time_bucket
@@ -341,7 +352,7 @@ async def fetch_fastest_queries(
         SELECT
           CAST(T.span_id AS STRING) AS span_id, 
           T.timestamp,
-          T.latency_ms,
+          T.duration_ms,
           T.agent_name,
           T.root_agent_name,
           T.model_name,
@@ -350,7 +361,7 @@ async def fetch_fastest_queries(
           T.request_preview
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         WHERE {where_clause}
-        ORDER BY latency_ms ASC
+        ORDER BY duration_ms ASC
         LIMIT {limit}
         """
 
@@ -363,7 +374,7 @@ async def fetch_fastest_queries(
         for _, row in df.iterrows():
             fastest_queries.append({
                 "span_id": row['span_id'],
-                "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0,
+                "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0,
                 "agent_name": row['agent_name'],
                 "root_agent_name": row['root_agent_name'],
                 "model_name": row['model_name']
@@ -512,8 +523,8 @@ async def get_config_outliers(
             agent_name,
             model_name,
             {config_select_str},
-            AVG(latency_ms) as avg_latency,
-            STDDEV(latency_ms) as stddev_latency,
+            AVG(duration_ms) as avg_latency,
+            STDDEV(duration_ms) as stddev_latency,
             COUNT(*) as request_count
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         WHERE {where_clause}
@@ -582,7 +593,7 @@ async def fetch_single_query(span_id: str) -> str:
           T.full_response,
           T.model_name,
           T.agent_name,
-          T.latency_ms,
+          T.duration_ms,
           T.thoughts_token_count,
           T.candidates_token_count AS output_token_count,
           T.prompt_token_count,
@@ -627,7 +638,7 @@ async def fetch_single_query(span_id: str) -> str:
             "full_response": full_resp,
             "model_name": row['model_name'],
             "agent_name": row['agent_name'],
-            "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else None,
+            "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else None,
             "thoughts_token_count": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else None,
             "output_token_count": int(row['output_token_count']) if pd.notna(row['output_token_count']) else None,
             "prompt_token_count": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else None,
@@ -640,6 +651,85 @@ async def fetch_single_query(span_id: str) -> str:
         error_msg = f"Error fetching query {span_id}: {str(e)}"
         logger.error(f"[PROGRESS] Failed to fetch query {span_id}: {str(e)}")
         return json.dumps({"error": error_msg})
+
+
+@cached_tool()
+async def get_failed_llm_queries(
+    time_range: str = "24h",
+    limit: int = 10,
+    agent_name: str = None,
+    root_agent_name: str = None,
+    model_name: str = None
+) -> str:
+    """
+    Retrieves failed LLM requests with Agent Status context.
+    """
+    logger.info(f"[TOOL CALL-get_failed_llm_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', model_name='{model_name}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "model_name": (model_name, "="),
+            "status": ("ERROR", "=")
+        }
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        query = f"""
+        SELECT
+            T.timestamp,
+            T.model_name,
+            T.llm_config,
+            T.prompt_token_count,
+            T.candidates_token_count,
+            T.duration_ms,
+            T.error_message,
+            T.trace_id,
+            T.span_id,
+            T.parent_span_id,
+            T.status,
+            T.agent_name,
+            T.root_agent_name,
+            PA.status AS agent_status,
+            I.status AS root_status,
+            I.content_text_summary AS user_message
+        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS PA
+            ON T.parent_span_id = PA.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I 
+            ON T.trace_id = I.trace_id
+        WHERE {where_clause}
+        AND T.status = 'ERROR'
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+
+        if df.empty:
+            return json.dumps({
+                "message": "No failed LLM queries found matching criteria.",
+                "metadata": {"view_id": LLM_EVENTS_VIEW_ID}
+            })
+
+        requests = df.to_dict(orient="records")
+
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name,
+                         "model_name": model_name, "view_id": LLM_EVENTS_VIEW_ID},
+            "requests": requests
+        }
+
+        return json.dumps(result, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in get_failed_llm_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
 
 @trace_span()
 @cached_tool()
@@ -711,7 +801,7 @@ async def analyze_empty_llm_responses(
             T.model_name,
             T.agent_name,
             T.prompt_token_count,
-            T.duration_ms as latency_ms,
+            T.duration_ms as duration_ms,
             SUBSTR(I.content_text, 1, 250) as user_message_trunk
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
@@ -731,7 +821,7 @@ async def analyze_empty_llm_responses(
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
                     "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
-                    "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0.0,
+                    "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0.0,
                     "user_message": row['user_message_trunk'] if pd.notna(row['user_message_trunk']) else None
                 })
 

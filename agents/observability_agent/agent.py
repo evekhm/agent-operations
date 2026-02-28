@@ -28,7 +28,7 @@ api_retry_options = HttpRetryOptions(
 )
 
 from google.adk.models.google_llm import Gemini
-from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
+from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses, get_failed_llm_queries
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
     # detect_sequential_bottlenecks
@@ -38,7 +38,9 @@ from .agent_tools.analytics.latency import (
     analyze_latency_grouped,
     get_slowest_queries,
     get_fastest_queries,
-    get_failed_queries,
+    get_failed_invocation_queries,
+    get_failed_tool_queries,
+    get_failed_agent_queries,
     get_latest_queries,
     analyze_root_cause,
     batch_analyze_root_cause,
@@ -69,7 +71,10 @@ analyst_tools = [
     get_active_metadata,
     analyze_latency_grouped,
     get_slowest_queries,
-    get_failed_queries,
+    get_failed_llm_queries,
+    get_failed_invocation_queries,
+    get_failed_tool_queries,
+    get_failed_agent_queries,
     get_fastest_queries,
     get_latest_queries,
     analyze_root_cause,
@@ -133,11 +138,19 @@ playbook_swarm = ParallelAgent(
     description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
-def aggregate_parallel_results(agent: Agent, context: ToolContext, *args, **kwargs):
+def aggregate_parallel_results(agent: Agent = None, context: ToolContext = None, *args, **kwargs):
     """
     Callback to aggregate the results of the parallel swarm into a single string
     that the Report Creator can consume.
     """
+    if not agent or not context:
+        # Fallback for different call signatures
+        if len(args) >= 2:
+            agent, context = args[0], args[1]
+        else:
+             print(f"DEBUG: aggregate_parallel_results called with args={args} kwargs={kwargs}")
+             return
+             
     session = context.session
     # ParallelAgent results are typically stored in the session state under the agent's name
     # The structure is usually a list of results from sub-agents.
@@ -156,32 +169,15 @@ def aggregate_parallel_results(agent: Agent, context: ToolContext, *args, **kwar
     session.state["playbook_findings"] = merged_findings
     print(f"DEBUG: Aggregated {len(swarm_results)} findings into 'playbook_findings' ({len(merged_findings)} chars).")
 
+    # Ensure all required keys exist to prevent Report Creator crash
+    required_keys = ["invocation_findings", "playbook_findings", "llm_findings", "tool_findings"]
+    for key in required_keys:
+        if key not in session.state:
+            session.state[key] = f"**[MISSING DATA]** {key} was not generated due to an analyst failure."
+            print(f"DEBUG: Filled missing key '{key}' with fallback message.")
+
 # Attach the callback
 playbook_swarm.after_agent_callback = aggregate_parallel_results
-
-def ensure_analyst_findings(context: ToolContext) -> str:
-    """Ensures that all analyst findings keys exist in session state to prevent Report Creator crash."""
-    required_keys = ["invocation_findings", "playbook_findings", "llm_findings", "tool_findings"]
-    missing_keys = []
-
-    # Check and fill missing keys
-    for key in required_keys:
-        if key not in context.session.state:
-            context.session.state[key] = f"**[MISSING DATA]** {key} was not generated due to an analyst failure."
-            missing_keys.append(key)
-
-    if missing_keys:
-        return f"Repaired missing keys: {', '.join(missing_keys)}"
-    return "All findings keys present."
-
-context_ensurer = Agent(
-    name="context_ensurer",
-    model=MODEL_ID,
-    instruction="Call the `ensure_analyst_findings` tool to repair any missing session state keys before report generation.",
-    description="Ensures all required data is present in the session before report generation.",
-    tools=[ensure_analyst_findings],
-    include_contents='none' # Stateless, just fixing context
-)
 
 # Create the Report Creator Agent that takes findings and structures them into markdown
 report_creator_agent = Agent(
@@ -197,7 +193,7 @@ report_creator_agent = Agent(
 # Group the investigator swarm and report creator into a strict sequential pipeline
 investigate_and_report_pipeline = SequentialAgent(
     name="investigation_workflow",
-    sub_agents=[playbook_swarm, context_ensurer, report_creator_agent],
+    sub_agents=[playbook_swarm, report_creator_agent],
     description="Pipeline that first investigates the system constraints concurrently, ensures data integrity, and then generates a merged report."
 )
 

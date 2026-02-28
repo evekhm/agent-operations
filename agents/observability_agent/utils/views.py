@@ -57,3 +57,10 @@ def ensure_agent_events_view_exists():
 
 def ensure_invocation_events_view_exists():
     _ensure_view_exists(INVOCATION_EVENTS_VIEW_ID, 'create_invocation_events_view.sql')
+
+def ensure_all_views():
+    """Ensures all observability views exist."""
+    ensure_llm_events_view_exists()
+    ensure_tool_events_view_exists()
+    ensure_agent_events_view_exists()
+    ensure_invocation_events_view_exists()

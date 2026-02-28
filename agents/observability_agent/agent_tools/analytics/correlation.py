@@ -43,7 +43,9 @@ async def fetch_correlation_data(
         prompt_token_count as input_token_count,
         candidates_token_count as output_token_count,
         thoughts_token_count,
-        duration_ms
+        duration_ms,
+        timestamp,
+        time_to_first_token_ms
     FROM `{{PROJECT_ID}}.{{DATASET_ID}}.llm_events_view` AS T
     WHERE {where_clause}
       AND total_token_count > 0

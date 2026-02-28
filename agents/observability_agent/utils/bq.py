@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import time
+import inspect
 from typing import cast, Awaitable
 
 import pandas as pd
@@ -134,12 +135,19 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None,
         query (str): The SQL query to execute.
         timeout (int): Timeout in seconds (default: 1200).
         job_config (bigquery.QueryJobConfig, optional): Job configuration.
-        
+        cache_ttl: ttl for cache exploitation
+
     Returns:
         pd.DataFrame: The query results as a Pandas DataFrame.
     """
+    try:
+        # stack[1] is the caller of execute_bigquery
+        tool_name = inspect.stack()[1].function
+    except Exception:
+        tool_name = "unknown_caller"
+
     # ensure cache dir exists
-    print(f"\n================ SQL QUERY ================\n"
+    print(f"\n================ SQL QUERY [{tool_name}] ================\n"
           f"{query}\n"
           f"===========================================\n", flush=True)
     if not os.path.exists(CACHE_DIR):

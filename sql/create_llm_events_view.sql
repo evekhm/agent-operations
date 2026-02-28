@@ -2,13 +2,6 @@
  * LLM Events View
  * ---------------
  * Isolates LLM interactions (requests and responses) from the raw event stream.
- * Aggregates request configuration, response metadata, token usage, and latency
- * into a single row per LLM call (matched by span_id and trace_id).
- *
- * Key Event Types:
- * - LLM_REQUEST: The input prompt and configuration sent to the model.
- * - LLM_RESPONSE: The success response from the model.
- * - LLM_ERROR: The failure response/exception from the model.
  */
 CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.llm_events_view` AS
 WITH LlmRequests AS (
@@ -21,6 +14,7 @@ WITH LlmRequests AS (
     JSON_QUERY(attributes, '$.llm_config') as llm_config,
     content as request_content,
     attributes as request_attributes,
+    content_parts as request_content_parts,
     user_id,
     session_id,
   FROM `{project_id}.{dataset_id}.{table_id}`
@@ -47,7 +41,8 @@ LlmResponses AS (
     SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.prompt_token_count') AS INT64) AS prompt_token_count,
     SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.candidates_token_count') AS INT64) AS candidates_token_count,
     SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.total_token_count') AS INT64) AS total_token_count,
-    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.thoughts_token_count') AS INT64) AS thoughts_token_count
+    SAFE_CAST(JSON_VALUE(attributes, '$.usage_metadata.thoughts_token_count') AS INT64) AS thoughts_token_count,
+    -- We don't select content_parts here because it is not populated for LLM_RESPONSE
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type IN ('LLM_RESPONSE', 'LLM_ERROR')
 )
@@ -59,8 +54,6 @@ SELECT
     Req.llm_config,
     R.usage_metadata,
 
-    -- Coalesce model version (from response) with requested model (from request)
-    -- This ensures we have a model name even if the call failed (LLM_ERROR)
     COALESCE(R.model_version, Req.model) AS model_name,
     Req.model AS requested_model,
     R.model_version AS response_model,
@@ -73,7 +66,6 @@ SELECT
     END as status,
     R.error_message,
 
-
     R.prompt_token_count,
     R.candidates_token_count,
     R.total_token_count,
@@ -81,6 +73,12 @@ SELECT
 
     Req.request_content as full_request,
     R.response_content as full_response,
+
+    -- Extract Request Text from content_parts (populated for LLM_REQUEST)
+    (SELECT STRING_AGG(part.text, '\n') FROM UNNEST(Req.request_content_parts) AS part) AS request_text,
+
+    -- Extract Response Text from response_content JSON (using Regex for 'text: ...' pattern)
+    REGEXP_REPLACE(JSON_VALUE(R.response_content, '$.response'), r"^text: '(.*)'$", r"\1") AS response_text,
 
     R.span_id,
     R.trace_id,
@@ -90,9 +88,6 @@ SELECT
 
     Req.start_timestamp,
     R.end_timestamp,
-
-
-
 
 FROM LlmResponses R
     LEFT JOIN LlmRequests Req ON R.span_id = Req.span_id AND R.trace_id = Req.trace_id;

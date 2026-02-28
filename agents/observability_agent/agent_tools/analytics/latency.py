@@ -457,7 +457,42 @@ async def get_slowest_queries(
                 "metadata": {"view_id": target_table}
             })
             
-        requests = df.to_dict(orient="records")
+        requests = []
+        for _, row in df.iterrows():
+            req = {
+                "span_id": row.get('span_id'),
+                "trace_id": row.get('trace_id'),
+                "session_id": row.get('session_id'),
+                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                latency_col: float(row[latency_col]) if pd.notna(row[latency_col]) else 0,
+                "agent_name": row.get('agent_name'),
+                "root_agent_name": row.get('root_agent_name'),
+                "status": row.get('status')
+            }
+            # Add dynamic columns
+            if target_table == LLM_EVENTS_VIEW_ID:
+                req.update({
+                    "model_name": row.get('model_name'),
+                    "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row.get('prompt_token_count')) else 0,
+                    "response_tokens": int(row['candidates_token_count']) if pd.notna(row.get('candidates_token_count')) else 0,
+                    "preview": str(row.get('full_request', ''))[:200]
+                })
+            elif target_table == TOOL_EVENTS_VIEW_ID:
+                req.update({
+                    "tool_name": row.get('tool_name'),
+                    "tool_args": str(row.get('tool_args', ''))[:200],
+                    "tool_result": str(row.get('tool_result', ''))[:200]
+                })
+            elif target_table == INVOCATION_EVENTS_VIEW_ID:
+                req.update({
+                    "content": str(row.get('content_text', ''))[:200]
+                })
+            else:
+                 req.update({
+                    "instruction": str(row.get('instruction', ''))[:200]
+                })
+                
+            requests.append(req)
             
         result = {
             "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
@@ -739,6 +774,26 @@ async def analyze_latency_grouped(
     except Exception as e:
         logger.error(f"Error in analyze_latency_grouped: {str(e)}")
         return json.dumps({"error": str(e)})
+
+@cached_tool()
+async def fetch_tool_bottlenecks(
+    time_range: str = DEFAULT_TIME_RANGE,
+    limit: int = 5,
+    min_latency_ms: float = 0,
+    agent_name: Optional[str] = None
+) -> str:
+    """
+    Fetch slowest tool executions with context.
+    """
+    return await get_slowest_queries(
+        time_range=time_range,
+        limit=limit,
+        min_latency_ms=min_latency_ms,
+        agent_name=agent_name,
+        view_id=TOOL_EVENTS_VIEW_ID,
+        latency_col="duration_ms"
+    )
+
 
 @cached_tool()
 async def get_active_metadata(
@@ -1229,11 +1284,34 @@ async def get_failed_queries(
             filter_config=filter_config
         )
 
+        # Determine if we can join on parent_span_id (Invocations don't have parents)
+        parent_join_sql = ""
+        agent_status_sql = "'UNKNOWN' AS agent_status"
+        
+        if target_table in [AGENT_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, LLM_EVENTS_VIEW_ID]:
+            parent_join_sql = f"""
+            LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS PA
+                ON T.parent_span_id = PA.span_id
+            """
+            agent_status_sql = "COALESCE(CAST(PA.status AS STRING), 'UNKNOWN') AS agent_status"
+
         query = f"""
-        SELECT * 
+        SELECT
+            T.timestamp,
+            T.*,
+            COALESCE(CAST(I.root_agent_name AS STRING), CAST(R.agent_name AS STRING)) AS computed_root_agent,
+            COALESCE(CAST(I.status AS STRING), CAST(R.status AS STRING)) AS root_status,
+            {agent_status_sql},
+            COALESCE(I.content_text_summary, TO_JSON_STRING(R.instruction)) AS user_message
         FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS R 
+            ON T.trace_id = R.trace_id 
+            AND R.parent_span_id IS NULL
+        {parent_join_sql}
         WHERE {where_clause}
-        ORDER BY timestamp DESC
+        AND T.status = 'ERROR'
+        ORDER BY T.timestamp DESC
         LIMIT {limit}
         """
 
@@ -1265,6 +1343,220 @@ async def get_failed_queries(
         
     except Exception as e:
         logger.error(f"Error in get_failed_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+
+@cached_tool()
+async def get_failed_agent_queries(
+    time_range: str = "24h",
+    limit: int = 10,
+    agent_name: str = None,
+    root_agent_name: str = None
+) -> str:
+    """
+    Retrieves failed Agent executions.
+    """
+    logger.info(f"[TOOL CALL-get_failed_agent_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "status": ("ERROR", "=")
+        }
+        
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        query = f"""
+        SELECT
+            T.timestamp,
+            T.agent_name,
+            T.duration_ms,
+            T.error_message,
+            T.trace_id,
+            T.span_id,
+            T.status,
+            T.agent_name,
+            T.root_agent_name,
+            T.status as agent_status,
+            I.status as root_status,
+            I.content_text_summary AS user_message
+        FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I 
+            ON T.trace_id = I.trace_id
+        WHERE {where_clause}
+        AND T.status = 'ERROR'
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        if df.empty:
+            return json.dumps({
+                "message": "No failed Agent queries found matching criteria.", 
+                "metadata": {"view_id": AGENT_EVENTS_VIEW_ID}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name, 
+                         "view_id": AGENT_EVENTS_VIEW_ID},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_failed_agent_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+@cached_tool()
+async def get_failed_tool_queries(
+    time_range: str = "24h",
+    limit: int = 10,
+    agent_name: str = None,
+    root_agent_name: str = None
+) -> str:
+    """
+    Retrieves failed Tool executions.
+    """
+    logger.info(f"[TOOL CALL-get_failed_tool_queries] time_range='{time_range}', limit={limit}, "
+                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}'")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "="),
+            "root_agent_name": (root_agent_name, "="),
+            "status": ("ERROR", "=")
+        }
+        
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        query = f"""
+        SELECT
+            T.timestamp,
+            T.tool_name,
+            T.tool_args,
+            T.tool_result,
+            T.duration_ms,
+            T.error_message,
+            T.trace_id,
+            T.span_id,
+            T.status,
+            T.agent_name,
+            T.root_agent_name,
+            PA.status AS agent_status,
+            I.status AS root_status,
+            I.content_text_summary AS user_message
+        FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` AS T
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS PA
+            ON T.parent_span_id = PA.span_id
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I 
+            ON T.trace_id = I.trace_id
+        WHERE {where_clause}
+        AND T.status = 'ERROR'
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+        
+        # Truncate args if huge
+        if 'tool_args' in df.columns:
+            df['tool_args'] = df['tool_args'].astype(str).apply(
+                lambda x: x if len(x) <= 800 else f"[LARGE ARGS: {len(x)} chars]"
+            )
+
+        if df.empty:
+            return json.dumps({
+                "message": "No failed Tool queries found matching criteria.", 
+                "metadata": {"view_id": TOOL_EVENTS_VIEW_ID}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "agent_name": agent_name, "root_agent_name": root_agent_name, 
+                         "view_id": TOOL_EVENTS_VIEW_ID},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_failed_tool_queries: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+@cached_tool()
+async def get_failed_invocation_queries(
+    time_range: str = "24h",
+    limit: int = 10,
+    root_agent_name: str = None
+) -> str:
+    """
+    Retrieves failed Invocation (Root) executions.
+    """
+    logger.info(f"[TOOL CALL-get_failed_invocation_queries] time_range='{time_range}', limit={limit}, "
+                f"root_agent_name='{root_agent_name}'")
+    try:
+        filter_config = {
+            "root_agent_name": (root_agent_name, "="),
+            "status": ("ERROR", "=")
+        }
+        
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        query = f"""
+        SELECT
+            T.timestamp,
+            T.root_agent_name,
+            T.duration_ms,
+            T.error_message,
+            T.trace_id,
+            T.status,
+            T.content_text_summary AS user_message
+        FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS T
+        WHERE {where_clause}
+        AND T.status = 'ERROR'
+        ORDER BY T.timestamp DESC
+        LIMIT {limit}
+        """
+
+        df = await execute_bigquery(query)
+
+        if df.empty:
+            return json.dumps({
+                "message": "No failed Invocation queries found matching criteria.", 
+                "metadata": {"view_id": INVOCATION_EVENTS_VIEW_ID}
+            })
+            
+        requests = df.to_dict(orient="records")
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit,
+                         "root_agent_name": root_agent_name, 
+                         "view_id": INVOCATION_EVENTS_VIEW_ID},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_failed_invocation_queries: {str(e)}")
         return json.dumps({"error": str(e)})
 
 
@@ -1485,13 +1777,13 @@ async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> 
             T.tool_name,
             TO_JSON_STRING(T.tool_args) as tool_args,
             COALESCE(TO_JSON_STRING(T.tool_result), '') as tool_result_str,
-            COALESCE(T.status, 'UNKNOWN') as tool_status,
+            COALESCE(CAST(T.status AS STRING), 'UNKNOWN') as tool_status,
             T.agent_name,
             A.duration_ms as agent_duration,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            COALESCE(CAST(A.status AS STRING), 'UNKNOWN') as agent_status,
             I.root_agent_name,
             I.duration_ms as root_duration,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
+            COALESCE(CAST(I.status AS STRING), 'UNKNOWN') as root_status,
             SAFE_DIVIDE(T.duration_ms, I.duration_ms) * 100 as impact_pct,
             T.trace_id,
             T.session_id,
@@ -1588,10 +1880,10 @@ async def get_error_impact_analysis(
             T.timestamp, 
             T.tool_args,
             T.agent_name,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            COALESCE(COALESCE(SAFE_CAST(A.status AS STRING), TO_JSON_STRING(A.status)), 'UNKNOWN') as agent_status,
             I.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
+            COALESCE(COALESCE(SAFE_CAST(I.status AS STRING), TO_JSON_STRING(I.status)), 'UNKNOWN') as root_status,
+            COALESCE(SAFE_CAST(I.content_text AS STRING), TO_JSON_STRING(I.content_text)) as user_message,
             T.trace_id, 
             T.span_id
         FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
@@ -1610,10 +1902,10 @@ async def get_error_impact_analysis(
             T.timestamp, 
             T.llm_config,
             T.agent_name,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
+            COALESCE(COALESCE(SAFE_CAST(A.status AS STRING), TO_JSON_STRING(A.status)), 'UNKNOWN') as agent_status,
             I.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
+            COALESCE(COALESCE(SAFE_CAST(I.status AS STRING), TO_JSON_STRING(I.status)), 'UNKNOWN') as root_status,
+            COALESCE(SAFE_CAST(I.content_text AS STRING), TO_JSON_STRING(I.content_text)) as user_message,
             T.trace_id, 
             T.span_id
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` T
@@ -1631,8 +1923,8 @@ async def get_error_impact_analysis(
             T.error_message, 
             T.timestamp, 
             T.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
+            COALESCE(COALESCE(SAFE_CAST(I.status AS STRING), TO_JSON_STRING(I.status)), 'UNKNOWN') as root_status,
+            COALESCE(SAFE_CAST(I.content_text AS STRING), TO_JSON_STRING(I.content_text)) as user_message,
             T.trace_id, 
             T.span_id
         FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
@@ -1648,7 +1940,7 @@ async def get_error_impact_analysis(
             T.root_agent_name, 
             T.error_message, 
             T.timestamp, 
-            T.content_text as user_message,
+            COALESCE(SAFE_CAST(T.content_text AS STRING), TO_JSON_STRING(T.content_text)) as user_message,
             T.trace_id, 
             T.invocation_id
         FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` T

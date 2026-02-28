@@ -1,410 +1,151 @@
 import asyncio
-import os
-import sys
-import logging
-import pandas as pd
 import json
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
+import logging
+import os
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import Dict, Any
+
+import pandas as pd
 
 # Resolve FutureWarning: Downcasting object dtype arrays on .fillna, .ffill, .bfill is deprecated
 pd.set_option('future.no_silent_downcasting', True)
 
 # Ensure we can import agent modules
-dir_path = os.path.dirname(__file__)
-sys.path.append(os.path.join(dir_path, ".."))
+import sys
 
-# Import analytics tools
+# Ensure we can import agent modules
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from agents.observability_agent.agent_tools.analytics.latency import (
     analyze_latency_grouped,
-    analyze_latency_performance,
     get_slowest_queries,
-    analyze_root_cause
+    get_failed_agent_queries,
+    get_failed_tool_queries,
+    get_failed_invocation_queries,
+    fetch_tool_bottlenecks
 )
-from agents.observability_agent.agent_tools.analytics.errors import classify_errors_by_type
+
 from agents.observability_agent.agent_tools.analytics.llm_diagnostics import (
     analyze_empty_llm_responses,
-    fetch_slowest_requests
+    fetch_slowest_requests,
+    get_failed_llm_queries
 )
 from agents.observability_agent.agent_tools.analytics.correlation import fetch_correlation_data
-from agents.observability_agent.agent_tools.analytics.outliers import analyze_outlier_patterns
-from agents.observability_agent.utils.bq import execute_bigquery
-from agents.observability_agent.utils.common import build_standard_where_clause
 from agents.observability_agent.config import (
     DATASET_ID,
     PROJECT_ID,
     AGENT_VERSION,
     TABLE_ID,
-    AGENT_TABLE_ID
+    TABLE_ID,
 )
-from dotenv import load_dotenv
+from agents.observability_agent.utils.views import ensure_all_views
 
-# Load Environment from root
-load_dotenv(os.path.join(dir_path, "../.env"), override=True)
+from report_charts import ChartGenerator, PASTEL_OK, PASTEL_ERR
+from report_data import ReportDataManager
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ReportGenerator")
-
-# Configure Plotting Style
-plt.style.use('seaborn-v0_8-darkgrid')
-sns.set_theme(style="whitegrid")
-
-class ChartGenerator:
-    def __init__(self, output_dir: str, scale: float = 1.0):
-        self.output_dir = output_dir
-        self.scale = scale
-        os.makedirs(self.output_dir, exist_ok=True)
-
-    def _get_figsize(self, w, h):
-        return (w * self.scale, h * self.scale)
-
-    def save_plot(self, filename: str):
-        path = os.path.join(self.output_dir, filename)
-        plt.tight_layout()
-        plt.savefig(path, bbox_inches='tight', dpi=150)
-        plt.close()
-        return path
-
-    def generate_pie_chart(self, data: pd.Series, title: str, filename: str, colors: Dict[str, str] = None):
-        if data.empty:
-            logger.warning(f"No data for pie chart: {title}")
-            return None
-        
-        # Sanitize data: Drop NaNs and zeros
-        data = data.fillna(0)
-        data = data[data > 0]
-        if data.empty:
-            logger.warning(f"No positive data for pie chart: {title}")
-            return None
-
-        plt.figure(figsize=self._get_figsize(6, 4.5))
-        color_list = None
-        if colors:
-            color_list = [colors.get(x, '#cccccc') for x in data.index]
-
-        wedges, texts, autotexts = plt.pie(
-            data, 
-            labels=None, # No labels on pie
-            autopct='%1.1f%%', 
-            startangle=90, 
-            colors=color_list,
-            textprops=dict(color="black"),
-            radius=0.9 # Smaller radius as requested (was 1.2)
-        )
-        
-        # Determine label text color based on wedge color brightness could be nice, but black is safe for now.
-        plt.setp(autotexts, size=7, weight="bold") # Smaller font
-        plt.setp(texts, size=8)
-        
-        # Add Legend
-        plt.legend(
-            wedges, 
-            data.index, 
-            title=None, 
-            loc="center left", 
-            bbox_to_anchor=(1.1, 0, 0.5, 1), # Move legend slightly further right
-            fontsize=7 # Smaller legend font
-        )
-        
-        plt.title(title, fontsize=12, fontweight='bold')
-        return self.save_plot(filename)
-
-    def generate_bar_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str, color: str = None, figsize=None):
-        if df.empty:
-            return None
-        
-        # Sanitize
-        df = df.copy()
-        df[y_col] = df[y_col].fillna(0)
-        
-        # Use provided figsize or default (10, 6)
-        base_size = figsize if figsize else (10, 6)
-        plt.figure(figsize=self._get_figsize(*base_size))
-        
-        sns.barplot(data=df, x=x_col, y=y_col, color=color or "skyblue")
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel(y_col, fontsize=12)
-        plt.xticks(rotation=45, ha='right')
-        return self.save_plot(filename)
-
-    def generate_horizontal_bar_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str, c_col: str = None, cmap: str = 'viridis', figsize=None):
-        if df.empty: return None
-        
-        # Use provided figsize or default (10, len(df) * 0.5 + 2)
-        base_size = figsize if figsize else (10, max(6, len(df) * 0.5 + 2))
-        plt.figure(figsize=self._get_figsize(*base_size))
-        
-        # Color mapping if c_col is provided
-        colors = None
-        if c_col and c_col in df.columns:
-            # Normalize c_col for color mapping
-            norm = plt.Normalize(df[c_col].min(), df[c_col].max())
-            colors = plt.cm.get_cmap(cmap)(norm(df[c_col].values))
-        
-        bars = plt.barh(df[y_col], df[x_col], color=colors if colors is not None else "skyblue", edgecolor='black', alpha=0.8)
-        plt.title(title, fontsize=14, fontweight='bold')
-        return self.save_plot(filename)
-
-    def generate_stacked_bar_chart(self, df: pd.DataFrame, x_col: str, y_cols: List[str], title: str, filename: str, colors: List[str] = None, figsize=None):
-        if df.empty: return None
-        
-        base_size = figsize if figsize else (10, 8)
-        plt.figure(figsize=self._get_figsize(*base_size))
-        
-        # Plot bottom layer first, then add subsequent layers
-        bottom = None
-        
-        # Use provided colors or default palette
-        if not colors:
-            colors = sns.color_palette("muted", len(y_cols))
-            
-        for i, col in enumerate(y_cols):
-            plt.bar(
-                df[x_col], 
-                df[col], 
-                bottom=bottom, 
-                label=col, 
-                color=colors[i] if i < len(colors) else None,
-                edgecolor='black',
-                alpha=0.8
-            )
-            if bottom is None:
-                bottom = df[col]
-            else:
-                bottom += df[col]
-                
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel("Latency (s)", fontsize=12)
-        plt.xticks(rotation=45, ha='right')
-        plt.legend()
-        return self.save_plot(filename)
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel(y_col, fontsize=12)
-        
-        # Add value labels
-        for i, bar in enumerate(bars):
-            width = bar.get_width()
-            label = f"{width:.2f}s"
-            if c_col and c_col in df.columns:
-                val = df.iloc[i][c_col]
-                label += f" ({int(val)} req)"
-            
-            plt.text(width, bar.get_y() + bar.get_height()/2, 
-                     f' {label}', 
-                     va='center', fontweight='bold', fontsize=9)
-            
-        plt.gca().invert_yaxis() # Top to bottom
-        return self.save_plot(filename)
-
-    def generate_xy_chart(self, df: pd.DataFrame, x_col: str, y_col: str, title: str, filename: str):
-        if df.empty: return None
-        plt.figure(figsize=(10, 6))
-        sns.barplot(data=df, x=x_col, y=y_col, color="lightblue")
-        plt.title(title)
-        return self.save_plot(filename)
-
-    def generate_scatter_plot(self, df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, filename: str):
-        if df.empty: return None
-        plt.figure(figsize=(10, 6))
-        sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, style=hue_col)
-        plt.title(title)
-        return self.save_plot(filename)
-
-    def generate_histogram(self, df: pd.DataFrame, col: str, title: str, filename: str, bins=50, color='skyblue'):
-        if df.empty: return None
-        plt.figure(figsize=(10, 6))
-        
-        # Calculate statistics
-        mean_val = df[col].mean()
-        std_val = df[col].std()
-        p95_val = df[col].quantile(0.95)
-        
-        plt.hist(df[col], bins=bins, alpha=0.7, color=color, edgecolor='black')
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(col.replace('_', ' ').title())
-        plt.ylabel('Frequency')
-        
-        # Add summary lines
-        plt.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.2f}')
-        plt.axvline(p95_val, color='orange', linestyle='-.', linewidth=2, label=f'P95: {p95_val:.2f}')
-        plt.legend()
-        
-        return self.save_plot(filename)
-
-    def generate_stacked_bar(self, df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, filename: str):
-        if df.empty: return None
-        
-        # Aggregate data for stacking
-        pivot_df = df.groupby([x_col, hue_col]).size().unstack(fill_value=0)
-        
-        plt.figure(figsize=(12, 6))
-        pivot_df.plot(kind='bar', stacked=True, figsize=(12, 6), colormap='viridis', edgecolor='black', alpha=0.8)
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col.replace('_', ' ').title())
-        plt.ylabel('Count')
-        plt.xticks(rotation=45, ha='right')
-        plt.legend(title=hue_col.replace('_', ' ').title(), bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        return self.save_plot(filename)
-
-    def generate_category_bar(self, df: pd.DataFrame, col: str, title: str, filename: str, order=None, colors=None):
-        if df.empty: return None
-        
-        counts = df[col].value_counts()
-        if order:
-            counts = counts.reindex(order, fill_value=0)
-            
-        plt.figure(figsize=(10, 6))
-        bars = plt.bar(counts.index, counts.values, color=colors if colors else 'skyblue', edgecolor='black')
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(col.replace('_', ' ').title())
-        plt.ylabel('Count')
-        plt.xticks(rotation=45, ha='right')
-        
-        # Add labels
-        for bar in bars:
-            height = bar.get_height()
-            if height > 0:
-                plt.text(bar.get_x() + bar.get_width()/2., height,
-                         f'{int(height)}', ha='center', va='bottom')
-                 
-        return self.save_plot(filename)
-
-    def generate_scatter_with_trend(self, df: pd.DataFrame, x_col: str, y_col: str, c_col: str, title: str, filename: str, scale='linear'):
-        if df.empty: return None
-        
-        plt.figure(figsize=(10, 8))
-        
-        # Filter positive values for log scale
-        plot_df = df.copy()
-        if scale == 'log':
-            plot_df = plot_df[(plot_df[x_col] > 0) & (plot_df[y_col] > 0)]
-            if plot_df.empty: return None
-        
-        scatter = plt.scatter(plot_df[x_col], plot_df[y_col], 
-                             c=plot_df[c_col] if c_col else 'blue', 
-                             cmap='viridis' if c_col else None, 
-                             alpha=0.6, s=20, edgecolor='black', linewidth=0.1)
-        
-        if c_col:
-            plt.colorbar(scatter, label=c_col.replace('_', ' ').title())
-            
-        if scale == 'log':
-            plt.xscale('log')
-            # plt.yscale('log') # Optional: log-log
-            
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel(x_col.replace('_', ' ').title() + (' (Log Scale)' if scale == 'log' else ''))
-        plt.ylabel(y_col.replace('_', ' ').title())
-        plt.grid(True, alpha=0.3)
-        
-        # Add Trend Line (Polynomial fit)
-        try:
-            import numpy as np
-            x = plot_df[x_col]
-            y = plot_df[y_col]
-            
-            if scale == 'log':
-                x = np.log10(x)
-                # y = np.log10(y) # If log-log
-            
-            z = np.polyfit(x, y, 1)
-            p = np.poly1d(z)
-            
-            x_trend = np.linspace(x.min(), x.max(), 100)
-            y_trend = p(x_trend)
-            
-            if scale == 'log':
-                x_plot = 10**x_trend
-                y_plot = y_trend # 10**y_trend if log-log
-            else:
-                x_plot = x_trend
-                y_plot = y_trend
-                
-            plt.plot(x_plot, y_plot, "r--", linewidth=2, alpha=0.8, label='Trend')
-            plt.legend()
-        except Exception as e:
-            logger.warning(f"Could not add trend line: {e}")
-
-        return self.save_plot(filename)
-
-    def generate_sequence_plot(self, df: pd.DataFrame, y_col: str, title: str, filename: str):
-        if df.empty: return None
-        
-        df = df.sort_values('timestamp').reset_index(drop=True)
-        df['request_order'] = df.index + 1
-        
-        plt.figure(figsize=(12, 6))
-        plt.scatter(df['request_order'], df[y_col], alpha=0.6, s=15, c=df[y_col], cmap='viridis')
-        
-        # Moving Average
-        window = max(5, len(df) // 20)
-        ma = df[y_col].rolling(window=window, center=True).mean()
-        plt.plot(df['request_order'], ma, color='red', linewidth=2, alpha=0.8, label=f'{window}-pt Moving Avg')
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel('Request Order')
-        plt.ylabel(y_col.replace('_', ' ').title())
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        
-        return self.save_plot(filename)
-
+logger = logging.getLogger(__name__)
 class ReportGenerator:
-    def __init__(self, base_dir: str = None):
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def __init__(self, data: Dict[str, Any], config: Dict[str, Any], base_dir: str = None):
+        self.data = data
+        self.config = config
         self.base_dir = base_dir or os.path.dirname(__file__)
-        self.report_dir = os.path.join(self.base_dir, "../reports")
-        self.assets_dir = os.path.join(self.report_dir, "img", self.timestamp)
+        # Default report_dir
+        default_report_dir = os.path.join(self.base_dir, "../reports")
         
-        # Load Config First to get scale
-        self.config = self._load_config()
-        self.chart_scale = self.config.get("chart_scale", 1.0)
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        # Determine writable report_dir
+        self.report_dir = default_report_dir
+        if not os.path.exists(self.report_dir):
+            try:
+                os.makedirs(self.report_dir, exist_ok=True)
+            except OSError:
+                 self.report_dir = os.path.abspath(".")
+        
+        # Test write permission
+        try:
+            test_file = os.path.join(self.report_dir, f".write_test_{self.timestamp}")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+        except OSError:
+            logger.warning(f"Cannot write to {self.report_dir}. Falling back to current directory.")
+            self.report_dir = os.path.abspath(".")
+            # try again
+            try:
+                test_file = os.path.join(self.report_dir, f".write_test_{self.timestamp}")
+                with open(test_file, "w") as f: f.write("test")
+                os.remove(test_file)
+            except OSError:
+                import tempfile
+                logger.warning(f"Cannot write to current directory. Falling back to temp dir.")
+                self.report_dir = tempfile.gettempdir()
+
+        # Create Assets Directory (Relative to Report)
+        assets_dir_name = f"report_assets_{self.timestamp}"
+        self.assets_dir = os.path.join(self.report_dir, assets_dir_name)
+        
+        try:
+            os.makedirs(self.assets_dir, exist_ok=True)
+        except OSError as e:
+            logger.warning(f"Failed to create assets dir at {self.assets_dir}: {e}. Falling back to system temp (images links might break).")
+            import tempfile
+            self.assets_dir = tempfile.mkdtemp(prefix="report_assets_")
+        
+        # Unpack Data
+        self.df_agents = data.get('df_agents', pd.DataFrame())
+        self.df_roots = data.get('df_roots', pd.DataFrame())
+        self.df_tools = data.get('df_tools', pd.DataFrame())
+        self.df_models = data.get('df_models', pd.DataFrame())
+        self.df_agent_models_e2e = data.get('df_agent_models_e2e', pd.DataFrame())
+        self.df_agent_models_llm = data.get('df_agent_models_llm', pd.DataFrame())
+        self.df_agent_models = self.df_agent_models_llm
+        self.df_correlation = data.get('df_correlation', pd.DataFrame())
+        self.df_raw_llm = data.get('df_raw_llm', pd.DataFrame())
+        
+        self.agent_bottlenecks = data.get('agent_bottlenecks', pd.DataFrame())
+        self.tool_bottlenecks = data.get('tool_bottlenecks', pd.DataFrame())
+        self.llm_bottlenecks = data.get('llm_bottlenecks', pd.DataFrame())
+        
+        self.root_errors = data.get('root_errors', pd.DataFrame())
+        self.agent_errors = data.get('agent_errors', pd.DataFrame())
+        self.tool_errors = data.get('tool_errors', pd.DataFrame())
+        self.llm_errors = data.get('llm_errors', pd.DataFrame())
+        
+        self.empty_responses = data.get('empty_responses', {})
+        
+        # Config Defaults
+        self.data_config = self.config.get("data_retrieval", {})
+        self.pres_config = self.config.get("presentation", {})
+        self.time_range_desc = self.data_config.get("time_period", "24h")
+        self.playbook = self.config.get("playbook", "overview")
+        
+        self.chart_scale = float(os.getenv("CHART_SCALE", self.pres_config.get("chart_scale", 1.0)))
         self.chart_gen = ChartGenerator(self.assets_dir, scale=self.chart_scale)
         
         self.report_content = []
-        self.traces = {} # Stores trace_id -> spans list
-        self.data = {}
-        # Report Metadata
-        self.config = self._load_config()
-        self.playbook = self.config.get("playbook", "overview")
-        self.config = self._load_config()
-        self.data_config = self.config.get("data_retrieval", {})
-        self.pres_config = self.config.get("presentation", {})
-        
-        # Data Retrieval Settings
-        self.time_range_desc = self.data_config.get("time_period", "24h")
-        self.generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        self.playbook = self.config.get("playbook", "overview")
         
         # Extract Percentile from config (default to 95.5 if not found)
         self.percentile = 95.5
         if "kpis" in self.config and "end_to_end" in self.config["kpis"]:
              self.percentile = self.config["kpis"]["end_to_end"].get("percentile_target", 95.5)
         
-        # Configurable Limits (Data)
-        self.num_slowest = self.data_config.get("num_slowest_queries", 20)
-        self.num_errors = self.data_config.get("num_error_queries", 20)
-        
-        # Presentation Settings (with Env Override)
         self.max_column_width = int(os.getenv("MAX_COLUMN_WIDTH_CHARS", self.pres_config.get("max_column_width_chars", 250)))
-        self.chart_scale = float(os.getenv("CHART_SCALE", self.pres_config.get("chart_scale", 1.0)))
+
+
+
 
     def _truncate_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Truncates string columns to max_column_width."""
         if df.empty:
             return df
             
-        df_trunc = df.copy()
+        # Remove duplicate columns to avoid ambiguity
+        df_trunc = df.loc[:, ~df.columns.duplicated()].copy()
+        
         for col in df_trunc.columns:
+            # Check dtype safely
             if df_trunc[col].dtype == 'object':
                 # Convert to string and truncate
                 df_trunc[col] = df_trunc[col].astype(str).apply(
@@ -412,17 +153,7 @@ class ReportGenerator:
                 )
         return df_trunc
 
-    def _load_config(self) -> Dict[str, Any]:
-        try:
-            config_path = os.path.join(dir_path, "../agents/observability_agent/config.json")
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    data = json.load(f)
-                    return data.get("config", {})
-            return {}
-        except Exception as e:
-            logger.warning(f"Failed to load config.json: {e}")
-            return {}
+
 
     def add_section(self, title: str, content: str = ""):
         self.report_content.append(f"\n## {title}\n")
@@ -443,378 +174,7 @@ class ReportGenerator:
             # [![Title](path)](path)
             self.report_content.append(f"\n[![{title}]({rel_path})]({rel_path})\n")
 
-    def json_to_df(self, json_input: Any) -> pd.DataFrame:
-        try:
-            if isinstance(json_input, pd.DataFrame):
-                return json_input
-            if isinstance(json_input, str):
-                data = json.loads(json_input)
-            else:
-                data = json_input
-                
-            if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
-                return pd.DataFrame(data["data"])
-            if isinstance(data, list):
-                return pd.DataFrame(data)
-            return pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Failed to parse JSON/Data to DataFrame: {e}")
-            return pd.DataFrame()
 
-    async def fetch_tool_errors(self, limit: int = 5):
-        """Fetches detailed tool errors with context."""
-        where_clause = build_standard_where_clause(time_range=self.time_range_desc)
-        # T = Tool, A = Agent, I = Invocation
-        query = f"""
-        SELECT
-            T.timestamp,
-            T.tool_name,
-            T.tool_args,
-            T.error_message,
-            T.agent_name,
-            A.status AS agent_status,
-            I.root_agent_name,
-            I.status AS root_status,
-            I.content_text_summary AS user_message,
-            T.trace_id,
-            T.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.tool_events_view` AS T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS A ON T.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS I ON REPLACE(T.trace_id, '-', '') = REPLACE(I.trace_id, '-', '')
-        WHERE {where_clause}
-        AND T.status = 'ERROR'
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-        try:
-            return await execute_bigquery(query)
-        except Exception as e:
-            logger.error(f"Failed to fetch tool errors: {e}")
-            return pd.DataFrame()
-
-    async def fetch_llm_errors(self, limit: int = 5):
-        """Fetches detailed LLM errors with context."""
-        where_clause = build_standard_where_clause(time_range=self.time_range_desc, table_alias="L")
-        # L = LLM, A = Agent, I = Invocation, R = Root Agent (fallback)
-        query = f"""
-        SELECT
-            L.timestamp,
-            L.model_name,
-            TO_JSON_STRING(L.llm_config) AS llm_config,
-            L.error_message,
-            L.agent_name,
-            A.status AS agent_status,
-            COALESCE(I.root_agent_name, R.agent_name) AS root_agent_name,
-            COALESCE(I.status, R.status) AS root_status,
-            COALESCE(CAST(I.content_text_summary AS STRING), CAST(R.instruction AS STRING)) AS user_message,
-            L.trace_id,
-            L.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS L
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS A ON L.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS I ON REPLACE(L.trace_id, '-', '') = REPLACE(I.trace_id, '-', '')
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS R 
-            ON REPLACE(L.trace_id, '-', '') = REPLACE(R.trace_id, '-', '') 
-            AND R.parent_span_id IS NULL
-        WHERE {where_clause}
-        AND L.status = 'ERROR'
-        ORDER BY L.timestamp DESC
-        LIMIT {limit}
-        """
-        try:
-            return await execute_bigquery(query)
-        except Exception as e:
-            logger.error(f"Failed to fetch LLM errors: {e}")
-            return pd.DataFrame()
-
-    async def fetch_agent_errors(self, limit: int = 5):
-        """Fetches detailed Agent errors (excluding Root Agents)."""
-        where_clause = build_standard_where_clause(time_range=self.time_range_desc, table_alias="A")
-        # A = Agent, I = Invocation, R = Root Agent (fallback)
-        query = f"""
-        SELECT
-            A.timestamp,
-            A.agent_name,
-            A.error_message,
-            COALESCE(I.root_agent_name, R.agent_name) AS root_agent_name,
-            COALESCE(I.status, R.status) AS root_status,
-            COALESCE(CAST(I.content_text_summary AS STRING), CAST(R.instruction AS STRING)) AS user_message,
-            A.trace_id,
-            A.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS A
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS I ON REPLACE(A.trace_id, '-', '') = REPLACE(I.trace_id, '-', '')
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS R
-            ON REPLACE(A.trace_id, '-', '') = REPLACE(R.trace_id, '-', '')
-            AND R.parent_span_id IS NULL
-        WHERE {where_clause}
-        AND A.status = 'ERROR'
-
-        ORDER BY A.timestamp DESC
-        LIMIT {limit}
-        """
-        try:
-            return await execute_bigquery(query)
-        except Exception as e:
-            logger.error(f"Failed to fetch agent errors: {e}")
-            return pd.DataFrame()
-
-    async def fetch_root_errors(self, limit: int = 5):
-        """Fetches detailed Root Agent errors (Invocation level)."""
-        where_clause = build_standard_where_clause(time_range=self.time_range_desc)
-        query = f"""
-        SELECT
-            timestamp,
-            root_agent_name,
-            error_message,
-            content_text_summary AS user_message,
-            trace_id,
-            invocation_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS T
-        WHERE {where_clause}
-        AND status = 'ERROR'
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
-        try:
-            return await execute_bigquery(query)
-        except Exception as e:
-            logger.error(f"Failed to fetch root errors: {e}")
-            return pd.DataFrame()
-
-    async def fetch_raw_llm_data(self, time_range: str = "24h"):
-        """Fetches raw LLM event data for advanced visualization."""
-        where_clause = build_standard_where_clause(time_range=time_range)
-        
-        query = f"""
-        SELECT
-            timestamp,
-            model_name,
-            agent_name,
-            duration_ms / 1000.0 AS latency_seconds,
-            time_to_first_token_ms / 1000.0 AS ttft_seconds,
-            prompt_token_count AS input_tokens,
-            candidates_token_count AS output_tokens,
-            thoughts_token_count AS thought_tokens
-        FROM `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS T
-        WHERE {where_clause}
-        AND duration_ms > 0
-        ORDER BY timestamp ASC
-        LIMIT 5000
-        """
-        try:
-            print(f"   DEBUG: Executing raw LLM query with LIMIT 5000...")
-            df = await execute_bigquery(query)
-            print(f"   DEBUG: Raw LLM query returned {len(df)} rows.")
-            # Ensure numeric columns
-            df['latency_seconds'] = pd.to_numeric(df['latency_seconds'], errors='coerce')
-            df['ttft_seconds'] = pd.to_numeric(df['ttft_seconds'], errors='coerce').fillna(0)
-            df['input_tokens'] = pd.to_numeric(df['input_tokens'], errors='coerce').fillna(0)
-            df['output_tokens'] = pd.to_numeric(df['output_tokens'], errors='coerce').fillna(0)
-            df['thought_tokens'] = pd.to_numeric(df['thought_tokens'], errors='coerce').fillna(0)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            return df
-        except Exception as e:
-            logger.error(f"Failed to fetch raw LLM data: {e}")
-            return pd.DataFrame()
-
-
-    async def fetch_llm_bottlenecks_with_details(self, limit: int = 5):
-        """Fetches LLM bottlenecks with detailed join for agent and root info."""
-        where_clause = build_standard_where_clause(time_range=self.time_range_desc)
-        # Fix alias for root_agent_name to use Invocation view (I), then map rest to L
-        where_fixed = where_clause.replace('T.root_agent_name', 'I.root_agent_name').replace('T.', 'L.')
-        
-        query = f"""
-        SELECT
-            L.timestamp,
-            L.duration_ms / 1000.0 AS duration_s,
-            L.time_to_first_token_ms / 1000.0 AS ttft_s,
-            L.model_name,
-            L.status AS status,
-            SUBSTR(TO_JSON_STRING(L.full_request), 1, 50) AS input_preview,
-            L.prompt_token_count,
-            L.candidates_token_count AS response_token_count,
-            L.thoughts_token_count AS thought_tokens,
-            CAST(NULL AS STRING) AS rca_analysis,
-            L.agent_name,
-            A.duration_ms / 1000.0 AS agent_duration_s,
-            A.status AS agent_status,
-            I.root_agent_name,
-            I.duration_ms / 1000.0 AS e2e_duration_s,
-            I.status AS root_status,
-            I.content_text_summary AS user_message,
-            L.session_id,
-            L.trace_id,
-            L.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS L
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS A ON L.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS I ON REPLACE(L.trace_id, '-' , '') = REPLACE(I.trace_id, '-' , '')
-        WHERE ({where_fixed})
-        AND L.duration_ms > 0
-        ORDER BY L.duration_ms DESC
-        LIMIT {limit}
-        """
-        
-        try:
-            df = await execute_bigquery(query) # Assuming execute_bigquery is still used, but the instruction implies self.bq_client.query
-            # Reverting to original execute_bigquery as the instruction's change to self.bq_client.query().to_dataframe()
-            # would require bq_client to be initialized in ReportGenerator, which is not in the provided context.
-            # If the user intended to introduce bq_client, that would be a larger change.
-            # Sticking to the logging part and the query string change.
-            return df
-        except Exception as e:
-             logger.error(f"Failed to fetch detailed LLM bottlenecks: {e}")
-             return pd.DataFrame()
-
-    async def trace_task(self, name, awaitable):
-        logger.info(f"   [START] Task: {name}")
-        try:
-            res = await awaitable
-            logger.info(f"   [DONE] Task: {name}")
-            return res
-        except Exception as e:
-            logger.error(f"   [FAIL] Task: {name} Error: {e}")
-            if "RawLLM" in name: return pd.DataFrame()
-            # For other tasks, maybe return empty list/dict/df based on type? 
-            # But let's just re-raise for now to not break unpacking, unless we handle it.
-            # If we re-raise, we know what failed.
-            raise e
-
-    async def fetch_data(self):
-        logger.info(f"Fetching data using analytics tools in parallel (Time Range: {self.time_range_desc})...")
-        
-        # Define independent tasks for parallel execution
-        # 1. Agent Stats (Exclude Root to avoid duplication in Agent Level)
-        task_agents = self.trace_task("Agents", analyze_latency_grouped(
-            group_by="agent_name", 
-            time_range=self.time_range_desc, 
-            view_id="agent_events_view", 
-            percentile=self.percentile,
-            exclude_root=True
-        ))
-        task_roots = self.trace_task("Roots", analyze_latency_grouped(
-            time_range=self.time_range_desc,
-            group_by="root_agent_name",
-            view_id="invocation_events_view",
-            percentile=self.percentile
-        ))
-        task_tools = self.trace_task("Tools", analyze_latency_grouped(group_by="tool_name", view_id="tool_events_view", time_range=self.time_range_desc, percentile=self.percentile))
-        
-        # 3. Model Performance
-        task_models = self.trace_task("Models", analyze_latency_grouped(group_by="model_name", view_id="llm_events_view", time_range=self.time_range_desc, percentile=self.percentile))
-        
-        # 4. Agent Composition (Pivot Data)
-        # 4. Agent Composition (Pivot Data)
-        # Fetch E2E (Agent View) and LLM (LLM View) separately
-        task_agent_models_e2e = self.trace_task("AgentModelsE2E", analyze_latency_grouped(group_by="agent_name,model_name", view_id="agent_events_view", time_range=self.time_range_desc, percentile=self.percentile))
-        task_agent_models_llm = self.trace_task("AgentModelsLLM", analyze_latency_grouped(group_by="agent_name,model_name", view_id="llm_events_view", time_range=self.time_range_desc, percentile=self.percentile))
-        
-        # 5. Bottlenecks
-        limit_slow = self.config.get("num_slowest_queries", 5)
-        limit_error = self.config.get("num_error_queries", 5)
-        
-        task_agent_slow = self.trace_task("AgentSlow", get_slowest_queries(limit=limit_slow, view_id="agent_events_view", time_range=self.time_range_desc))
-        task_tool_slow = self.trace_task("ToolSlow", get_slowest_queries(limit=limit_slow, view_id="tool_events_view", time_range=self.time_range_desc))
-        task_llm_slow = self.trace_task("LLMSlow", self.fetch_llm_bottlenecks_with_details(limit=limit_slow))
-        
-        # 6. Errors (Custom Fetch)
-        task_root_errors = self.trace_task("RootErrors", self.fetch_root_errors(limit=limit_error))
-        task_agent_errors = self.trace_task("AgentErrors", self.fetch_agent_errors(limit=limit_error))
-        task_tool_errors = self.trace_task("ToolErrors", self.fetch_tool_errors(limit=limit_error))
-        task_llm_errors = self.trace_task("LLMErrors", self.fetch_llm_errors(limit=limit_error))
-        
-        # 7. Empty LLM Responses
-        limit_empty = self.config.get("num_empty_llm_responses", 20)
-        task_empty = self.trace_task("EmptyLLM", analyze_empty_llm_responses(limit=limit_empty, time_range=self.time_range_desc))
-        
-        # 8. Correlation Data
-        task_correlation = self.trace_task("Correlation", fetch_correlation_data(time_range=self.time_range_desc, limit=2000))
-
-        # 9. Raw LLM Data for Advanced Charts
-        task_raw_llm = self.trace_task("RawLLM", self.fetch_raw_llm_data(time_range=self.time_range_desc))
-
-        # Execute all tasks concurrently
-        # task_outliers = analyze_outlier_patterns(time_range=self.time_range_desc, metric="duration_ms", threshold_percentile=0.95)
-
-        results = await asyncio.gather(
-            task_agents, task_roots, task_tools, task_models, task_agent_models_e2e, task_agent_models_llm,
-            task_agent_slow, task_tool_slow, task_llm_slow,
-            task_root_errors, task_agent_errors, task_tool_errors, task_llm_errors,
-            task_empty, task_correlation, task_raw_llm #, task_outliers
-        )
-        
-        # Unpack results
-        (
-            raw_agents, raw_roots, raw_tools, raw_models, raw_agent_models_e2e, raw_agent_models_llm,
-            raw_agent_slow, raw_tool_slow, raw_llm_slow,
-            self.root_errors, self.agent_errors, self.tool_errors, self.llm_errors,
-            raw_empty, raw_correlation, self.df_raw_llm #, raw_outliers
-        ) = results
-        
-        raw_outliers = "{}" # Placeholder
-
-        # Process Traces for Top Slow Queries
-        # We parse raw_agent_slow immediately to get trace IDs
-        # try:
-        #     slow_data = json.loads(raw_agent_slow) if isinstance(raw_agent_slow, str) else raw_agent_slow
-        #     # Ensure slow_data is a list of dictionaries
-        #     if isinstance(slow_data, dict) and "requests" in slow_data:
-        #         slow_data = slow_data["requests"]
-        #     
-        #     top_traces = [item.get('trace_id') for item in slow_data[:3] if item.get('trace_id')]
-        #     if top_traces:
-        #         trace_results = await asyncio.gather(*[fetch_trace_spans(tid) for tid in top_traces])
-        #         for tid, spans in zip(top_traces, trace_results):
-        #             self.traces[tid] = spans
-        # except Exception as e:
-        #     logger.error(f"Error fetching traces: {e}")
-
-        # Process Results
-        self.df_agents = self.json_to_df(raw_agents)
-        self.df_roots = self.json_to_df(raw_roots)
-        self.df_tools = self.json_to_df(raw_tools)
-        self.df_models = self.json_to_df(raw_models)
-        self.df_models = self.json_to_df(raw_models)
-        self.df_agent_models_e2e = self.json_to_df(raw_agent_models_e2e)
-        self.df_agent_models_llm = self.json_to_df(raw_agent_models_llm)
-        
-        # Default self.df_agent_models to LLM for backward compatibility if needed, 
-        # but we should be explicit in usage. 
-        # Token stats use LLM usually, but E2E is 'Performance'.
-        # Let's alias df_agent_models to df_agent_models_llm for token stats for now, 
-        # but use distinct names in sections.
-        self.df_agent_models = self.df_agent_models_llm 
-        self.df_correlation = self.json_to_df(raw_correlation)
-        self.data['empty_llm'] = json.loads(raw_empty)
-        self.data['correlation'] = json.loads(raw_correlation)
-        self.data['outliers'] = json.loads(raw_outliers)
-        
-        # Determine and fix column names if _x/_y suffix exists (due to merge)
-        for df in [self.df_agent_models_e2e, self.df_agent_models_llm, self.df_agent_models]:
-             new_cols = {}
-             for col in df.columns:
-                 if col.endswith('_x'):
-                     new_cols[col] = col[:-2]
-             if new_cols:
-                 df.rename(columns=new_cols, inplace=True)
-
-        # Bottlenecks
-        if isinstance(raw_agent_slow, str):
-             self.agent_bottlenecks = self.json_to_df(json.loads(raw_agent_slow).get("requests", []))
-        else:
-             self.agent_bottlenecks = self.json_to_df(raw_agent_slow)
-
-        if isinstance(raw_tool_slow, str):
-             self.tool_bottlenecks = self.json_to_df(json.loads(raw_tool_slow).get("requests", []))
-        else:
-             self.tool_bottlenecks = self.json_to_df(raw_tool_slow)
-
-        # raw_llm_slow is already a DataFrame from fetch_llm_bottlenecks_with_details
-        self.llm_bottlenecks = self.json_to_df(raw_llm_slow)
-        
-
-
-        # Empty Responses
-        self.empty_responses = json.loads(raw_empty)
 
     def _status_emoji(self, status: str) -> str:
         return "🟢" if status == "OK" else "🔴"
@@ -1050,8 +410,8 @@ class ReportGenerator:
         ok_items.sort(key=lambda x: x[1], reverse=True)
         bad_items.sort(key=lambda x: x[1], reverse=True)
 
-        ok_shades = generate_shades("#4ade80", len(ok_items)) # Green
-        bad_shades = generate_shades("#ef4444", len(bad_items)) # Red
+        ok_shades = generate_shades(PASTEL_OK, len(ok_items)) # Pastel Green
+        bad_shades = generate_shades(PASTEL_ERR, len(bad_items)) # Pastel Red
         
         for i, item in enumerate(ok_items):
             colors[item[0]] = ok_shades[i]
@@ -1248,8 +608,8 @@ class ReportGenerator:
                      title=f"Top Tool Latency ({p_col}) & Usage", 
                      filename="tool_latency_horizontal.png", 
                      c_col='Requests', # Color by usage
-                     cmap='plasma', # Nice color map
-                     figsize=(10, 8)
+                     cmap='Blues', # Softer than plasma
+                     figsize=(6, 4) # MUCH Smaller as requested
                  )
                  self.add_image("Tool Latency & Usage", path)
 
@@ -1295,8 +655,8 @@ class ReportGenerator:
                      title=f"Model Latency ({p_col}) & Usage", 
                      filename="model_latency_horizontal.png", 
                      c_col='Requests', # Color by usage
-                     cmap='plasma', # Nice color map
-                     figsize=(10, 8)
+                     cmap='Blues', # Softer than plasma
+                     figsize=(6, 4) # MUCH Smaller as requested
                  )
                  self.add_image("Model Latency & Usage", path)
 
@@ -1559,7 +919,7 @@ class ReportGenerator:
 
              # Model Usage Pie Chart
              usage_series = self.df_models.set_index('model_name')['total_count']
-             path = self.chart_gen.generate_pie_chart(usage_series, "Model Usage (Distribution)", "model_usage_pie.png", colors=None)
+             path = self.chart_gen.generate_pie_chart(usage_series, "", "model_usage_pie.png", colors=None)
              if path: self.add_image("Model Usage", path)
 
         self.add_subsection("Model Performance")
@@ -2085,7 +1445,7 @@ class ReportGenerator:
              df_tool['Impact %'] = df_tool.apply(calc_impact, axis=1)
              
              # Fill missing
-             req_cols = ['timestamp', 'tool_name', 'status', 'tool_args', 'agent_name', 'agent_duration', 'agent_status', 'root_agent_name', 'e2e_duration', 'root_status', 'user_message', 'session_id', 'trace_id', 'span_id', 'input_token_count', 'output_token_count', 'rca_analysis']
+             req_cols = ['timestamp', 'tool_name', 'status', 'tool_args', 'tool_result', 'agent_name', 'agent_duration', 'agent_status', 'root_agent_name', 'e2e_duration', 'root_status', 'user_message', 'session_id', 'trace_id', 'span_id', 'input_token_count', 'output_token_count', 'rca_analysis']
              for c in req_cols:
                  if c not in df_tool.columns:
                      df_tool[c] = "N/A"
@@ -2118,12 +1478,13 @@ class ReportGenerator:
                  'Tool (s)': 'Tool (s)',
                  'tool_name': 'Tool Name',
                  'Tool Status': 'Tool Status',
-                 'tool_args': 'Input',
+                 'tool_args': 'Arguments',
+                 'tool_result': 'Result',
                  'Impact %': 'Impact %',
                  'agent_name': 'Agent Name',
                  'agent_duration': 'Agent (s)',
                  'Agent Status': 'Agent Status',
-                 'root_agent_name': 'Root Agent Name',
+                 'root_agent_name': 'Root Agent',
                  'e2e_duration': 'E2E (s)',
                  'Root Status': 'Root Status',
                  'user_message': 'User Message',
@@ -2255,7 +1616,7 @@ class ReportGenerator:
         }
         if not self.agent_errors.empty:
             if 'root_status' in self.agent_errors.columns:
-                self.agent_errors['root_status'] = self.agent_errors['root_status'].apply(status_to_emoji)
+                self.agent_errors['root_status'] = self.agent_errors['root_status'].apply(self._status_emoji)
 
             tbl = format_error_table(self._truncate_df(self.agent_errors.head(self.config.get("num_error_queries", 20))), agent_map)
             self.report_content.append(tbl)
@@ -2283,9 +1644,9 @@ class ReportGenerator:
         if not self.tool_errors.empty:
              # Map status emoji
              if 'agent_status' in self.tool_errors.columns:
-                 self.tool_errors['agent_status'] = self.tool_errors['agent_status'].apply(status_to_emoji)
+                 self.tool_errors['agent_status'] = self.tool_errors['agent_status'].apply(self._status_emoji)
              if 'root_status' in self.tool_errors.columns:
-                 self.tool_errors['root_status'] = self.tool_errors['root_status'].apply(status_to_emoji)
+                 self.tool_errors['root_status'] = self.tool_errors['root_status'].apply(self._status_emoji)
                  
              tbl = format_error_table(self._truncate_df(self.tool_errors.head(self.config.get("num_error_queries", 20))), tool_map)
              self.report_content.append(tbl)
@@ -2302,6 +1663,7 @@ class ReportGenerator:
             'model_name': 'Model Name',
             'llm_config': 'LLM Config',
             'error_message': 'Error Message',
+            'duration_s': 'Latency (s)', 
             'agent_name': 'Parent Agent',
             'agent_status': 'Agent Status',
             'root_agent_name': 'Root Agent',
@@ -2312,9 +1674,15 @@ class ReportGenerator:
         }
         if not self.llm_errors.empty:
              if 'agent_status' in self.llm_errors.columns:
-                 self.llm_errors['agent_status'] = self.llm_errors['agent_status'].apply(status_to_emoji)
+                 self.llm_errors['agent_status'] = self.llm_errors['agent_status'].apply(self._status_emoji)
              if 'root_status' in self.llm_errors.columns:
-                 self.llm_errors['root_status'] = self.llm_errors['root_status'].apply(status_to_emoji)
+                 self.llm_errors['root_status'] = self.llm_errors['root_status'].apply(self._status_emoji)
+
+             # Convert duration_ms to duration_s
+             if 'duration_ms' in self.llm_errors.columns:
+                 self.llm_errors['duration_s'] = (self.llm_errors['duration_ms'] / 1000).round(2)
+             else:
+                 self.llm_errors['duration_s'] = 0.0
 
              tbl = format_error_table(self._truncate_df(self.llm_errors.head(self.config.get("num_error_queries", 20))), llm_map)
              self.report_content.append(tbl)
@@ -2563,14 +1931,33 @@ class ReportGenerator:
 
                 df['latency_category'] = df['latency_seconds'].apply(categorize_latency)
                 category_order = ['Very Fast (< 1s)', 'Fast (1-2s)', 'Medium (2-3s)', 'Slow (3-5s)', 'Very Slow (5-8s)', 'Outliers (8s+)']
-                colors = ['green', 'lightgreen', 'yellow', 'orange', 'red', 'darkred']
+                # colors = ['green', 'lightgreen', 'yellow', 'orange', 'red', 'darkred'] # Old harsh colors
+                # Pastel equivalent mapping (approximate)
+                # Green -> Pastel Green, LightGreen -> ... maybe just use a sequence or map specifically
+                # Let's map to our PASTEL_COLORS but in a logical order?
+                # Actually user said "consistent pastel colors". 
+                # Let's use specific pastel shades for Good -> Bad gradient.
                 
+                # Custom Pastel Gradient
+                colors = [
+                    '#77DD77', # Very Fast (Green)
+                    '#B0E57C', # Fast
+                    '#FDFD96', # Medium (Yellow)
+                    '#FFB347', # Slow (Orange)
+                    '#FF6961', # Very Slow (Red)
+                    '#C23B22'  # Outliers (Darker Red, but pastel-ish? Material Red 900 is #B71C1C, let's go softer: #D291BC (Purple?) or just Dark Pastel Red)
+                ]
+                # Let's use a widely accepted pastel red for bad: #FF6961. 
+                # For Outliers, maybe #CB99C9 (Purple) or just same red.
+                colors = ['#77DD77', '#A0E57D', '#FDFD96', '#FFB347', '#FF6961', '#E5aeae']
+
                 self.chart_gen.generate_category_bar(
                     df, 'latency_category',
                     'Latency Distribution by Category',
                     'latency_category_dist.png',
                     order=category_order,
-                    colors=colors
+                    colors=colors,
+                    figsize=(6, 4) # Reduced size (approx 60% of area? 10x6=60, 6x4=24. That's 40% of area, so 60% reduction. Math is close enough.)
                 )
                 self.add_image("Latency Distribution by Category", os.path.join(self.assets_dir, 'latency_category_dist.png'))
             except Exception as e:
@@ -2678,10 +2065,35 @@ class ReportGenerator:
         md.append("\n\n---\n")
         return "\n".join(md)
 
+def load_config() -> Dict[str, Any]:
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "../agents/observability_agent/config.json")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                data = json.load(f)
+                return data.get("config", {})
+        return {}
+    except Exception as e:
+        logger.warning(f"Failed to load config.json: {e}")
+        return {}
+
 async def generate_report_content(save_file: bool = True) -> str:
-    generator = ReportGenerator(os.path.dirname(os.path.abspath(__file__))) # Pass current file's directory
-    await generator.fetch_data()
+    # Ensure views exist before querying
+    try:
+        ensure_all_views()
+    except Exception as e:
+        logger.warning(f"Failed to ensure views: {e}")
+
+    config = load_config()
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    data_manager = ReportDataManager(config)
+    data = await data_manager.fetch_all_data()
+    
+    generator = ReportGenerator(data, config, base_dir=base_dir)
+    # await generator.fetch_data() # Removed as data is passed in
     generator.build_report()
+    
     if save_file:
         return generator.save()
     return "\n".join(generator.report_content)
@@ -2690,4 +2102,5 @@ async def main():
     await generate_report_content()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())

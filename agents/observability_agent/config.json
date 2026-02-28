@@ -2,16 +2,18 @@
     "config": {
         "playbook": "overview",
         "data_retrieval": {
-          "time_period": "7d",
-          "num_slowest_queries": 20,
-          "num_error_queries": 20,
+          "time_period": "all",
+          "num_slowest_queries": 50,
+          "num_error_queries": 200,
           "num_empty_llm_responses": 20,
           "num_queries_to_analyze_rca": 0
         },
         "presentation": {
-            "chart_scale": 1.0,
-            "max_column_width_chars": 250
-          },
+            "chart_scale": 0.5,
+            "max_column_width_chars": 250,
+            "num_error_queries": 20,
+            "num_slowest_queries": 20
+        },
         "kpis": {
           "end_to_end": {
             "latency_target": 10.0,

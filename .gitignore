@@ -5,6 +5,12 @@
 /.venv/
 /tools/.cache/
 /reports/
+/reports_v2/
+/reports_assets*/
+/report_assets*/
 /logs/
 /old_implementation_agent/
 agent_output*
+debug_*
+logs_v2
+
