@@ -3,7 +3,35 @@
  * ---------------
  * Isolates LLM interactions (requests and responses) from the raw event stream.
  */
-CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.llm_events_view` AS
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.llm_events_view` (
+    timestamp OPTIONS(description="The timestamp of the LLM_REQUEST event. Used as the primary time-series anchor."),
+    root_agent_name OPTIONS(description="The name of the root agent that initiated the invocation."),
+    agent_name OPTIONS(description="The name of the agent that made the LLM call."),
+    llm_config OPTIONS(description="JSON representation of the LLM configuration (temperature, top_p, etc.)."),
+    usage_metadata OPTIONS(description="JSON representation of token usage metrics."),
+    model_name OPTIONS(description="The model name, preferring the specific version from the response if available, otherwise the requested model."),
+    requested_model OPTIONS(description="The model name requested in the LLM_REQUEST event."),
+    response_model OPTIONS(description="The specific model version returned in the LLM_RESPONSE event."),
+    duration_ms OPTIONS(description="The total time in milliseconds for the LLM call."),
+    time_to_first_token_ms OPTIONS(description="The time in milliseconds until the first token was received (for streaming responses)."),
+    status OPTIONS(description="The outcome of the LLM call. 'OK' on success, 'ERROR' on failure."),
+    error_message OPTIONS(description="The exception message if the LLM call failed."),
+    prompt_token_count OPTIONS(description="The number of tokens in the input prompt."),
+    candidates_token_count OPTIONS(description="The number of tokens generated in the response."),
+    total_token_count OPTIONS(description="The total number of tokens (prompt + candidates)."),
+    thoughts_token_count OPTIONS(description="The number of tokens used for thinking/reasoning steps."),
+    full_request OPTIONS(description="The raw JSON content of the LLM request."),
+    full_response OPTIONS(description="The raw JSON content of the LLM response."),
+    request_text OPTIONS(description="The extracted text portion of the user prompt sent to the model."),
+    response_text OPTIONS(description="The extracted text portion of the model's response."),
+    span_id OPTIONS(description="The OpenTelemetry span_id identifying this specific LLM call."),
+    trace_id OPTIONS(description="The OpenTelemetry trace_id tying this call back to the root invocation."),
+    parent_span_id OPTIONS(description="The span_id of the operation that made this LLM call."),
+    user_id OPTIONS(description="The ID of the user who initiated the run."),
+    session_id OPTIONS(description="The ID of the multi-turn session."),
+    start_timestamp OPTIONS(description="The exact timestamp of the LLM_REQUEST event."),
+    end_timestamp OPTIONS(description="The exact timestamp of the LLM_RESPONSE or LLM_ERROR event.")
+) AS
 WITH LlmRequests AS (
   SELECT
     trace_id,

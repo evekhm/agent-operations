@@ -9,7 +9,23 @@
  * - invocation_id: The unique ID for this specific run/turn.
  * - session_id: The higher-level session ID (multi-turn conversation).
  */
-CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.invocation_events_view` AS
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.invocation_events_view` (
+    timestamp OPTIONS(description="The start timestamp of the invocation. Used as the primary time-series anchor."),
+    root_agent_name OPTIONS(description="The designated root agent for this invocation."),
+    agent_name OPTIONS(description="The name of the agent that started the invocation."),
+    content_text_summary OPTIONS(description="A summary of the user's input message that triggered the invocation."),
+    content_text OPTIONS(description="The primary text of the user's input message."),
+    duration_ms OPTIONS(description="The total time in milliseconds from INVOCATION_STARTING to INVOCATION_COMPLETED."),
+    status OPTIONS(description="The execution status. 'OK' on success, 'ERROR' on failure, or 'PENDING' if the run is still active or crashed."),
+    error_message OPTIONS(description="The exception message if the invocation encountered an error."),
+    message_timestamp OPTIONS(description="The timestamp when the user message was received."),
+    start_timestamp OPTIONS(description="The exact timestamp of the INVOCATION_STARTING event."),
+    end_timestamp OPTIONS(description="The exact timestamp of the INVOCATION_COMPLETED event."),
+    invocation_id OPTIONS(description="A unique ID for this specific run/turn."),
+    session_id OPTIONS(description="The ID of the multi-turn conversation session."),
+    trace_id OPTIONS(description="The OpenTelemetry trace_id for this invocation."),
+    user_id OPTIONS(description="The ID of the user who initiated the run.")
+) AS
 WITH InvocationStarts AS (
   SELECT
     invocation_id,
