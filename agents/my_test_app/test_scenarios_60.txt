@@ -1,0 +1,60 @@
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Calculate the hourly average of 'agent_response_time_ms' for the 'sales_bot_agent' from yesterday.|Search for 'how to optimize GPU usage for training large neural networks'.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Using config `NORMAL`, compare and contrast supervised and unsupervised learning.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Find recent research papers on explainable AI (XAI) in healthcare.
+VALID_ALL|gemini-2.5-flash|WRONG_MAX_TOKENS|us-central1|Test `WRONG_MAX_TOKENS` by asking for a complete biography of Marie Curie.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Retrieve 'customer_ID_0_contact_info', 'customer_ID_0_subscription_status', 'customer_ID_0_support_tickets_summary'.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Describe a system for anomaly detection in agent behavior based on observability data.
+VALID_ALL|gemini-2.5-flash|OVER_PROVISIONED|us-central1|Using `OVER_PROVISIONED`, draft a formal business proposal for a new AI consulting service.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the considerations for building a production-ready ADK application?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Simulate a transient database connection failure for 'user_preferences_db' with `user_id_007_index_0`.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Find recent news about 'quantum machine learning'; then determine if current ADK tools support 'quantum computing SDK integration'.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Describe how to set up a scheduled query in BigQuery to monitor agent performance daily.|What are the benefits and drawbacks of using fine-tuning versus prompt engineering for LLMs?
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What open-source tools are available for automated data labeling?
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|How can observability data help in prompt engineering iteration cycles?
+NOK_ADK_DATASTORE|gemini-2.5-flash|HIGH_TEMP|us-central1|Explain how to secure sensitive information, like API keys, within an ADK deployment.|What specific components of ADK facilitate multi-turn dialogue management?
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the challenges of achieving true artificial general intelligence (AGI)?
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Retrieve 'city_weather_forecast_0', 'city_traffic_updates_0', 'city_public_transport_schedule_0'.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|How can I define and manage multiple environments (dev, prod) within an ADK project?
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|If BigQuery reveals a spike in 'agent_timeout_errors' for 'tool_A', check ADK documentation for 'tool_A error handling' and suggest mitigation steps.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Generate an executive summary of a financial report using `WRONG_CANDIDATES` config.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Query BigQuery for 'agent_performance_metrics_Q1_2024'; if 'average_latency' is above target, use the unreliable tool to 'stress_test_backend_service_index_0'.
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|Simultaneously lookup 'user_profile_data_0', 'product_catalog_0', 'pricing_rules_0'; then use `NORMAL` config to generate a personalized product offer.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|How do I determine the total number of distinct errors reported by 'customer_support_agent' over the last year?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Lookup 'software_release_0_features', 'software_release_0_bug_fixes'.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Explain the process of ADK agent versioning and rollbacks.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Describe how to implement a feedback mechanism for agent evaluation using observability data.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Using `HIGH_TEMP`, compose a haiku about a bustling cityscape at dawn.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|How can observability tools help in identifying bias in AI agent responses?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Simulate 'intermittent_network_drop' for 'realtime_sensor_data' feed `sensor_stream_ID_1_index_0`.
+NOK_OBS_DATASTORE|gemini-2.5-pro|NORMAL|us-central1|Explain the process of setting up alerts for unexpected token consumption by an agent.|What open standards exist for AI observability data exchange?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Retrieve 'book_ID_0_summary', 'book_ID_0_author_bio', 'book_ID_0_genre_classification'.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Search for 'future trends in natural language understanding and generation'.
+VALID_ALL|gemini-3.1-pro-preview|WRONG_CANDIDATES|global|Generate three unique marketing taglines for a sustainable fashion brand using `WRONG_CANDIDATES`.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the best practices for structuring prompts and responses in ADK?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Find documentation for the latest version of the scikit-learn library.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|How to identify the most common sequence of tool calls for 'troubleshooting_agent'?
+NOK_ADK_DATASTORE|gemini-2.5-pro|OVER_PROVISIONED|us-central1|How do you define input and output schemas for tools in ADK?|What specific components of ADK facilitate multi-turn dialogue management?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Describe how ADK supports different large language models as backends.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Describe how to visualize the flow of data between components in an AI system using tracing.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Query the `agent_health_check` table to find all agents with a 'status' of 'degraded' in the last 6 hours.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What is the role of an 'action' in the ADK framework and how is it defined?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Test 'erroneous_model_inference' for 'fraud_detection_model' with input `transaction_ID_54321_index_0`.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|How can I integrate ADK agents with a CI/CD pipeline for automated deployment?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Find the 95th percentile of token usage for successful 'search_tool_calls' in the `agent_events_2023_Q4` table.
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|Using config `NORMAL`, explain the concept of quantum entanglement to a high school student.
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|Find current news about the impact of generative AI on creative industries.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What specific metrics should be prioritized for a financially sensitive AI agent?
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Simultaneously fetch 'market_data_stock_X', 'market_data_stock_Y', 'market_news_sentiment'.
+VALID_ALL|gemini-2.5-pro|HIGH_TEMP|us-central1|Using `HIGH_TEMP`, invent a new musical instrument and describe its sound.
+NOK_ADK_DATASTORE|gemini-3.1-pro-preview|NORMAL|global|How to configure ADK agents for high availability and fault tolerance?|Clarify the usage of `vertex_ai_search_tool` within an ADK project context.
+VALID_ALL|gemini-3-pro-preview|NORMAL|global|Write a query to identify potential data drift by comparing 'input_length' distributions in `agent_inputs_current` vs `agent_inputs_last_month`.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Describe the process of setting up end-to-end tracing for a multi-agent system.
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|What are the challenges of real-time monitoring for high-throughput AI agents?
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Retrieve 'device_ID_0_telemetry_data', 'device_ID_0_firmware_version', 'device_ID_0_maintenance_log'.
+VALID_ALL|gemini-3-pro-preview|WRONG_MAX_TOKENS|global|Test `WRONG_MAX_TOKENS` by asking for a detailed technical specification of a new smartphone.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Simulate a 'cpu_spike_on_tool_execution' for 'complex_calculator_index_0'.
+NOK_OBS_DATASTORE|gemini-3-pro-preview|NORMAL|global|What security implications arise when collecting detailed observability data for AI agents?|How can AI observability aid in debugging an agent that frequently enters a loop?
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the privacy concerns associated with large language model deployment?
+VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|What are the key differences between logs, metrics, and traces in AI observability?
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Find articles discussing the impact of AI on the future of software development.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What steps are involved in migrating an existing LangChain agent to ADK?
