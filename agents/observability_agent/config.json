@@ -1,6 +1,6 @@
 {
     "config": {
-        "time_period": "7d",
+        "time_period": "all",
         "playbook": "overview",
         "kpis": {
           "end_to_end": {

@@ -266,6 +266,7 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
     | **Time Range** | `<time_range>` |
     | **Datastore ID** | `{datastore_id}` |
     | **Table ID** | `{table_id}` |
+    | **Trace ID** | `{trace_id}` |
     | **Generated** | `<timestamp> UTC` |
     | **Agent Version** | `{agent_version}` |
     ```
@@ -279,63 +280,58 @@ You are the **Report Creator Agent**. Your sole responsibility is to take the ra
 *   Write a clear, high-level narrative summary of the system's status.
 *   Highlight any critical latency or error rate breaches.
 
----
-
 ## Performance
-This section provides a high-level scorecard for End to End, Sub Agent, Tool, and LLM levels, assessing compliance against defined Service Level Objectives (SLOs).
 
 ### End to End
-*   **Explanation:** This shows user-facing performance from start to end of an invocation, which is critical for user satisfaction.
-*   **Table:** `Overall KPI Status (Root Agents)`
-    *   **Columns:** `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Input Tok (Avg/P95) | Output Tok (Avg/P95) | Thought Tok (Avg/P95) | Tokens Consumed (Avg/P95) | Overall |`
-*   **MANDATORY VISUALIZATION:** Under the table, include **TWO Mermaid Pie Charts** (Latency Status & Error Status).
-    *   **Syntax:** Use standard markdown code blocks with `mermaid` language.
-    *   **Style:** SUMMARY (Status Based).
-    *   **Slices:** `"Exceeded"` and `"OK"`.
-    *   **Values:** Use the **Total Requests** count for the slice values.
-        *   Example: If Status is 🔴 and Requests is 249, use `"Exceeded" : 249`.
-    *   **Dynamic Colors:**
-        *   If the data contains BOTH `🔴` and `🟢`: Use `%%{{init: {{"theme": "base", "themeVariables": {{ "pie1": "#ef4444", "pie2": "#22c55e" }} }} }}%%` AND ensure `🔴` (Exceeded) is the FIRST data point.
-        *   If the data contains ONLY `🔴`: Use `%%{{init: {{"theme": "base", "themeVariables": {{ "pie1": "#ef4444" }} }} }}%%`.
-        *   If the data contains ONLY `🟢`: Use `%%{{init: {{"theme": "base", "themeVariables": {{ "pie1": "#22c55e" }} }} }}%%`.
-    *   **Labels:** Labels must be EXACTLY `"Exceeded"` or `"OK"`.
+*   **Explanation:** Add a sentence explaining this shows user-facing performance from start to end of an invocation.
+*   **Table:** `Overall KPI Status (Root Agents)` (Use the standardized columns above, populated with root agent data).
+    *   **NOTE for 'latest' playbook:** If `playbook="latest"`, you must still generate these tables using the single-trace data provided in the findings. Treat the single trace's latency/error status as the "P{Level}" and "Mean" values.
+    `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Input Tok (Avg/P95) | Output Tok (Avg/P95) | Thought Tok (Avg/P95) | Tokens Consumed (Avg/P95) | Overall |`
+*   **Status Logic**:
+    *   **P{Level} (s)**: The *measured* latency at the target percentile.
+    *   **Target (s)**: The max allowed latency at that percentile.
+    *   **Status**: Latency Status 🟢 if P{Level} <= Lat Tgt, else 🔴.
+    *   **Err %**: The measured error rate percentage.
+    *   **Target (%)**: The max allowed error rate ({error_target}%).
+    *   **Status**: Error Status 🟢 if Err % <= Err Tgt %, else 🔴.
+    *   **Overall**: 🔴 if ANY status is 🔴, else 🟢.
+*   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+    *   **Chart 1 (Latency):** `pie title Latency (Root Agents)`
+    *   **Chart 2 (Error):** `pie title Error (Root Agents)`
+    *   **Dynamic Colors:** You MUST construct a Mermaid `%%{{init: ...}}%%` directive.
+    *   **CRITICAL SYNTAX RULE:** The `%%{{init: ...}}%%` line MUST be the **FIRST LINE INSIDE** the mermaid code block, immediately after ` ```mermaid `. Do NOT place it outside.
+    *   **Color Logic:** To visually distinguish pie slices, you MUST generate **different variations** of green color hex codes (e.g., `#22c55e`, `#22c95e`, `#22c51e`) for "OK" slices and different variations of red color hex codes (e.g., `#ef4444`, `#ef4904`, `#ef4484`) for "Exceeded" slices. The variables `pie1`, `pie2`, etc., map sequentially to the rows in the pie chart.
 
-### Agent Level
-*   **Explanation:** This section details the performance of internal delegate agents called by the root agent.
-*   **Table:** `KPI Compliance Per Agent` (Use standard columns).
-*   **MANDATORY VISUALIZATION:** Two Mermaid Pie Charts (Latency & Error).
-    *   **Style:** DETAILED (Per Entity).
-    *   **Slices:** One slice PER AGENT.
-    *   **Values:** Use the `Requests` count for the slice value.
-    *   **Labels:** `"<Agent Name> (<Status>)"` e.g., `"bigquery_agent (Exceeded)"`.
-    *   **Colors Check:** You MUST Construct `themeVariables` such that `pie1` color matches Slice 1 status, `pie2` matches Slice 2, etc. match the order of slices.
-        *   Red for Exceeded/Negative.
-        *   Green for OK/Positive.
+### Agent level
+*   **Explanation:** Detail the performance of internal delegate agents called by the root agent.
+*   **Table:** `KPI Compliance Per Agent` (Use the standardized columns above).
+*   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+    *   **Chart 1 (Latency):** `pie title Sub Agent Latency (P{Level})`
+    *   **Chart 2 (Error):** `pie title Sub Agent Error ({error_target}%)`
+    *   **Requirement:** Append " (OK)" or " (Exceeded)" to the agent names based on status. Use full agent names.
+    *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
+    *   **CRITICAL SYNTAX RULE:** The `%%{{init: ...}}%%` line MUST be the **FIRST LINE INSIDE** the mermaid code block.
 
 ### Tool Level
-*   **Explanation:** This section breaks down the performance of each tool called by agents.
-*   **Table:** `KPI Compliance Per Tool`.
-    *   **Columns:** `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Overall |`
-    *   **Note:** Omit token columns for tools.
-*   **MANDATORY VISUALIZATION:** Two Mermaid Pie Charts (Latency & Error).
-    *   **Style:** DETAILED (Per Entity).
-    *   **Slices:** One slice PER TOOL.
-    *   **Values:** Use the `Requests` count for the slice value.
-    *   **Labels:** `"<Tool Name> (<Status>)"`.
-    *   **Colors:** Match `pieN` to Slice N status. `pie1`=Slice1Color.
+*   **Explanation:** Break down the performance of each individual tool called by agents.
+*   **Table:** `KPI Compliance Per Tool`. You MUST strictly omit token columns for this table. Use this exact structure:
+    `| Name | Requests | % | Mean (s) | P{Level} (s) | Target (s) | Status | Err % | Target (%) | Status | Overall |`
+*   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+    *   **Chart 1 (Latency):** `pie title Tools Latency (P{Level})`
+    *   **Chart 2 (Error):** `pie title Tools Error Status ({error_target}%)`
+    *   **Requirement:** Append " (OK)" or " (Exceeded)" to the tool names.
+    *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
+    *   **CRITICAL SYNTAX RULE:** The `%%{{init: ...}}%%` line MUST be the **FIRST LINE INSIDE** the mermaid code block.
 
 ### Model Level
-*   **Explanation:** This section isolates valid LLM inference time from agent overhead and breaks down the performance of each LLM.
-*   **Table:** `KPI Compliance Per Model` (Use standard columns).
-    *   **Note:** Omit token columns for tools.
-*   **MANDATORY VISUALIZATION:** Two Mermaid Pie Charts (Latency & Error).
-    *   **Style:** DETAILED (Per Entity).
-    *   **Slices:** One slice PER MODEL.
-    *   **Values:** Use the `Requests` count for the slice value.
-    *   **Labels:** `"<Model Name> (<Status>)"`.
-    *   **Colors:** Match `pieN` to Slice N status. `pie1`=Slice1Color.
-
----
+*   **Explanation:** This section isolates the performance of the underlying Large Language Models, excluding agent and tool overhead.
+*   **Table:** `KPI Compliance Per Model` (Use the standardized columns above).
+*   **MANDATORY VISUALIZATION**: Under the table, include **TWO Mermaid Pie Charts**:
+    *   **Chart 1 (Latency):** `pie title Model Latency Status (P{Level})`
+    *   **Chart 2 (Error):** `pie title Model Error Status ({error_target}%)`
+    *   **Requirement:** Use the P{Level} value for the slices (e.g. "gemini-1.5-pro: 12.3s"). Append " (OK)" or " (Exceeded)" to the model names.
+    *   **Dynamic Colors:** You MUST use the varying green/red hex code technique described above.
+    *   **CRITICAL SYNTAX RULE:** The `%%{{init: ...}}%%` line MUST be the **FIRST LINE INSIDE** the mermaid code block.
 
 ## Agent Composition
 
@@ -406,15 +402,6 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
     *   Else: "Weak"
 *   **Formatting:** Round correlations to 3 decimal places.
 
----
-
-## Root Cause Insights
-*   **Focus:** Synthesize the "Root Cause Analysis" findings.
-*   **Structure:**
-    *   Use bullet points to list specific failures.
-    *   **Red Flags:** Explicitly highlight any component with > 0% Error Rate as a **🔴 Red Flag**.
-    *   **Trace Analysis:** If provided, include details of the slowest trace (Trace ID, Span ID, Reason).
-    *   **Context:** Explain *why* a bottleneck occurred (e.g., "High token count generated by model").
 ---
 
 ## System Bottlenecks & Impact
@@ -508,8 +495,9 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
             *   Slice 1: `Agent A (Exceeded)` -> `pie1`=#ef4444
             *   Slice 2: `Agent B (OK)` -> `pie2`=#22c55e
             *   Slice 3: `Agent C (Exceeded)` -> `pie3`=#ef4484
-            *   Theme: `%%{{init: {{"theme": "base", "themeVariables": {{ "pie1": "#ef4444", "pie2": "#22c55e", "pie3": "#ef4484" }} }} }}%%`
+            *   Theme: `%%{{init: {{ "pie": {{ "textPosition": 0.5 }}, "theme": "base", "themeVariables": {{ "pie1": "#ef4444", "pie2": "#22c55e", "pie3": "#ef4484" }} }} }}%%`
     *   **Theme Variables:** You MUST construct the `themeVariables` JSON to match this logic.
         *   Example (1 Bad, 2 Good): `pie1`=#ef4444, `pie2`=#22c55e, `pie3`=#15803d.
         *   Example (3 Bad): `pie1`=#ef4444, `pie2`=#b91c1c, `pie3`=#991b1b.
+    *   **PLACEMENT:** ALWAYS place the `%%{{init...}}%%` line **INSIDE** the triple backticks, as the very first line of the code block.
 """

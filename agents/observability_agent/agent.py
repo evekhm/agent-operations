@@ -31,7 +31,7 @@ from google.adk.models.google_llm import Gemini
 from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
-    # detect_sequential_bottlenecks
+    detect_sequential_bottlenecks
 )
 from .agent_tools.analytics.latency import (
     get_active_metadata,
@@ -76,7 +76,7 @@ analyst_tools = [
     batch_analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
-    # detect_sequential_bottlenecks,
+    detect_sequential_bottlenecks,
     run_sql_query,
     get_llm_impact_analysis,
     get_tool_impact_analysis,
@@ -133,31 +133,8 @@ playbook_swarm = ParallelAgent(
     description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
-def aggregate_parallel_results(agent: Agent, context: ToolContext, *args, **kwargs):
-    """
-    Callback to aggregate the results of the parallel swarm into a single string
-    that the Report Creator can consume.
-    """
-    session = context.session
-    # ParallelAgent results are typically stored in the session state under the agent's name
-    # The structure is usually a list of results from sub-agents.
-
-    # Check if we have results in the standard location
-    swarm_results = session.state.get(agent.name, {}).get("result", [])
-
-    if not swarm_results:
-        # Fallback: check if they are in individual keys (less likely for ParallelAgent but good safety)
-        pass
-
-    # Merge them into a single string
-    merged_findings = "\n\n".join([str(res) for res in swarm_results if res])
-
-    # Store in the key expected by the prompt
-    session.state["playbook_findings"] = merged_findings
-    print(f"DEBUG: Aggregated {len(swarm_results)} findings into 'playbook_findings' ({len(merged_findings)} chars).")
-
-# Attach the callback
-playbook_swarm.after_agent_callback = aggregate_parallel_results
+# Callback removed as it caused signature mismatch errors and incorrectly aggregated findings into 'agent_findings'.
+# Sub-agents write to their respective output keys (invocation_findings, agent_findings, llm_findings, tool_findings) directly.
 
 def ensure_analyst_findings(context: ToolContext) -> str:
     """Ensures that all analyst findings keys exist in session state to prevent Report Creator crash."""
@@ -332,6 +309,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         project_id=PROJECT_ID,
         datastore_id=DATASET_ID,
         table_id=TABLE_ID,
+        trace_id="N/A",
         Level=str(kpi_percentile),
         error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
     )
