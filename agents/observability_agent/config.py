@@ -48,7 +48,7 @@ COMMON_COLUMNS = ["trace_id", "span_id", "session_id", "duration_ms", "agent_nam
 TOOL_SPECIFIC_COLUMNS = ["tool_name", "tool_args", "tool_result", "parent_span_id"]
 LLM_SPECIFIC_COLUMNS = ["model_name", "prompt_token_count", "candidates_token_count", "total_token_count",
                         "thoughts_token_count", "time_to_first_token_ms", "full_request",
-                        "full_response", "llm_config", "parent_span_id"]
+                        "full_response", "llm_config", "parent_span_id", "response_text"]
 
 AGENT_SPECIFIC_COLUMNS = ["instruction", "parent_span_id"]
 INVOCATION_SPECIFIC_COLUMNS = ["content_text", "content_text_summary", "invocation_id"]

@@ -40,14 +40,9 @@ from .agent_tools.analytics.latency import (
     get_agent_requests,
     get_tool_requests,
     get_invocation_requests,
-
-    get_latest_queries,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_latency_trend,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance
 )
 from .agent_tools.analytics.sql import run_sql_query
@@ -74,16 +69,12 @@ analyst_tools = [
     get_agent_requests,
     get_tool_requests,
     get_invocation_requests,
-    get_latest_queries,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
     # detect_sequential_bottlenecks,
     run_sql_query,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance,
     analyze_empty_llm_responses
 ]

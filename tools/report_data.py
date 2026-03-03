@@ -179,7 +179,7 @@ class ReportDataManager:
         limit_error = self.presentation_num_errors
         
         task_e2e_slow = self.trace_task("E2ESlow", get_invocation_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
-        task_agent_slow = self.trace_task("AgentSlow", get_agent_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
+        task_agent_slow = self.trace_task("AgentSlow", get_agent_requests(limit=limit_slow, exclude_root_agent=True, time_range=self.time_range_desc, sort_by="slowest"))
         task_tool_slow = self.trace_task("ToolSlow", get_tool_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
         task_llm_slow = self.trace_task("LLMSlow", get_llm_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
         

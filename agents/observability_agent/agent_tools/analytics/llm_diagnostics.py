@@ -530,8 +530,8 @@ async def analyze_empty_llm_responses(
             T.model_name,
             T.agent_name,
             T.prompt_token_count,
-            T.duration_ms as duration_ms,
-            SUBSTR(CAST(I.content_text AS STRING), 1, 250) as user_message_trunk
+            T.duration_ms,
+            I.content_text_summary
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
         WHERE {where_clause}
@@ -551,7 +551,7 @@ async def analyze_empty_llm_responses(
                     "agent_name": row['agent_name'],
                     "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
                     "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0.0,
-                    "user_message": row['user_message_trunk'] if pd.notna(row['user_message_trunk']) else None
+                    "content_text_summary": row['content_text_summary'] if pd.notna(row['content_text_summary']) else None
                 })
 
         result = {

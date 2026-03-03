@@ -15,13 +15,11 @@ from .llm_diagnostics import (
     get_config_outliers
 )
 from .outliers import analyze_outlier_patterns
-from .traces import fetch_trace_spans
 
 __all__ = [
     "analyze_latency_grouped",
     "fetch_correlation_data",
     "analyze_outlier_patterns",
-    "fetch_trace_spans",
     "get_llm_requests",
     "get_agent_requests",
     "get_tool_requests",
