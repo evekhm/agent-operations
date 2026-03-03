@@ -32,8 +32,12 @@ from agents.observability_agent.agent_tools.analytics.llm_diagnostics import (
 from agents.observability_agent.agent_tools.analytics.correlation import fetch_correlation_data
 from agents.observability_agent.config import (
     AGENT_EVENTS_VIEW_ID,
-    INVOCATION_EVENTS_VIEW_ID
+    INVOCATION_EVENTS_VIEW_ID,
+    PROJECT_ID,
+    DATASET_ID
 )
+from agents.observability_agent.utils.common import build_standard_where_clause
+from agents.observability_agent.utils.bq import execute_bigquery
 
 # Load Environment from root
 load_dotenv(os.path.join(dir_path, "../.env"), override=True)
@@ -184,6 +188,62 @@ class ReportDataManager:
             logger.error(f"Failed to fetch raw LLM data: {e}")
             return pd.DataFrame()
 
+    async def fetch_raw_invocation_data(self, time_range: str = "24h", limit: int = 2000):
+        """Fetches raw E2E invocation event data from BigQuery."""
+        where_clause = build_standard_where_clause(time_range=time_range)
+        query = f"""
+        SELECT
+            root_agent_name as agent_name,
+            duration_ms,
+            timestamp
+        FROM `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS T
+        WHERE {where_clause}
+          AND duration_ms > 0
+        ORDER BY timestamp DESC
+        LIMIT {limit}
+        """
+        try:
+            df = await execute_bigquery(query)
+            if df.empty: return df
+            df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
+            if 'timestamp' in df.columns:
+                 df['timestamp'] = pd.to_datetime(df['timestamp'])
+            return df
+        except Exception as e:
+            logger.error(f"Failed to fetch raw invocation data: {e}")
+            return pd.DataFrame()
+
+    async def fetch_raw_agent_data(self, time_range: str = "24h", limit: int = 5000):
+        """Fetches raw Agent execution event data from BigQuery."""
+        where_clause = build_standard_where_clause(time_range=time_range)
+        query = f"""
+        WITH Agents AS (
+            SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS T WHERE {where_clause}
+        )
+        SELECT
+            A.span_id,
+            A.agent_name,
+            L.model_name,
+            A.duration_ms,
+            A.timestamp
+        FROM Agents AS A
+        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS L
+          ON A.trace_id = L.trace_id AND A.span_id = L.parent_span_id
+        WHERE A.duration_ms > 0
+          AND A.agent_name != A.root_agent_name
+        ORDER BY A.timestamp DESC
+        LIMIT {limit}
+        """
+        try:
+            df = await execute_bigquery(query)
+            if df.empty: return df
+            df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
+            if 'timestamp' in df.columns:
+                 df['timestamp'] = pd.to_datetime(df['timestamp'])
+            return df
+        except Exception as e:
+            logger.error(f"Failed to fetch raw agent data: {e}")
+            return pd.DataFrame()
 
     async def fetch_llm_bottlenecks_with_details(self, limit: int = 5):
         """Fetches LLM bottlenecks using fetch_slowest_requests tool."""
@@ -266,19 +326,21 @@ class ReportDataManager:
         
         task_correlation = self.trace_task("Correlation", fetch_correlation_data(time_range=self.time_range_desc, limit=2000))
         task_raw_llm = self.trace_task("RawLLM", self.fetch_raw_llm_data(time_range=self.time_range_desc))
+        task_raw_invocations = self.trace_task("RawInvocations", self.fetch_raw_invocation_data(time_range=self.time_range_desc))
+        task_raw_agents = self.trace_task("RawAgents", self.fetch_raw_agent_data(time_range=self.time_range_desc))
 
         results = await asyncio.gather(
             task_agents, task_roots, task_tools, task_models, task_agent_models_e2e, task_agent_models_llm,
             task_agent_slow, task_tool_slow, task_llm_slow,
             task_root_errors, task_agent_errors, task_tool_errors, task_llm_errors,
-            task_empty, task_correlation, task_raw_llm
+            task_empty, task_correlation, task_raw_llm, task_raw_invocations, task_raw_agents
         )
 
         (
             raw_agents, raw_roots, raw_tools, raw_models, raw_agent_models_e2e, raw_agent_models_llm,
             raw_agent_slow, raw_tool_slow, raw_llm_slow,
             df_root_errors, df_agent_errors, df_tool_errors, df_llm_errors,
-            raw_empty, raw_correlation, df_raw_llm_data
+            raw_empty, raw_correlation, df_raw_llm_data, df_raw_invocations, df_raw_agents
         ) = results
 
         # Process Results
@@ -340,6 +402,8 @@ class ReportDataManager:
 
         # Raw Data
         data['df_raw_llm'] = df_raw_llm_data
+        data['df_raw_invocations'] = df_raw_invocations
+        data['df_raw_agents'] = df_raw_agents
         data['empty_responses'] = json.loads(raw_empty) if isinstance(raw_empty, str) else raw_empty
         data['outliers'] = {} # Placeholder
 

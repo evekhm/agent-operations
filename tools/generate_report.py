@@ -106,6 +106,8 @@ class ReportGenerator:
         self.df_agent_models = self.df_agent_models_llm
         self.df_correlation = data.get('df_correlation', pd.DataFrame())
         self.df_raw_llm = data.get('df_raw_llm', pd.DataFrame())
+        self.df_raw_agents = data.get('df_raw_agents', pd.DataFrame())
+        self.df_raw_invocations = data.get('df_raw_invocations', pd.DataFrame())
         
         self.agent_bottlenecks = data.get('agent_bottlenecks', pd.DataFrame())
         self.tool_bottlenecks = data.get('tool_bottlenecks', pd.DataFrame())
@@ -172,11 +174,15 @@ class ReportGenerator:
     def add_image(self, title: str, image_path: str):
         if os.path.exists(image_path):
             rel_path = os.path.relpath(image_path, start=self.report_dir)
-            # Changed self.output_dir to self.report_dir to match existing code's context
-            # self.report_content.append(f"### {title}\n") # Title often redundant if image has title or section header
             # Add link to full resolution image
-            # [![Title](path)](path)
-            self.report_content.append(f"\n[![{title}]({rel_path})]({rel_path})\n")
+            
+            # The URL should point to the 4k resolution
+            image_4k_path = image_path.replace('.png', '_4K.png')
+            if os.path.exists(image_4k_path):
+                rel_4k_path = os.path.relpath(image_4k_path, start=self.report_dir)
+                self.report_content.append(f"\n[![{title}]({rel_path})]({rel_4k_path})\n")
+            else:
+                self.report_content.append(f"\n[![{title}]({rel_path})]({rel_path})\n")
 
 
 
@@ -485,8 +491,6 @@ class ReportGenerator:
                 size_col="Requests"
             )
         
-        self.report_content.append("\n---\n")
-
     def build_report(self):
         logger.info("   [BUILD] Starting build_report...")
         # --- Header ---
@@ -530,13 +534,11 @@ class ReportGenerator:
 
         # --- Performance ---
         self.add_section("Performance")
-        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("This section provides a high-level scorecard for End to End, Sub Agent, Tool, and LLM levels, assessing compliance against defined Service Level Objectives (SLOs).\n")
         self.report_content.append("\n---\n")
 
         # End to End (Roots)
         self.add_subsection("End to End")
-        self.report_content.append("\n(AI_SUMMARY: End to End)\n")
         self.report_content.append("This shows user-facing performance from start to end of an invocation.\n")
         if not self.df_roots.empty:
             target_lat = self.config.get("kpis", {}).get("end_to_end", {}).get("latency_target", 10.0)
@@ -557,14 +559,43 @@ class ReportGenerator:
             # Pie charts could go here
             self.report_content.append("\n")
 
-            # E2E Pie Charts
-            # Filter out "Root Agent" if it exists, as it's often an aggregate and not a specific agent
-            df_for_pie = std_table[std_table['Name'] != 'Root Agent']
-            if not df_for_pie.empty:
-                # 1. Latency Status
-                self._add_status_pie_chart(df_for_pie, f'P{target_p} (s)', target_lat, f"E2E Latency (P{target_p})", "e2e_latency_pie.png", size_col=f'P{target_p} (s)')
-                # 2. Error Status
-                self._add_status_pie_chart(df_for_pie, 'Err %', target_err, f"E2E Error ({target_err:.0f}%)", "e2e_error_pie.png", size_col='Requests')
+            # E2E Sequence Chart
+            try:
+                df_invocations = self.data.get('df_raw_invocations', pd.DataFrame())
+                if not df_invocations.empty and 'agent_name' in df_invocations.columns:
+                    self.report_content.append("### Root Agent E2E Execution Sequence\n")
+                    self.report_content.append("The following charts display the end-to-end execution latency for each top-level Root Agent over the course of the test run, plotted in the order the requests were received. This helps identify degradation in overall system performance over time.\n\n")
+                    
+                    for root_agent in df_invocations['agent_name'].unique():
+                        root_df = df_invocations[df_invocations['agent_name'] == root_agent]
+                        if root_df.empty: continue
+                        
+                        safe_name = str(root_agent).replace(' ', '_').replace('/', '_').lower()
+                        chart_filename = f'e2e_sequence_{safe_name}.png'
+                        chart_title = f"{root_agent} E2E Execution Latency (Request Order)"
+                        
+                        self.chart_gen.generate_sequence_plot(
+                            root_df, 'latency_seconds', chart_title, chart_filename
+                        )
+                        self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+                        
+            except Exception as e:
+                logger.error(f"Failed to generate E2E sequence plot: {e}")
+
+            # Detailed Latency Histogram (E2E)
+            try:
+                df_invocations = self.data.get('df_raw_invocations', pd.DataFrame()).copy()
+                if not df_invocations.empty and 'duration_ms' in df_invocations.columns:
+                    df_invocations['latency_seconds'] = df_invocations['duration_ms'] / 1000.0
+                    self.chart_gen.generate_histogram(
+                        df_invocations, 'latency_seconds', 
+                        'Detailed E2E Latency Histogram', 
+                        'latency_histogram.png',
+                        figsize=(10, 6)
+                    )
+                    self.add_image("Detailed E2E Latency Histogram", os.path.join(self.assets_dir, 'latency_histogram.png'))
+            except Exception as e:
+                logger.error(f"Failed to generate latency histogram: {e}")
 
         self.report_content.append("\n---\n")
 
@@ -578,6 +609,8 @@ class ReportGenerator:
             kpi_error_key="kpis.agent.error_target",
             include_usage_chart=True # Default, but explicit
         )
+        
+
 
         # --- Tool Level ---
         self._render_performance_section(
@@ -606,8 +639,7 @@ class ReportGenerator:
         self.report_content.append("\n---\n")
 
 
-        self.add_section("Agent Composition")
-        self.report_content.append("\n(AI_SUMMARY: Agent Composition)\n")
+        self.add_section("Agent Decomposition")
         
         self.add_subsection("Distribution")
         if isinstance(self.df_agents, pd.DataFrame) and not self.df_agents.empty:
@@ -631,6 +663,19 @@ class ReportGenerator:
              dist_series = dist_table.set_index('Name')['Requests']
              path = self.chart_gen.generate_pie_chart(dist_series, "Agent Composition", "agent_composition_pie.png", colors=None)
              if path: self.add_image("Agent Composition", path)
+
+             # Total LLM Calls per Agent (Stacked)
+             if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
+                 try:
+                     self.chart_gen.generate_stacked_bar(
+                         self.df_raw_llm.copy(), 'agent_name', 'None', 'model_name',
+                         'Total LLM Calls per Agent (Stacked by Model)',
+                         'agent_calls_stacked.png',
+                         figsize=(10, 6)
+                     )
+                     self.add_image("Total LLM Calls per Agent", os.path.join(self.assets_dir, 'agent_calls_stacked.png'))
+                 except Exception as e:
+                     logger.error(f"Failed to generate stacked bar: {e}")
 
         self.add_subsection("Model Traffic")
         if isinstance(self.df_agent_models, pd.DataFrame) and not self.df_agent_models.empty:
@@ -712,45 +757,56 @@ class ReportGenerator:
                  pivot_perf = am_df.pivot(index='agent_name', columns='model_name', values='perf_str').fillna("")
                  pivot_perf.index.name = "**Agent Name**"
                  pivot_perf.columns = [f"**{c}**" for c in pivot_perf.columns]
-                 self.report_content.append(self._bold_index(pivot_perf).to_markdown())
                  self.report_content.append("\n<br>\n")
              except Exception as e:
                  logger.error(f"Failed to build LLM Generation Performance pivot: {e}")
 
-        self.add_subsection("Latency Composition (TTFT vs Generation)")
-        if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty and 'ttft_seconds' in self.df_raw_llm.columns:
+        self.add_subsection("Agent Overhead Analysis")
+        self.report_content.append("This chart visualizes the time spent actively generating LLM responses versus the time spent on agent internal overhead (processing, tool execution, networking).\n")
+        
+        if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty and hasattr(self, 'df_raw_agents') and not self.df_raw_agents.empty:
             try:
-                # Group by Agent, calc mean TTFT and Generation Time (Total - TTFT)
-                # Filter to top 7 agents by count
-                top_agents = self.df_raw_llm['agent_name'].value_counts().head(7).index
+                # Calculate mean LLM duration per agent
+                llm_agg = self.df_raw_llm.groupby('agent_name')['latency_seconds'].mean().reset_index()
+                llm_agg.rename(columns={'latency_seconds': 'pure_llm_sec'}, inplace=True)
                 
-                lat_comp = self.df_raw_llm[self.df_raw_llm['agent_name'].isin(top_agents)].copy()
+                # Calculate mean Agent duration per agent
+                agent_agg = self.df_raw_agents.groupby('agent_name')['latency_seconds'].mean().reset_index()
+                agent_agg.rename(columns={'latency_seconds': 'total_agent_sec'}, inplace=True)
                 
-                # Sanity check: Ensure ttft <= latency
-                lat_comp['ttft_seconds'] = lat_comp[['ttft_seconds', 'latency_seconds']].min(axis=1) # Cap TTFT at Total Latency
-                lat_comp['gen_seconds'] = lat_comp['latency_seconds'] - lat_comp['ttft_seconds']
+                # Merge and calculate overhead
+                overhead_df = pd.merge(agent_agg, llm_agg, on='agent_name', how='inner')
+                overhead_df['overhead_sec'] = overhead_df['total_agent_sec'] - overhead_df['pure_llm_sec']
+                overhead_df['overhead_sec'] = overhead_df['overhead_sec'].clip(lower=0) # Handle async anomalies where LLM > Agent
                 
-                # Aggregation
-                agg_df = lat_comp.groupby('agent_name')[['ttft_seconds', 'gen_seconds']].mean().reset_index()
-                agg_df['total'] = agg_df['ttft_seconds'] + agg_df['gen_seconds']
-                agg_df = agg_df.sort_values('total', ascending=False)
+                # Sort by total for display
+                overhead_df = overhead_df.sort_values('total_agent_sec', ascending=False).head(10)
+                overhead_df['agent_name'] = overhead_df['agent_name'].astype(str)
                 
-                # Clean names
-                agg_df['agent_name'] = agg_df['agent_name'].astype(str)
+                # Report Agent Overhead as a Markdown Table
+                table_df = overhead_df.copy()
+                table_df.columns = ['Agent Name', 'Total Agent Latency (s)', 'Pure LLM Latency (s)', 'Agent Overhead (s)']
+                for col in ['Total Agent Latency (s)', 'Pure LLM Latency (s)', 'Agent Overhead (s)']:
+                    table_df[col] = table_df[col].round(3).astype(str) + "s"
+                table_df = table_df.rename(columns=lambda x: f"**{x}**")
+                table_df['**Agent Name**'] = "**" + table_df['**Agent Name**'].astype(str) + "**"
+                self.report_content.append("#### Overhead Data Summary\n")
+                self.report_content.append(table_df.to_markdown(index=False))
+                self.report_content.append("\n<br>\n")
                 
                 path = self.chart_gen.generate_stacked_bar_chart(
-                    agg_df, 
+                    overhead_df, 
                     x_col='agent_name', 
-                    y_cols=['ttft_seconds', 'gen_seconds'], 
-                    title="Avg Latency Composition (Top Agents)", 
-                    filename="latency_composition.png",
-                    colors=['#ffcc99', '#66b3ff'] # Light Orange (TTFT), Light Blue (Gen) or similar
+                    y_cols=['pure_llm_sec', 'overhead_sec'], 
+                    title="Agent Overhead vs Pure LLM Latency", 
+                    filename="agent_overhead_composition.png",
+                    colors=['#66b3ff', '#ff9999'] # Light Blue (LLM), Light Red (Overhead)
                 )
-                self.add_image("Latency Composition", path)
-                self.report_content.append(" Breakdown of **Time to First Token (TTFT)** vs **Generation Time**. High TTFT suggests network/queuing issues or large prompts. High Generation Time suggests complex output or slow model decoding.\n")
+                if path:
+                    self.add_image("Agent Overhead Comparison", path)
                 
             except Exception as e:
-                logger.error(f"Failed to generate Latency Composition chart: {e}")
+                logger.error(f"Failed to generate Agent Overhead chart: {e}")
 
         self.report_content.append("\n---\n")
 
@@ -820,9 +876,9 @@ class ReportGenerator:
                                 metrics_data["Correlation Strength"][m] = "N/A"
                             else:
                                 abs_corr = abs(primary_corr)
-                                if abs_corr >= 0.7:
+                                if abs_corr >= 0.85:
                                     metrics_data["Correlation Strength"][m] = "🟧 **Strong**"
-                                elif abs_corr >= 0.4:
+                                elif abs_corr >= 0.5:
                                     metrics_data["Correlation Strength"][m] = "🟨 **Moderate**"
                                 else:
                                     metrics_data["Correlation Strength"][m] = "🟦 **Weak**"
@@ -845,10 +901,50 @@ class ReportGenerator:
                 self.report_content.append("\n<br>\n")
         self.report_content.append("<br>")
 
+        # Agent Level Sequence Charts moved to Agent Decomposition
+        try:
+            df_agents = self.df_raw_agents
+            if not df_agents.empty and 'agent_name' in df_agents.columns and 'model_name' in df_agents.columns:
+                
+                self.add_subsection("Agent Execution Latency (Request Order)")
+                self.report_content.append("The following charts display the end-to-end latency for each specific Agent over time, highlighting performance trends and potential internal degradation.\n\n")
+                
+                # Per Agent Overall
+                for agent in df_agents['agent_name'].unique():
+                    agent_df = df_agents[df_agents['agent_name'] == agent]
+                    if agent_df.empty: continue
+                    safe_name = str(agent).replace(' ', '_').replace('/', '_').lower()
+                    chart_filename = f'seq_agent_overall_{safe_name}.png'
+                    chart_title = f"{agent} Execution Latency Sequence (Request Order)"
+                    self.chart_gen.generate_sequence_plot(
+                        agent_df, 'latency_seconds', chart_title, chart_filename
+                    )
+                    self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+                
+                self.add_subsection("Agent Execution Latency By Model")
+                self.report_content.append("These charts breakdown the Agent execution sequences further by the underlying LLM model used for that request. This helps isolate whether an Agent's latency spike is tied to a specific model's degradation.\n\n")
+
+                # Per Agent Per Model
+                for agent in df_agents['agent_name'].unique():
+                    agent_df = df_agents[df_agents['agent_name'] == agent]
+                    for model in agent_df['model_name'].unique():
+                        am_df = agent_df[agent_df['model_name'] == model]
+                        if am_df.empty: continue
+                        safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
+                        safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                        chart_filename = f'seq_agent_model_{safe_a}_{safe_m}.png'
+                        chart_title = f"{agent} via {model} Latency Sequence"
+                        self.chart_gen.generate_sequence_plot(
+                            am_df, 'latency_seconds', chart_title, chart_filename
+                        )
+                        self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+
+        except Exception as e:
+            logger.error(f"Failed to generate Agent sequence plots: {e}")
+
         self.report_content.append("\n---\n")
 
         self.add_section("Model Composition")
-        self.report_content.append("\n(AI_SUMMARY: Model Composition)\n")
         
         self.add_subsection("Distribution")
         if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
@@ -864,6 +960,35 @@ class ReportGenerator:
              usage_series = self.df_models.set_index('model_name')['total_count']
              path = self.chart_gen.generate_pie_chart(usage_series, "", "model_usage_pie.png", colors=None)
              if path: self.add_image("Model Usage", path)
+
+             # Latency Distribution by Category
+             if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
+                 try:
+                     df_cat = self.df_raw_llm.copy()
+                     df_cat['latency_seconds'] = df_cat['duration_ms'] / 1000.0
+                     def categorize_latency(latency):
+                         if latency < 1.0: return 'Very Fast (< 1s)'
+                         elif latency < 2.0: return 'Fast (1-2s)'
+                         elif latency < 3.0: return 'Medium (2-3s)'
+                         elif latency < 5.0: return 'Slow (3-5s)'
+                         elif latency < 8.0: return 'Very Slow (5-8s)'
+                         else: return 'Outliers (8s+)'
+
+                     df_cat['latency_category'] = df_cat['latency_seconds'].apply(categorize_latency)
+                     category_order = ['Very Fast (< 1s)', 'Fast (1-2s)', 'Medium (2-3s)', 'Slow (3-5s)', 'Very Slow (5-8s)', 'Outliers (8s+)']
+                     colors = ['#77DD77', '#A0E57D', '#FDFD96', '#FFB347', '#FF6961', '#E5aeae']
+
+                     self.chart_gen.generate_category_bar(
+                         df_cat, 'latency_category',
+                         'Latency Distribution by Category',
+                         'latency_category_dist.png',
+                         order=category_order,
+                         colors=colors,
+                         figsize=(10, 6)
+                     )
+                     self.add_image("Latency Distribution by Category", os.path.join(self.assets_dir, 'latency_category_dist.png'))
+                 except Exception as e:
+                     logger.error(f"Failed to generate latency category distribution: {e}")
 
         self.add_subsection("Model Performance")
         if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
@@ -924,6 +1049,26 @@ class ReportGenerator:
             stats_df.index.name = "**Metric**"
             self.report_content.append(stats_df.to_markdown())
             self.report_content.append("\n<br>\n")
+
+        # Model Level Sequence Charts
+        try:
+            df_llm = self.df_raw_llm
+            if not df_llm.empty and 'model_name' in df_llm.columns:
+                self.report_content.append("\n### Model Latency Sequences\n")
+                self.report_content.append("The following charts display the pure LLM execution latency (excluding agent overhead) for each generated response throughout the test run.\n\n")
+
+                for model in df_llm['model_name'].unique():
+                    model_df = df_llm[df_llm['model_name'] == model]
+                    if model_df.empty: continue
+                    safe_name = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                    chart_filename = f'seq_model_{safe_name}.png'
+                    chart_title = f"{model} LLM Latency Sequence (Request Order)"
+                    self.chart_gen.generate_sequence_plot(
+                        model_df, 'latency_seconds', chart_title, chart_filename
+                    )
+                    self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+        except Exception as e:
+            logger.error(f"Failed to generate Model sequence plots: {e}")
 
         self.add_subsection("Token Statistics")
         if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
@@ -1006,8 +1151,8 @@ class ReportGenerator:
                      row_strength[model] = "N/A"
                  else:
                      abs_v = abs(val_for_strength)
-                     if abs_v > 0.7: s_str = "🟧 **Strong**"
-                     elif abs_v > 0.3: s_str = "🟨 **Moderate**"
+                     if abs_v > 0.85: s_str = "🟧 **Strong**"
+                     elif abs_v > 0.5: s_str = "🟨 **Moderate**"
                      else: s_str = "⬜ **Weak**"
                      row_strength[model] = s_str
 
@@ -1105,27 +1250,65 @@ class ReportGenerator:
             # Latency (ms) to seconds for better readability
             self.df_correlation['duration_s'] = self.df_correlation['duration_ms'] / 1000.0
             
-            # Scatter Plot: Latency vs Input Tokens
-            scatter_path = self.chart_gen.generate_scatter_plot(
-                self.df_correlation, 
-                x_col='input_token_count', 
-                y_col='duration_s', 
-                hue_col='model_name', 
-                title='Latency vs Input Tokens by Model', 
-                filename='latency_vs_input_tokens.png'
-            )
-            self.add_image("Latency vs Input Tokens", scatter_path)
-            
-            # Scatter Plot: Latency vs Output Tokens
-            scatter_path_out = self.chart_gen.generate_scatter_plot(
-                self.df_correlation, 
-                x_col='output_token_count', 
-                y_col='duration_s', 
-                hue_col='model_name', 
-                title='Latency vs Output Tokens by Model', 
-                filename='latency_vs_output_tokens.png'
-            )
-            self.add_image("Latency vs Output Tokens", scatter_path_out)
+
+
+            # --- Advanced Token Tracking Charts ---
+            if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
+                df_llm = self.df_raw_llm.copy()
+                df_llm['latency_seconds'] = df_llm['duration_ms'] / 1000.0
+                df_llm['input_tokens'] = df_llm['prompt_token_count'].fillna(0) if 'prompt_token_count' in df_llm.columns else 0
+                df_llm['output_tokens'] = df_llm['candidates_token_count'].fillna(0) if 'candidates_token_count' in df_llm.columns else 0
+                df_llm['thought_tokens'] = df_llm['thoughts_token_count'].fillna(0) if 'thoughts_token_count' in df_llm.columns else 0
+                
+                # Filter out pure errors with no tokens mapping?
+                if 'output_tokens' in df_llm.columns:
+                    df_llm = df_llm[df_llm['output_tokens'] > 0]
+                
+                # 4. Latency vs Output Token Count (Linear)
+                try:
+                    self.chart_gen.generate_scatter_with_trend(
+                        df_llm, 'output_tokens', 'latency_seconds', 'input_tokens',
+                        'Latency vs Output Token Count (Linear)',
+                        'latency_vs_output_linear.png',
+                        scale='linear'
+                    )
+                    self.add_image("Latency vs Output Token Count (Linear)", os.path.join(self.assets_dir, 'latency_vs_output_linear.png'))
+                except Exception as e:
+                    logger.error(f"Failed to generate linear scatter: {e}")
+
+                # 5. Latency vs Output Token Count (Log)
+                try:
+                    self.chart_gen.generate_scatter_with_trend(
+                        df_llm, 'output_tokens', 'latency_seconds', 'input_tokens',
+                        'Latency vs Output Token Count (Log Scale)',
+                        'latency_vs_output_log.png',
+                        scale='log'
+                    )
+                    self.add_image("Latency vs Output Token Count (Log)", os.path.join(self.assets_dir, 'latency_vs_output_log.png'))
+                except Exception as e:
+                    logger.error(f"Failed to generate log scatter: {e}")
+
+                # 6. Latency vs Output + Thought Tokens
+                try:
+                    # Check if thought_tokens has data, otherwise just use output
+                    if df_llm['thought_tokens'].sum() > 0:
+                        df_llm['total_generated_tokens'] = df_llm['output_tokens'] + df_llm['thought_tokens']
+                        title_suffix = "(Output + Thought)"
+                        x_col = 'total_generated_tokens'
+                    else:
+                        df_llm['total_generated_tokens'] = df_llm['output_tokens']
+                        title_suffix = "(Output Only - No Thoughts)"
+                        x_col = 'output_tokens'
+                        
+                    self.chart_gen.generate_scatter_with_trend(
+                        df_llm, x_col, 'latency_seconds', 'input_tokens',
+                        f'Latency vs Generated Tokens {title_suffix}',
+                        'latency_vs_generated_tokens.png',
+                        scale='linear'
+                    )
+                    self.add_image(f"Latency vs Generated Tokens {title_suffix}", os.path.join(self.assets_dir, 'latency_vs_generated_tokens.png'))
+                except Exception as e:
+                    logger.error(f"Failed to generate token scatter: {e}")
         else:
             self.report_content.append("No data available for correlation analysis.\n")
 
@@ -1141,7 +1324,6 @@ class ReportGenerator:
 
         # --- System Bottlenecks ---
         self.add_section("System Bottlenecks & Impact")
-        self.report_content.append("\n(AI_SUMMARY: System Bottlenecks & Impact)\n")
         self.add_subsection("Top Bottlenecks")
         
         # Helper to format Top Bottlenecks
@@ -1465,11 +1647,8 @@ class ReportGenerator:
              self.report_content.append(self._bold_first_column(df_final).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
 
-        self.report_content.append("\n---\n")
-
         # --- Error Analysis ---
         self.add_section("Error Analysis")
-        self.report_content.append("\n(AI_SUMMARY: Error Analysis)\n")
         
         # Helper for Error Tables
         def format_error_table(df, cols_mapping):
@@ -1840,128 +2019,10 @@ class ReportGenerator:
             
             self.add_subsection("Detailed Visualization Analysis")
 
-            # 1. Detailed Latency Histogram
-            try:
-                self.chart_gen.generate_histogram(
-                    df, 'latency_seconds', 
-                    'Detailed Latency Histogram', 
-                    'latency_histogram.png'
-                )
-                self.add_image("Detailed Latency Histogram", os.path.join(self.assets_dir, 'latency_histogram.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate latency histogram: {e}")
+            # 1. Detailed Latency Histogram moved to E2E
+            # 2. Total LLM Calls per Agent moved to Agent Decomposition
+            # 3. Latency Distribution by Category moved to Model Composition
 
-            # 2. Total LLM Calls per Agent (Stacked)
-            try:
-                self.chart_gen.generate_stacked_bar(
-                    df, 'agent_name', 'None', 'model_name',
-                    'Total LLM Calls per Agent (Stacked by Model)',
-                    'agent_calls_stacked.png'
-                )
-                self.add_image("Total LLM Calls per Agent", os.path.join(self.assets_dir, 'agent_calls_stacked.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate stacked bar: {e}")
-
-            # 3. Latency Distribution by Category
-            try:
-                def categorize_latency(latency):
-                    if latency < 1.0: return 'Very Fast (< 1s)'
-                    elif latency < 2.0: return 'Fast (1-2s)'
-                    elif latency < 3.0: return 'Medium (2-3s)'
-                    elif latency < 5.0: return 'Slow (3-5s)'
-                    elif latency < 8.0: return 'Very Slow (5-8s)'
-                    else: return 'Outliers (8s+)'
-
-                df['latency_category'] = df['latency_seconds'].apply(categorize_latency)
-                category_order = ['Very Fast (< 1s)', 'Fast (1-2s)', 'Medium (2-3s)', 'Slow (3-5s)', 'Very Slow (5-8s)', 'Outliers (8s+)']
-                # colors = ['green', 'lightgreen', 'yellow', 'orange', 'red', 'darkred'] # Old harsh colors
-                # Pastel equivalent mapping (approximate)
-                # Green -> Pastel Green, LightGreen -> ... maybe just use a sequence or map specifically
-                # Let's map to our PASTEL_COLORS but in a logical order?
-                # Actually user said "consistent pastel colors". 
-                # Let's use specific pastel shades for Good -> Bad gradient.
-                
-                # Custom Pastel Gradient
-                colors = [
-                    '#77DD77', # Very Fast (Green)
-                    '#B0E57C', # Fast
-                    '#FDFD96', # Medium (Yellow)
-                    '#FFB347', # Slow (Orange)
-                    '#FF6961', # Very Slow (Red)
-                    '#C23B22'  # Outliers (Darker Red, but pastel-ish? Material Red 900 is #B71C1C, let's go softer: #D291BC (Purple?) or just Dark Pastel Red)
-                ]
-                # Let's use a widely accepted pastel red for bad: #FF6961. 
-                # For Outliers, maybe #CB99C9 (Purple) or just same red.
-                colors = ['#77DD77', '#A0E57D', '#FDFD96', '#FFB347', '#FF6961', '#E5aeae']
-
-                self.chart_gen.generate_category_bar(
-                    df, 'latency_category',
-                    'Latency Distribution by Category',
-                    'latency_category_dist.png',
-                    order=category_order,
-                    colors=colors,
-                    figsize=(6, 4) # Reduced size (approx 60% of area? 10x6=60, 6x4=24. That's 40% of area, so 60% reduction. Math is close enough.)
-                )
-                self.add_image("Latency Distribution by Category", os.path.join(self.assets_dir, 'latency_category_dist.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate latency category distribution: {e}")
-
-            # 4. Latency vs Output Token Count (Linear)
-            try:
-                self.chart_gen.generate_scatter_with_trend(
-                    df, 'output_tokens', 'latency_seconds', 'input_tokens',
-                    'Latency vs Output Token Count (Linear)',
-                    'latency_vs_output_linear.png',
-                    scale='linear'
-                )
-                self.add_image("Latency vs Output Token Count (Linear)", os.path.join(self.assets_dir, 'latency_vs_output_linear.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate linear scatter: {e}")
-
-            # 5. Latency vs Output Token Count (Log)
-            try:
-                self.chart_gen.generate_scatter_with_trend(
-                    df, 'output_tokens', 'latency_seconds', 'input_tokens',
-                    'Latency vs Output Token Count (Log Scale)',
-                    'latency_vs_output_log.png',
-                    scale='log'
-                )
-                self.add_image("Latency vs Output Token Count (Log)", os.path.join(self.assets_dir, 'latency_vs_output_log.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate log scatter: {e}")
-
-            # 6. Latency vs Output + Thought Tokens
-            try:
-                # Check if thought_tokens has data, otherwise just use output
-                if df['thought_tokens'].sum() > 0:
-                    df['total_generated_tokens'] = df['output_tokens'] + df['thought_tokens']
-                    title_suffix = "(Output + Thought)"
-                    x_col = 'total_generated_tokens'
-                else:
-                    df['total_generated_tokens'] = df['output_tokens']
-                    title_suffix = "(Output Only - No Thoughts)"
-                    x_col = 'output_tokens'
-                    
-                self.chart_gen.generate_scatter_with_trend(
-                    df, x_col, 'latency_seconds', 'input_tokens',
-                    f'Latency vs Generated Tokens {title_suffix}',
-                    'latency_vs_generated_tokens.png',
-                    scale='linear'
-                )
-                self.add_image(f"Latency vs Generated Tokens {title_suffix}", os.path.join(self.assets_dir, 'latency_vs_generated_tokens.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate token scatter: {e}")
-
-            # 7. Load Test Sequence
-            try:
-                self.chart_gen.generate_sequence_plot(
-                    df, 'latency_seconds',
-                    'Load Test Sequence (Request Order vs Latency)',
-                    'load_test_sequence.png'
-                )
-                self.add_image("Load Test Sequence", os.path.join(self.assets_dir, 'load_test_sequence.png'))
-            except Exception as e:
-                logger.error(f"Failed to generate sequence plot: {e}")
 
         except Exception as e:
             logger.error(f"Critical error in generate_advanced_charts: {e}")

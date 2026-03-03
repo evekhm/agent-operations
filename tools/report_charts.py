@@ -52,6 +52,12 @@ class ChartGenerator:
             plt.tight_layout()
         except Exception:
             pass # Ignore layout warnings
+            
+        # Save 4K version
+        path_4k = path.replace('.png', '_4K.png')
+        plt.savefig(path_4k, bbox_inches='tight', dpi=400)
+        
+        # Save standard version
         plt.savefig(path, bbox_inches='tight', dpi=150)
         plt.close()
         return path
@@ -113,6 +119,12 @@ class ChartGenerator:
         
         # Save explicitly bypassing tight_layout so the canvas bounds are identical for all charts
         path = os.path.join(self.output_dir, filename)
+        
+        # Save 4K version
+        path_4k = path.replace('.png', '_4K.png')
+        plt.savefig(path_4k, dpi=400)
+        
+        # Save standard version
         plt.savefig(path, dpi=150)
         plt.close(fig)
         return path
@@ -185,35 +197,48 @@ class ChartGenerator:
         base_size = figsize if figsize else self.SIZE_LARGE
         plt.figure(figsize=self._get_figsize(*base_size))
         
-        # Plot bottom layer first, then add subsequent layers
-        bottom = None
+        left = None
         
         # Use provided colors or default palette
         if not colors:
             colors = sns.color_palette("muted", len(y_cols))
             
         for i, col in enumerate(y_cols):
-            plt.bar(
+            bars = plt.barh(
                 df[x_col], 
                 df[col], 
-                bottom=bottom, 
-                label=col, 
+                left=left, 
+                label=col.replace('_', ' ').title(), 
                 color=colors[i] if i < len(colors) else None,
                 edgecolor='white',
                 linewidth=0.5,
                 alpha=0.9
             )
-            if bottom is None:
-                bottom = df[col]
+            
+            # Add value labels
+            for bar in bars:
+                width = bar.get_width()
+                if width > 0.1: # Only label if width is visible enough depending on scale
+                    plt.text(
+                        bar.get_x() + width / 2,
+                        bar.get_y() + bar.get_height() / 2,
+                        f'{width:.2f}s',
+                        ha='center', va='center',
+                        color='black', fontsize=9
+                    )
+
+            if left is None:
+                left = df[col]
             else:
-                bottom += df[col]
+                left += df[col]
                 
         plt.title(title, pad=15)
-        plt.xlabel(x_col.replace('_', ' ').title())
-        plt.ylabel("Latency (s)")
-        plt.xticks(rotation=45, ha='right')
+        plt.xlabel("Latency (s)")
+        plt.ylabel(x_col.replace('_', ' ').title())
+        plt.xticks(rotation=0)
+        plt.gca().invert_yaxis() # Top to bottom
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        sns.despine()
+        sns.despine(left=True, bottom=True)
         return self.save_plot(filename)
 
 
@@ -225,18 +250,22 @@ class ChartGenerator:
         sns.despine()
         return self.save_plot(filename)
 
-    def generate_scatter_plot(self, df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, filename: str):
+    def generate_scatter_plot(self, df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, title: str, filename: str, figsize: tuple = None):
         if df.empty: return None
-        plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
+        if figsize is None:
+            figsize = self._get_figsize(*self.SIZE_MEDIUM)
+        plt.figure(figsize=figsize)
         sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, style=hue_col, s=80)
         plt.title(title, pad=15)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         sns.despine()
         return self.save_plot(filename)
 
-    def generate_histogram(self, df: pd.DataFrame, col: str, title: str, filename: str, bins=50, color=NEUTRAL_COLOR):
+    def generate_histogram(self, df: pd.DataFrame, col: str, title: str, filename: str, bins=50, color=NEUTRAL_COLOR, figsize: tuple = None):
         if df.empty: return None
-        plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
+        if figsize is None:
+            figsize = self._get_figsize(*self.SIZE_MEDIUM)
+        plt.figure(figsize=figsize)
         
         # Calculate statistics
         mean_val = df[col].mean()
@@ -314,10 +343,12 @@ class ChartGenerator:
         sns.despine()         
         return self.save_plot(filename)
 
-    def generate_scatter_with_trend(self, df: pd.DataFrame, x_col: str, y_col: str, c_col: str, title: str, filename: str, scale='linear'):
+    def generate_scatter_with_trend(self, df: pd.DataFrame, x_col: str, y_col: str, c_col: str, title: str, filename: str, scale='linear', figsize: tuple = None):
         if df.empty: return None
         
-        plt.figure(figsize=(10, 8))
+        if figsize is None:
+            figsize = (10, 8)
+        plt.figure(figsize=figsize)
         
         # Filter positive values for log scale
         plot_df = df.copy()
