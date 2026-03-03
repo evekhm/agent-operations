@@ -12,17 +12,14 @@ async def fetch_trace_spans(trace_id: str) -> List[Dict]:
     """
     query = f"""
     SELECT
-        CAST(span_id as STRING) as span_id,
-        CAST(parent_span_id as STRING) as parent_span_id,
+        span_id,
+        parent_span_id,
         agent_name,
         root_agent_name,
         tool_name,
         model_name,
         CAST(timestamp as STRING) as timestamp,
-        CASE 
-            WHEN duration_ms IS NULL THEN 0 
-            ELSE duration_ms 
-        END as duration_ms,
+        duration_ms,
         status,
         error_message
     FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}`

@@ -10,6 +10,7 @@ This module handles BigQuery interactions, including:
 import asyncio
 import concurrent.futures
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -21,7 +22,7 @@ import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
-from ..config import PROJECT_ID, CACHE_TTL
+from ..config import PROJECT_ID, CACHE_TTL, MAX_CHARS_PAYLOAD_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -202,3 +203,62 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None,
         if "timeout" in str(e).lower():
             logger.error(f"BigQuery query timed out after {timeout} seconds")
         raise
+
+
+def _truncate_large_payloads(df: pd.DataFrame, max_chars: int = MAX_CHARS_PAYLOAD_SQL) -> pd.DataFrame:
+    """
+    Optimized version: Scans a DataFrame for massive strings, dicts, or lists
+    and truncates them using high-speed column-level list comprehensions.
+    """
+    if df.empty:
+        return df
+
+    # Iterate over columns (fast) instead of rows (slow)
+    for col in df.columns:
+
+        # 1. Skip completely numeric or datetime columns instantly
+        if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col]):
+            continue
+
+        # 2. Process the column using a raw Python list comprehension.
+        # This completely bypasses the Pandas '.apply()' bottleneck.
+        df[col] = [
+            (str(val)[:max_chars] + f"\n... [TRUNCATED. Original size: {len(str(val))} chars.]")
+            if isinstance(val, (str, dict, list)) and len(str(val)) > max_chars
+            else val
+            for val in df[col]
+        ]
+
+    return df
+
+def format_dataframe_to_requests(df: pd.DataFrame, truncate: bool = False) -> list:
+    """
+    Safely formats standard BigQuery column types (timestamps, floats)
+    and instantly converts the DataFrame to a list of dictionaries,
+    keeping all original column names.
+    """
+    if df.empty:
+        return []
+
+    # Protect the original dataframe
+    df = df.copy()
+
+    if truncate:
+        df = _truncate_large_payloads(df)
+
+    # 1. Format timestamp safely if the column exists
+    if 'timestamp' in df.columns:
+        df['timestamp'] = df['timestamp'].apply(lambda x: x.isoformat() if hasattr(x, 'isoformat') else str(x))
+
+    # 2. Guarantee duration_ms is a float and fill nulls with 0
+    if 'duration_ms' in df.columns:
+        df['duration_ms'] = df['duration_ms'].fillna(0).astype(float)
+
+    # 3. Truncate text content fields to 200 chars (checking standard names)
+    for text_col in ['instruction', 'content']:
+        if text_col in df.columns:
+            # Fill NaNs with empty string, convert to string, keep first 200 chars
+            df[text_col] = df[text_col].fillna('').astype(str).str[:200]
+
+    # 4. Instantly convert to a list of dicts using the original column names
+    return df.to_dict(orient='records')

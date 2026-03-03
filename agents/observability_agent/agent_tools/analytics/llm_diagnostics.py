@@ -123,120 +123,6 @@ async def analyze_latency_groups(
 
 @trace_span()
 @cached_tool()
-async def fetch_slowest_requests(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 20,
-    min_latency_ms: float = 0,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None
-) -> str:
-    """
-    Fetch the slowest requests, optionally filtering by minimum latency.
-    
-    Unifies previous slow query tools into a single robust fetcher.
-
-    Args:
-        time_range (str): Time range to analyze (e.g., "24h", "7d", "all").
-        limit (int): Number of requests to return.
-        min_latency_ms (float): Optional minimum latency filter.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-
-    Returns:
-        str: JSON string containing a list of slowest requests with details.
-    """
-    logger.info(f"[TOOL CALL-fetch_slowest_requests] time_range='{time_range}', limit={limit}, "
-                f"min_latency_ms={min_latency_ms}, agent_name='{agent_name}', "
-                f"root_agent_name='{root_agent_name}', model_name='{model_name}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "=")
-        }
-        if min_latency_ms > 0:
-            filter_config["duration_ms"] = (min_latency_ms, ">")
-
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-        
-        # Enhanced query with joins to ensure correct root agent name attribution
-        query = f"""
-        SELECT
-          CAST(T.span_id AS STRING) AS span_id,
-          T.trace_id,
-          T.session_id, 
-          T.timestamp,
-          T.duration_ms,
-          T.agent_name,
-          COALESCE(I.root_agent_name, R.agent_name, T.root_agent_name) AS root_agent_name,
-          T.model_name,
-          T.prompt_token_count,
-          T.candidates_token_count,
-          T.thoughts_token_count,
-          T.request_preview,
-          T.full_request,
-          T.full_response,
-          T.time_to_first_token_ms,
-          CAST(NULL as FLOAT64) as e2e_duration_ms, 
-          T.status,
-          COALESCE(I.content_text_summary, TO_JSON_STRING(R.instruction)) AS user_message
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON REPLACE(T.trace_id, '-', '') = REPLACE(I.trace_id, '-', '')
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS R 
-            ON REPLACE(T.trace_id, '-', '') = REPLACE(R.trace_id, '-', '') 
-            AND R.parent_span_id IS NULL
-        WHERE {where_clause}
-        ORDER BY T.duration_ms DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({"message": "No data found for slowest requests."})
-            
-        requests = []
-        for _, row in df.iterrows():
-            requests.append({
-                "span_id": row['span_id'],
-                "trace_id": row['trace_id'],
-                "session_id": row['session_id'],
-                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0,
-                "agent_name": row['agent_name'],
-                "root_agent_name": row['root_agent_name'],
-                "model_name": row['model_name'],
-                "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
-                "response_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
-                "thought_tokens": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else 0,
-                "preview": str(row['full_request'])[:200] if row['full_request'] else "",
-                "full_request": row['full_request'],
-                "full_response": row['full_response'],
-                "time_to_first_token_ms": float(row['time_to_first_token_ms']) if pd.notna(row['time_to_first_token_ms']) else 0.0,
-                "status": row['status']
-            })
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name},
-            "requests": requests
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in fetch_slowest_requests: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@trace_span()
-@cached_tool()
 async def get_concurrent_request_impact(
     time_range: str = DEFAULT_TIME_RANGE,
     agent_name: Optional[str] = None,
@@ -311,85 +197,6 @@ async def get_concurrent_request_impact(
 
     except Exception as e:
         logger.error(f"Error in get_concurrent_request_impact: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@trace_span()
-@cached_tool()
-async def fetch_fastest_queries(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 5,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None
-) -> str:
-    """
-    Fetch the fastest successful queries.
-    
-    Args:
-        time_range (str): Time range to analyze.
-        limit (int): Maximum number of queries to return.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-
-    Returns:
-        str: JSON string containing metadata and a list of fastest queries.
-    """
-    logger.info(f"[TOOL CALL-fetch_fastest_queries] limit={limit}, time_range='{time_range}', "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', model_name='{model_name}'")
-    try:
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config={
-                "agent_name": (agent_name, "="),
-                "root_agent_name": (root_agent_name, "="),
-                "model_name": (model_name, "=")
-            }
-        )
-
-        query = f"""
-        SELECT
-          CAST(T.span_id AS STRING) AS span_id, 
-          T.timestamp,
-          T.duration_ms,
-          T.agent_name,
-          T.root_agent_name,
-          T.model_name,
-          T.prompt_token_count,
-          T.candidates_token_count,
-          T.request_preview
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        ORDER BY duration_ms ASC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({"message": "No data found for fastest queries."})
-
-        fastest_queries = []
-        for _, row in df.iterrows():
-            fastest_queries.append({
-                "span_id": row['span_id'],
-                "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0,
-                "agent_name": row['agent_name'],
-                "root_agent_name": row['root_agent_name'],
-                "model_name": row['model_name']
-            })
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name, "model_name": model_name},
-            "fastest_queries": fastest_queries
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in fetch_fastest_queries: {str(e)}")
         return json.dumps({"error": str(e)})
 
 
@@ -588,7 +395,7 @@ async def fetch_single_query(span_id: str) -> str:
         query = f"""
         SELECT
           T.timestamp,
-          CAST(T.span_id AS STRING) AS span_id,
+          T.span_id,
           T.full_request,
           T.full_response,
           T.model_name,
@@ -653,83 +460,6 @@ async def fetch_single_query(span_id: str) -> str:
         return json.dumps({"error": error_msg})
 
 
-@cached_tool()
-async def get_failed_llm_queries(
-    time_range: str = "24h",
-    limit: int = 10,
-    agent_name: str = None,
-    root_agent_name: str = None,
-    model_name: str = None
-) -> str:
-    """
-    Retrieves failed LLM requests with Agent Status context.
-    """
-    logger.info(f"[TOOL CALL-get_failed_llm_queries] time_range='{time_range}', limit={limit}, "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', model_name='{model_name}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "="),
-            "status": ("ERROR", "=")
-        }
-
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-
-        query = f"""
-        SELECT
-            T.timestamp,
-            T.model_name,
-            T.llm_config,
-            T.prompt_token_count,
-            T.candidates_token_count,
-            T.duration_ms,
-            T.error_message,
-            T.trace_id,
-            T.span_id,
-            T.parent_span_id,
-            T.status,
-            T.agent_name,
-            T.root_agent_name,
-            PA.status AS agent_status,
-            I.status AS root_status,
-            I.content_text_summary AS user_message
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS PA
-            ON T.parent_span_id = PA.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I 
-            ON T.trace_id = I.trace_id
-        WHERE {where_clause}
-        AND T.status = 'ERROR'
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-
-        if df.empty:
-            return json.dumps({
-                "message": "No failed LLM queries found matching criteria.",
-                "metadata": {"view_id": LLM_EVENTS_VIEW_ID}
-            })
-
-        requests = df.to_dict(orient="records")
-
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name, "view_id": LLM_EVENTS_VIEW_ID},
-            "requests": requests
-        }
-
-        return json.dumps(result, cls=AnalysisEncoder)
-
-    except Exception as e:
-        logger.error(f"Error in get_failed_llm_queries: {str(e)}")
-        return json.dumps({"error": str(e)})
 
 @trace_span()
 @cached_tool()
@@ -762,13 +492,12 @@ async def analyze_empty_llm_responses(
                 "agent_name": (agent_name, "="),
                 "root_agent_name": (root_agent_name, "="),
                 "model_name": (model_name, "=")
-            },
-            table_alias="T"
+            }
         )
         
         # We only care about explicit empty responses that are not just pending
         # IFNULL handles cases where it might be explicitly null but completed.
-        where_clause += " AND T.status != 'PENDING' AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
+        where_clause += " AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
 
         # 1. Get summary stats
         summary_query = f"""
@@ -795,14 +524,14 @@ async def analyze_empty_llm_responses(
         # 2. Get detailed records
         records_query = f"""
         SELECT
-            CAST(T.span_id AS STRING) AS span_id,
+            T.span_id,
             T.trace_id,
             T.timestamp,
             T.model_name,
             T.agent_name,
             T.prompt_token_count,
             T.duration_ms as duration_ms,
-            SUBSTR(I.content_text, 1, 250) as user_message_trunk
+            SUBSTR(CAST(I.content_text AS STRING), 1, 250) as user_message_trunk
         FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
         WHERE {where_clause}

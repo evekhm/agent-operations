@@ -24,6 +24,7 @@ CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.invocation_events_view` (
     invocation_id OPTIONS(description="A unique ID for this specific run/turn."),
     session_id OPTIONS(description="The ID of the multi-turn conversation session."),
     trace_id OPTIONS(description="The OpenTelemetry trace_id for this invocation."),
+    span_id OPTIONS(description="The OpenTelemetry span_id identifying this specific tool execution."),
     user_id OPTIONS(description="The ID of the user who initiated the run.")
 ) AS
 WITH InvocationStarts AS (
@@ -31,6 +32,7 @@ WITH InvocationStarts AS (
     invocation_id,
     session_id,
     trace_id,
+    span_id,
     timestamp as start_timestamp,
     attributes as start_attributes,
     agent as agent_name,
@@ -84,10 +86,11 @@ SELECT
   S.invocation_id,
   S.session_id,
   S.trace_id,
+  S.span_id,
   S.user_id
 
 FROM InvocationStarts S
     LEFT JOIN InvocationEnds E
-ON S.invocation_id = E.invocation_id
+    ON S.invocation_id = E.invocation_id
     LEFT JOIN UserMessages M
     ON S.invocation_id = M.invocation_id;
