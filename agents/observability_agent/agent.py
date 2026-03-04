@@ -373,8 +373,8 @@ def create_augmentor_agent() -> Agent:
         name="augmentor_agent",
         model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
         instruction=AUGMENTATION_PROMPT,
-        description="Augments existing reports with summaries and recommendations. Can use tools to dig deeper into specific findings.",
-        tools=analyst_tools,
+        description="Augments existing reports with summaries and recommendations.",
+        tools=[],
         output_key="augmentation_result",
         disallow_transfer_to_peers=True
     )

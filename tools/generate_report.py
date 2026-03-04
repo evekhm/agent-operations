@@ -227,12 +227,13 @@ class ReportGenerator:
             # Add link to full resolution image
             
             # The URL should point to the 4k resolution
+            self.report_content.append(f"\n**{title}**<br>\n")
             image_4k_path = image_path.replace('.png', '_4K.png')
             if os.path.exists(image_4k_path):
                 rel_4k_path = os.path.relpath(image_4k_path, start=self.report_dir)
-                self.report_content.append(f"\n[![{title}]({rel_path})]({rel_4k_path})\n")
+                self.report_content.append(f"[![{title}]({rel_path})]({rel_4k_path})\n<br>\n")
             else:
-                self.report_content.append(f"\n[![{title}]({rel_path})]({rel_path})\n")
+                self.report_content.append(f"[![{title}]({rel_path})]({rel_path})\n<br>\n")
 
 
 
@@ -532,14 +533,104 @@ class ReportGenerator:
             if path:
                 self.add_image(f"{agent} Latency", path)
 
+    def _render_agent_token_charts(self):
+        """Generates stacked horizontal bar charts per model showing average token breakdown per agent."""
+        if not hasattr(self, 'df_raw_llm') or self.df_raw_llm.empty:
+            return
+
+        df = self.df_raw_llm.copy()
+        
+        # Ensure token columns exist
+        for col in ['input_tokens', 'thought_tokens', 'output_tokens']:
+            if col not in df.columns:
+                df[col] = 0
+                
+        # We need agent_name and model_name
+        if 'agent_name' not in df.columns or 'model_name' not in df.columns:
+            return
+            
+        self.add_subsection("Token Usage Breakdown per Model")
+        self.report_content.append("The charts below display the average token consumption per request, broken down by **Input**, **Thought**, and **Output** tokens for each Agent using a specific Model.\n")
+        self.report_content.append("> [!NOTE]\n> This data is aggregated by calculating the mean token counts across all raw LLM events for the given Agent and Model combination.\n\n")
+
+        models = sorted(df['model_name'].unique())
+        
+        for model in models:
+            model_df = df[df['model_name'] == model]
+            
+            # Group by agent_name and calculate the mean of token columns
+            agg_df = model_df.groupby('agent_name')[['input_tokens', 'thought_tokens', 'output_tokens']].mean().reset_index()
+            
+            if agg_df.empty: continue
+            
+            # Sort by total tokens descending for better visualization
+            agg_df['total'] = agg_df['input_tokens'] + agg_df['thought_tokens'] + agg_df['output_tokens']
+            agg_df = agg_df.sort_values(by='total', ascending=True) # Ascending because barh plots bottom-to-top
+            
+            safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+            filename = f"token_usage_{safe_m}.png"
+            
+            path = self.chart_gen.generate_token_stacked_bar_chart(
+                df=agg_df,
+                x_col='agent_name',
+                y_cols=['input_tokens', 'thought_tokens', 'output_tokens'],
+                title=f"Average Token Usage per Request: {model}",
+                filename=filename,
+                colors=['#1f77b4', '#9467bd', '#2ca02c'], # Blue (Input), Purple (Thought), Green (Output)
+                figsize=(self.chart_gen.SIZE_MEDIUM[0], max(self.chart_gen.SIZE_MEDIUM[1], len(agg_df) * 0.5 + 1))
+            )
+            
+            if path:
+                self.add_image(f"Token Breakdown for {model}", path)
+
+        if not df.empty:
+            self.report_content.append("\n---\n")
+            self.add_subsection("Token Usage Over Time")
+            self.report_content.append("The charts below display the chronological token consumption (Input, Thought, Output) for each Agent-Model combination over the test run. This helps identify context window growth or token ballooning over time.\n\n")
+            
+            for model in models:
+                model_df = df[df['model_name'] == model]
+                agents_for_model = sorted(model_df['agent_name'].unique())
+                for agent in agents_for_model:
+                    am_df = model_df[model_df['agent_name'] == agent]
+                    if am_df.empty or len(am_df) < 5: 
+                        continue # Skip if too few points to show a trend
+                    
+                    safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                    safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
+                    filename = f"token_seq_{safe_a}_{safe_m}.png"
+                    
+                    path = self.chart_gen.generate_time_series_stacked_area(
+                        df=am_df,
+                        x_col='timestamp',
+                        y_cols=['input_tokens', 'thought_tokens', 'output_tokens'],
+                        title=f"{agent} via {model} (Token Usage Sequence)",
+                        filename=filename,
+                        colors=['#1f77b4', '#9467bd', '#2ca02c'],
+                        figsize=self.chart_gen.SIZE_LARGE
+                    )
+                    if path:
+                        self.add_image(f"{agent} via {model} Token Sequence", path)
+
+
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str, kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False, include_usage_chart: bool = True):
         self.add_subsection(title)
         if df.empty:
             self.report_content.append(f"No {title.lower()} data available.\n")
             return
 
-        target_latency = self.config.get(kpi_target_key, 2.0)
-        target_error = self.config.get(kpi_error_key, 5.0)
+        def _get_kpi(key_path, default_val):
+            keys = key_path.split('.')
+            val = self.config
+            for k in keys:
+                if isinstance(val, dict):
+                    val = val.get(k)
+                else:
+                    return default_val
+            return val if val is not None else default_val
+
+        target_latency = _get_kpi(kpi_target_key, 2.0)
+        target_error = _get_kpi(kpi_error_key, 5.0)
 
         # 1. Performance Table
         table_df = self._build_standard_table(
@@ -657,7 +748,7 @@ class ReportGenerator:
             try:
                 df_invocations = self.data.get('df_raw_invocations', pd.DataFrame())
                 if not df_invocations.empty and 'agent_name' in df_invocations.columns:
-                    self.report_content.append("### Root Agent E2E Execution Sequence\n")
+                    self.report_content.append("**Root Agent E2E Execution Sequence**\n")
                     self.report_content.append("The following charts display the end-to-end execution latency for each top-level Root Agent over the course of the test run, plotted in the order the requests were received. This helps identify degradation in overall system performance over time.\n\n")
                     
                     for root_agent in df_invocations['agent_name'].unique():
@@ -794,21 +885,25 @@ class ReportGenerator:
                  logger.error(f"Failed to build Model Traffic pivot: {e}")
 
         self.add_subsection("Model Performance (Agent End-to-End)")
-        self.report_content.append("This table compares how specific agents perform when running on different models. **Values represent Agent End-to-End Latency** (including tool execution and overhead), not just LLM generation time.\n")
+        target_lat = self.config.get("kpis", {}).get("agents", {}).get("latency_target", 8.0)
+        target_err = self.config.get("kpis", {}).get("agents", {}).get("error_target", 5.0)
+        self.report_content.append(f"This table compares how specific agents perform when running on different models. **Values represent Agent End-to-End Latency** (including tool execution and overhead), not just LLM generation time.\n\n> [!NOTE]\n> **KPI Settings:** Latency Target = `{target_lat}s`, Error Target = `{target_err}%`\n> **Cell Format:** `[Status] [P{self.percentile} Latency]s ([Error Rate]%)`. For example, `🔴 21.558s (16.67%)` means the Agent had a P{self.percentile} latency of 21.558 seconds and an error rate of 16.67%, and received a failing 🔴 status because it breached either the latency or error target.\n")
         if isinstance(self.df_agent_models_e2e, pd.DataFrame) and not self.df_agent_models_e2e.empty:
              # Pivot: Index=Agent, Col=Model, Value=P95 (Err%)
              try:
                  # We need to construct the value string first
                  am_df = self.df_agent_models_e2e.copy()
-                 am_df['p95_sec'] = (am_df['p95_ms'] / 1000).round(3)
+                 # Use correct percentile col dynamically
+                 p_col_name = f'p{self.percentile}_ms'
+                 if p_col_name not in am_df.columns:
+                     p_col_name = 'p95_ms' # fallback
+                 am_df['p_sec'] = (am_df[p_col_name] / 1000).round(3)
                  
                  def format_perf(row):
-                     if pd.isna(row['p95_sec']):
+                     if pd.isna(row['p_sec']):
                          return "-"
-                     val = f"{row['p95_sec']}s ({row['error_rate_pct']}%)"
-                     # Determine status (simplified check against configurable targets would be better, using hardcoded for now based on report)
-                     # Assuming target 8s for agents, 5% error
-                     is_bad = row['p95_sec'] > 8.0 or row['error_rate_pct'] > 5.0
+                     val = f"{row['p_sec']}s ({row['error_rate_pct']}%)"
+                     is_bad = row['p_sec'] > target_lat or row['error_rate_pct'] > target_err
                      return ("🔴 " if is_bad else "🟢 ") + val
 
                  am_df['perf_str'] = am_df.apply(format_perf, axis=1)
@@ -822,20 +917,25 @@ class ReportGenerator:
                  logger.error(f"Failed to build Model Performance (E2E) pivot: {e}")
 
         self.add_subsection("LLM Generation Performance")
-        self.report_content.append("This table compares the raw LLM generation time for specific agents and models. **Values represent Pure LLM Latency** (excluding agent overhead).\n")
+        target_llm_lat = self.config.get("kpis", {}).get("models", {}).get("latency_target", 5.0)
+        target_llm_err = self.config.get("kpis", {}).get("models", {}).get("error_target", 5.0)
+        self.report_content.append(f"This table compares the raw LLM generation time for specific agents and models. **Values represent Pure LLM Latency** (excluding agent overhead).\n\n> [!NOTE]\n> **KPI Settings:** Latency Target = `{target_llm_lat}s`, Error Target = `{target_llm_err}%`\n> **Cell Format:** `[Status] [P{self.percentile} Latency]s ([Error Rate]%)`.\n")
         if isinstance(self.df_agent_models_llm, pd.DataFrame) and not self.df_agent_models_llm.empty:
              # Pivot: Index=Agent, Col=Model, Value=P95 (Err%)
              try:
                  # We need to construct the value string first
                  am_df = self.df_agent_models_llm.copy()
-                 am_df['p95_sec'] = (am_df['p95_ms'] / 1000).round(3)
+                 p_col_name = f'p{self.percentile}_ms'
+                 if p_col_name not in am_df.columns:
+                     p_col_name = 'p95_ms'
+                 am_df['p_sec'] = (am_df[p_col_name] / 1000).round(3)
                  
                  def format_perf(row):
-                     if pd.isna(row['p95_sec']):
+                     if pd.isna(row['p_sec']):
                          return "-"
-                     val = f"{row['p95_sec']}s ({row['error_rate_pct']}%)"
-                     # Target for pure LLM is lower (e.g. 5s)
-                     is_bad = row['p95_sec'] > 5.0 or row['error_rate_pct'] > 5.0
+                     val = f"{row['p_sec']}s ({row['error_rate_pct']}%)"
+                     # Target for pure LLM
+                     is_bad = row['p_sec'] > target_llm_lat or row['error_rate_pct'] > target_llm_err
                      return ("🔴 " if is_bad else "🟢 ") + val
 
                  am_df['perf_str'] = am_df.apply(format_perf, axis=1)
@@ -843,21 +943,23 @@ class ReportGenerator:
                  pivot_perf = am_df.pivot(index='agent_name', columns='model_name', values='perf_str').fillna("")
                  pivot_perf.index.name = "**Agent Name**"
                  pivot_perf.columns = [f"**{c}**" for c in pivot_perf.columns]
+                 self.report_content.append(self._bold_index(pivot_perf).to_markdown())
                  self.report_content.append("\n<br>\n")
              except Exception as e:
                  logger.error(f"Failed to build LLM Generation Performance pivot: {e}")
 
         self.add_subsection("Agent Overhead Analysis")
-        self.report_content.append("This chart visualizes the time spent actively generating LLM responses versus the time spent on agent internal overhead (processing, tool execution, networking).\n")
+        self.report_content.append("This chart breaks down the internal execution time of an Agent into **LLM Time**, **Tool Time**, and its own **Code Overhead** (the remaining time).\n")
+        self.report_content.append(f"> [!NOTE]\n> The data below is calculated using the **P{self.percentile} execution latency** metrics across all events for each agent to illustrate worst-case internal overheads.\n\n")
         
         if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty and hasattr(self, 'df_raw_agents') and not self.df_raw_agents.empty:
             try:
-                # Calculate mean LLM duration per agent
-                llm_agg = self.df_raw_llm.groupby('agent_name')['latency_seconds'].mean().reset_index()
+                # Calculate P{self.percentile} LLM duration per agent
+                llm_agg = self.df_raw_llm.groupby('agent_name')['latency_seconds'].quantile(self.percentile / 100.0).reset_index()
                 llm_agg.rename(columns={'latency_seconds': 'pure_llm_sec'}, inplace=True)
                 
-                # Calculate mean Agent duration per agent
-                agent_agg = self.df_raw_agents.groupby('agent_name')['latency_seconds'].mean().reset_index()
+                # Calculate P{self.percentile} Agent duration per agent
+                agent_agg = self.df_raw_agents.groupby('agent_name')['latency_seconds'].quantile(self.percentile / 100.0).reset_index()
                 agent_agg.rename(columns={'latency_seconds': 'total_agent_sec'}, inplace=True)
                 
                 # Merge and calculate overhead
@@ -907,12 +1009,19 @@ class ReportGenerator:
                 # Transpose for the specific format: Cols = Models, Rows = Metrics
                 # Metrics: Mean Output, Median Output, Min, Max, Corr Latency/Output, Corr Latency/Thought
                 
-                # We need to prepare a dict structure first
+                # We need to prepare a dict structure first. To ensure consistency with the global table,
+                # we maintain EXACTLY the same rows and ordering.
                 metrics_data = {
+                    "Mean Input Tokens": {},
+                    "P95 Input Tokens": {},
+                    "Mean Thought Tokens": {},
+                    "P95 Thought Tokens": {},
                     "Mean Output Tokens": {},
+                    "P95 Output Tokens": {},
                     "Median Output Tokens": {},
                     "Min Output Tokens": {},
                     "Max Output Tokens": {},
+                    "Mean Total Tokens": {},
                     "Latency vs Output Corr.": {},
                     "Latency vs Output+Thinking Corr.": {},
                     "Correlation Strength": {},
@@ -923,13 +1032,20 @@ class ReportGenerator:
                     
                     def safe_round(val):
                         if isinstance(val, (int, float)):
+                            if pd.isna(val): return "N/A"
                             return f"{val:.2f}"
                         return "N/A"
 
+                    metrics_data["Mean Input Tokens"][m] = safe_round(row.get('avg_input_tokens'))
+                    metrics_data["P95 Input Tokens"][m] = safe_round(row.get('p95_input_tokens'))
+                    metrics_data["Mean Thought Tokens"][m] = safe_round(row.get('avg_thought_tokens'))
+                    metrics_data["P95 Thought Tokens"][m] = safe_round(row.get('p95_thought_tokens'))
                     metrics_data["Mean Output Tokens"][m] = safe_round(row.get('avg_output_tokens'))
+                    metrics_data["P95 Output Tokens"][m] = safe_round(row.get('p95_output_tokens'))
                     metrics_data["Median Output Tokens"][m] = safe_round(row.get('median_output_tokens'))
                     metrics_data["Min Output Tokens"][m] = safe_round(row.get('min_output_tokens'))
                     metrics_data["Max Output Tokens"][m] = safe_round(row.get('max_output_tokens'))
+                    metrics_data["Mean Total Tokens"][m] = safe_round(row.get('avg_total_tokens'))
                     
                     # Calculate Correlations per Agent-Model using df_raw_llm
                     if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
@@ -1007,23 +1123,29 @@ class ReportGenerator:
                     )
                     self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
                 
-                self.add_subsection("Agent Execution Latency By Model")
+                self.add_subsection("Agent Execution Latency (By Model)")
                 self.report_content.append("These charts breakdown the Agent execution sequences further by the underlying LLM model used for that request. This helps isolate whether an Agent's latency spike is tied to a specific model's degradation.\n\n")
 
                 # Per Agent Per Model
                 for agent in df_agents['agent_name'].unique():
                     agent_df = df_agents[df_agents['agent_name'] == agent]
+                    
+                    # Add subheading for the agent
+                    self.report_content.append(f"\n#### {agent}\n")
+                    
                     for model in agent_df['model_name'].unique():
                         am_df = agent_df[agent_df['model_name'] == model]
                         if am_df.empty: continue
                         safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
                         safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
                         chart_filename = f'seq_agent_model_{safe_a}_{safe_m}.png'
-                        chart_title = f"{agent} via {model} Latency Sequence"
+                        
                         self.chart_gen.generate_sequence_plot(
-                            am_df, 'latency_seconds', chart_title, chart_filename
+                            am_df, 'latency_seconds', f"{agent} via {model} Latency Sequence", chart_filename
                         )
-                        self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+                        
+                        self.report_content.append(f"\n**{agent} via {model}**\n")
+                        self.add_image(f"{agent} via {model} Latency Sequence", os.path.join(self.assets_dir, chart_filename))
 
         except Exception as e:
             logger.error(f"Failed to generate Agent sequence plots: {e}")
@@ -1198,10 +1320,16 @@ class ReportGenerator:
              stats_rows = []
              # Define rows: Metric Name -> Col Name (in df_models)
              stat_defs = [
+                 ("Mean Input Tokens", "avg_input_tokens"),
+                 ("P95 Input Tokens", "p95_input_tokens"),
+                 ("Mean Thought Tokens", "avg_thought_tokens"),
+                 ("P95 Thought Tokens", "p95_thought_tokens"),
                  ("Mean Output Tokens", "avg_output_tokens"),
+                 ("P95 Output Tokens", "p95_output_tokens"),
                  ("Median Output Tokens", "median_output_tokens"),
                  ("Min Output Tokens", "min_output_tokens"),
                  ("Max Output Tokens", "max_output_tokens"),
+                 ("Mean Total Tokens", "avg_total_tokens"),
              ]
              
              # Initial Stat Rows
@@ -1251,6 +1379,9 @@ class ReportGenerator:
              self.report_content.append(self._bold_first_column(token_df).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
 
+             # Add specific per-model agent token distribution charts
+             self._render_agent_token_charts()
+             
         self.add_subsection("Requests Distribution")
         
         # Per Model Latency Distribution
@@ -2306,14 +2437,15 @@ def load_config() -> Dict[str, Any]:
         logger.warning(f"Failed to load config.json: {e}")
         return {}
 
-async def generate_report_content(save_file: bool = True) -> str:
+async def generate_report_content(save_file: bool = True, config: Dict[str, Any] = None) -> str:
     # Ensure views exist before querying
     try:
         ensure_all_views()
     except Exception as e:
         logger.warning(f"Failed to ensure views: {e}")
 
-    config = load_config()
+    if config is None:
+        config = load_config()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     data_manager = ReportDataManager(config)

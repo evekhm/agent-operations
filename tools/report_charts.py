@@ -47,11 +47,14 @@ class ChartGenerator:
 
     def save_plot(self, filename: str):
         path = os.path.join(self.output_dir, filename)
-        # plt.tight_layout() # Creating warnings, bbox_inches='tight' in savefig handles this mostly
-        try:
-            plt.tight_layout()
-        except Exception:
-            pass # Ignore layout warnings
+        
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
             
         # Save 4K version
         path_4k = path.replace('.png', '_4K.png')
@@ -117,15 +120,15 @@ class ChartGenerator:
         # Absolute title positioning
         fig.text(0.0, 0.95, title, fontsize=9, fontweight='bold', ha='left', va='top')
         
-        # Save explicitly bypassing tight_layout so the canvas bounds are identical for all charts
+        # Save explicitly with tight_layout so the canvas bounds fit the legend
         path = os.path.join(self.output_dir, filename)
         
         # Save 4K version
         path_4k = path.replace('.png', '_4K.png')
-        plt.savefig(path_4k, dpi=400)
+        plt.savefig(path_4k, dpi=400, bbox_inches='tight')
         
         # Save standard version
-        plt.savefig(path, dpi=150)
+        plt.savefig(path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         return path
 
@@ -237,6 +240,71 @@ class ChartGenerator:
         plt.ylabel(x_col.replace('_', ' ').title())
         plt.xticks(rotation=0)
         plt.gca().invert_yaxis() # Top to bottom
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        sns.despine(left=True, bottom=True)
+        return self.save_plot(filename)
+
+    def generate_token_stacked_bar_chart(self, df: pd.DataFrame, x_col: str, y_cols: List[str], title: str, filename: str, colors: List[str] = None, figsize=None):
+        if df.empty: return None
+        
+        base_size = figsize if figsize else self.SIZE_LARGE
+        plt.figure(figsize=self._get_figsize(*base_size))
+        
+        left = None
+        
+        # Use provided colors or default palette
+        if not colors:
+            colors = sns.color_palette("muted", len(y_cols))
+            
+        for i, col in enumerate(y_cols):
+            bars = plt.barh(
+                df[x_col], 
+                df[col], 
+                left=left, 
+                label=col.replace('_', ' ').title(), 
+                color=colors[i] if i < len(colors) else None,
+                edgecolor='white',
+                linewidth=0.5,
+                alpha=0.9
+            )
+            
+            if left is None:
+                left = df[col]
+            else:
+                left += df[col]
+                
+        plt.title(title, pad=15)
+        plt.xlabel("Tokens")
+        plt.ylabel(x_col.replace('_', ' ').title())
+        plt.xticks(rotation=0)
+        plt.gca().invert_yaxis() # Top to bottom
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        sns.despine(left=True, bottom=True)
+        return self.save_plot(filename)
+
+    def generate_time_series_stacked_area(self, df: pd.DataFrame, x_col: str, y_cols: List[str], title: str, filename: str, colors: List[str] = None, figsize=None):
+        if df.empty: return None
+        
+        base_size = figsize if figsize else self.SIZE_LARGE
+        plt.figure(figsize=self._get_figsize(*base_size))
+        
+        if not colors:
+            colors = sns.color_palette("muted", len(y_cols))
+            
+        # Ensure data is sorted by time for area plotting
+        plot_df = df.sort_values(x_col).copy()
+        
+        # We need a numeric x-axis for stackplot
+        x_values = range(len(plot_df))
+        
+        y_data = [plot_df[col].values for col in y_cols]
+        labels = [col.replace('_', ' ').title() for col in y_cols]
+        
+        plt.stackplot(x_values, *y_data, labels=labels, colors=colors, alpha=0.8)
+        
+        plt.title(title, pad=15)
+        plt.xlabel("Request Order (Chronological)")
+        plt.ylabel("Tokens")
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         sns.despine(left=True, bottom=True)
         return self.save_plot(filename)

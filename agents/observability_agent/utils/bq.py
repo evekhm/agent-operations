@@ -22,7 +22,7 @@ import pandas as pd
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
-from ..config import PROJECT_ID, CACHE_TTL, MAX_CHARS_PAYLOAD_SQL
+from ..config import PROJECT_ID, CACHE_TTL, MAX_CHARS_PAYLOAD_SQL, DATASET_ID
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,28 @@ def _get_bq_client():
     """
     global _bq_client, _views_ensured
     if _bq_client is None:
-        _bq_client = bigquery.Client(project=PROJECT_ID)
+        import requests
+        from google.auth.transport.requests import AuthorizedSession
+        from requests.adapters import HTTPAdapter
+        import google.auth
+        from google.api_core.client_options import ClientOptions
+
+        # We use a ThreadPoolExecutor with 20 workers for async queries. 
+        # The default urllib3 connection pool is 10, causing warnings.
+        pool_size = 30 
+        
+        credentials, _ = google.auth.default()
+        authed_session = AuthorizedSession(credentials)
+        
+        adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size)
+        authed_session.mount("https://", adapter)
+        authed_session.mount("http://", adapter)
+        
+        _bq_client = bigquery.Client(
+            project=PROJECT_ID,
+            client_options=ClientOptions(),
+            _http=authed_session
+        )
     
     # Ensure views exist (lazy initialization) - run once per process
     if not _views_ensured:
@@ -95,7 +116,7 @@ def clear_query_cache():
 def _get_cache_path(query: str, timeout: int, query_parameters: list = None) -> str:
     """Generate cache file path based on query hash and parameters."""
     params_str = str(query_parameters) if query_parameters else ""
-    content = f"{query}::{timeout}::{PROJECT_ID}::{params_str}"
+    content = f"{query}::{timeout}::{PROJECT_ID}::{DATASET_ID}::{params_str}"
     query_hash = hashlib.md5(content.encode()).hexdigest()
     return os.path.join(CACHE_DIR, f"{query_hash}.json")
 

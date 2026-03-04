@@ -131,9 +131,14 @@ async def main():
 
     # Ensure defaults are visible in the log
     if "playbook" not in config: config["playbook"] = "overview"
-    if "num_slowest_queries" not in config: config["num_slowest_queries"] = 5
-    if "num_error_queries" not in config: config["num_error_queries"] = 5
-    if "num_queries_to_analyze_rca" not in config: config["num_queries_to_analyze_rca"] = 1
+    
+    # Extract from nested blocks if available
+    retrieval_cfg = config.get("data_retrieval", {})
+    pres_cfg = config.get("data_presentation", {})
+    
+    config["num_slowest_queries"] = pres_cfg.get("num_slowest_queries", config.get("num_slowest_queries", 5))
+    config["num_error_queries"] = pres_cfg.get("num_error_queries", config.get("num_error_queries", 5))
+    config["num_queries_to_analyze_rca"] = retrieval_cfg.get("num_queries_to_analyze_rca", config.get("num_queries_to_analyze_rca", 1))
 
     # LOG THE FINAL CONFIG
     print(f"🔧 Loaded Analyst Config: {json.dumps(config, indent=2, default=str)}")
@@ -184,7 +189,8 @@ async def main():
         # 1. GENERATE DETERMINISTIC REPORT
         print("📊 Generating Deterministic Report (Data & Charts)...")
         from tools.generate_report import generate_report_content
-        base_report_markdown = await generate_report_content(save_file=False)
+        # Pass the fully merged config (which includes kpis) so it doesn't reload and lose defaults
+        base_report_markdown = await generate_report_content(save_file=False, config=config)
         print(f"   ✅ Base Report Generated ({len(base_report_markdown)} chars)")
 
         # 2. AUGMENT WITH AGENT (Executive Summary & Recommendations)
@@ -209,7 +215,7 @@ async def main():
             app_name="observability_analyst_app"
         )
         
-        user_msg = types.Content(role="user", parts=[types.Part(text="Please generate the Executive Summary and Recommendations based on the report provided in your instructions.")])
+        user_msg = types.Content(role="user", parts=[types.Part(text="Please analyze the report and generate the required JSON output containing all summaries, bottlenecks, insights, and recommendations as specified in your instructions. Your response MUST be valid JSON.")])
         
         
         event_count = 0
@@ -241,10 +247,20 @@ async def main():
         import re
         
         # Find JSON in response
-        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        # The agent sometimes wraps the JSON in ```json ... ``` blocks
+        import re
+        
+        # Try to extract from a markdown json block first
+        json_match = re.search(r"```(?:json)?(.*?)```", response_text, re.DOTALL)
+        json_str = json_match.group(1).strip() if json_match else response_text
+
+        # If not, try to find the first { and the last }
+        json_match = re.search(r"(\{.*\})", json_str, re.DOTALL)
+        
         if json_match:
             try:
-                insights = json.loads(json_match.group(0))
+                # Use strict=False to allow unescaped control characters in strings
+                insights = json.loads(json_match.group(1), strict=False)
                 exec_summary = insights.get("executive_summary", "No summary generated.")
                 performance_summary = insights.get("performance_summary", "No summary generated.")
                 end_to_end_summary = insights.get("end_to_end_summary", "No summary generated.")
