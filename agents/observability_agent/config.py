@@ -28,6 +28,8 @@ TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
 
+TOOLS_TO_EXCLUDE = ["transfer_to_agent"]
+TOOLS_TO_EXCLUDE_STR = ", ".join(f"'{tool}'" for tool in TOOLS_TO_EXCLUDE) if TOOLS_TO_EXCLUDE else None
 
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
 DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
@@ -36,6 +38,21 @@ LOCATION = os.getenv('LOCATION', "us")
 #Agent produced BQ Analytics
 AGENT_DATASET_ID = os.getenv('AGENT_DATASET_ID', DATASET_ID)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
+
+MAX_CHARS_PAYLOAD_SQL = os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000') # max chars for the returned SQL payload to be
+# truncated (e.g when using LLM)
+
+COMMON_COLUMNS = ["trace_id", "span_id", "session_id", "duration_ms", "agent_name", "root_agent_name",
+                  "status", "timestamp", "error_message"]
+
+TOOL_SPECIFIC_COLUMNS = ["tool_name", "tool_args", "tool_result", "parent_span_id"]
+LLM_SPECIFIC_COLUMNS = ["model_name", "prompt_token_count", "candidates_token_count", "total_token_count",
+                        "thoughts_token_count", "time_to_first_token_ms", "full_request",
+                        "full_response", "llm_config", "parent_span_id", "response_text"]
+
+AGENT_SPECIFIC_COLUMNS = ["instruction", "parent_span_id"]
+INVOCATION_SPECIFIC_COLUMNS = ["content_text", "content_text_summary", "invocation_id"]
+
 
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"

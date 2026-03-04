@@ -16,21 +16,6 @@ import sys
 # Ensure we can import agent modules
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from agents.observability_agent.agent_tools.analytics.latency import (
-    analyze_latency_grouped,
-    get_slowest_queries,
-    get_failed_agent_queries,
-    get_failed_tool_queries,
-    get_failed_invocation_queries,
-    fetch_tool_bottlenecks
-)
-
-from agents.observability_agent.agent_tools.analytics.llm_diagnostics import (
-    analyze_empty_llm_responses,
-    fetch_slowest_requests,
-    get_failed_llm_queries
-)
-from agents.observability_agent.agent_tools.analytics.correlation import fetch_correlation_data
 from agents.observability_agent.config import (
     DATASET_ID,
     PROJECT_ID,
@@ -110,6 +95,7 @@ class ReportGenerator:
         self.df_raw_invocations = data.get('df_raw_invocations', pd.DataFrame())
         
         self.agent_bottlenecks = data.get('agent_bottlenecks', pd.DataFrame())
+        self.root_bottlenecks = data.get('root_bottlenecks', pd.DataFrame())
         self.tool_bottlenecks = data.get('tool_bottlenecks', pd.DataFrame())
         self.llm_bottlenecks = data.get('llm_bottlenecks', pd.DataFrame())
         
@@ -122,7 +108,9 @@ class ReportGenerator:
         
         # Config Defaults
         self.data_config = self.config.get("data_retrieval", {})
-        self.pres_config = self.config.get("presentation", {})
+        self.pres_config = self.config.get("data_presentation", {})
+        self.num_slowest_queries = self.pres_config.get("num_slowest_queries", 5)
+        self.num_error_queries = self.pres_config.get("num_error_queries", 5)
         self.time_range_desc = self.data_config.get("time_period", "24h")
         self.playbook = self.config.get("playbook", "overview")
         
@@ -141,6 +129,68 @@ class ReportGenerator:
 
 
 
+
+
+
+    def _format_date(self, val):
+        """Formats timestamp to YYYY-MM-DD HH:MM:SS."""
+        if pd.isna(val) or val == "":
+            return "N/A"
+        
+        # Determine if it's already a datetime object
+        if hasattr(val, 'strftime'):
+            return val.strftime("%Y-%m-%d %H:%M:%S")
+            
+        s = str(val)
+        # Try simplistic truncation for ISO-like strings (most common)
+        # Matches 2026-02-24T18:30:44.609050+00:00 OR 2026-02-24 18:30:44.609050
+        if len(s) >= 19:
+            # Check for YYYY-MM-DD
+            if s[4] == '-' and s[7] == '-':
+                # Check for T or space
+                if s[10] in ('T', ' '):
+                    return s[:19].replace('T', ' ')
+        
+        # Fallback to pandas parsing (slower but robust)
+        try:
+             dt = pd.to_datetime(val)
+             return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+             return s
+
+
+    def _standardize_formatting(self, df):
+        """Standardize timestamps and durations in DataFrame.
+           Modifies DataFrame in-place and returns it.
+        """
+        if df.empty: return df
+        
+        # Timestamp Formatting
+        for col in ['timestamp', 'start_time', 'end_time']:
+            if col in df.columns:
+                df[col] = df[col].apply(self._format_date)
+        return df
+
+    def _format_as_code(self, x):
+        """Wraps JSON-like strings or dicts in backticks for markdown."""
+        if x is None or pd.isna(x) or x == "":
+            return "N/A"
+        
+        # If it's a list or dict, dump it
+        if isinstance(x, (list, dict)):
+            try:
+                val = json.dumps(x)
+                return f"`{val}`"
+            except:
+                return f"`{str(x)}`"
+        
+        s = str(x).strip()
+        # Generic check: if it looks like JSON/Code, wrap it
+        # We check for starting { or [ 
+        if len(s) > 0 and (s.startswith('{') or s.startswith('[')):
+             return f"`{s}`"
+             
+        return s
 
     def _truncate_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Truncates string columns to max_column_width."""
@@ -438,6 +488,50 @@ class ReportGenerator:
                  df[col] = df[col].apply(lambda x: f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x)
         return df
 
+    def _render_agent_model_charts(self):
+        """Generates separate bar charts for each agent, showing Pure LLM Latency by Model."""
+        if not isinstance(self.df_agent_models_llm, pd.DataFrame) or self.df_agent_models_llm.empty:
+            logger.warning("No data available for Agent-Model LLM Latency charts.")
+            self.add_subsection("Detailed Agent Latency by Model (Pure LLM)")
+            self.report_content.append("No data available for this section (df_agent_models_llm is empty).\n")
+            return
+
+        self.add_subsection("Detailed Agent Latency by Model (Pure LLM)")
+        self.report_content.append(" Breakdown of **Pure LLM Latency** (P95) for each Agent across different Models.\n")
+
+        # Get list of agents
+        agents = sorted(self.df_agent_models_llm['agent_name'].unique())
+        
+        # Prepare a carousel or grid? Sequential for now.
+        
+        for agent in agents:
+            # Filter
+            agent_df = self.df_agent_models_llm[self.df_agent_models_llm['agent_name'] == agent].copy()
+            if agent_df.empty: continue
+            
+            # Prepare data
+            agent_df['p95_sec'] = (agent_df['p95_ms'] / 1000).round(3)
+            
+            # Skip if only 1 model? No, still useful to see the value visually? 
+            # User wants "compare models", so mostly useful if > 1 model, but consistent to show all.
+            
+            # Filename safe agent name
+            safe_name = "".join([c if c.isalnum() else "_" for c in agent]).strip('_')
+            filename = f"llm_lat_{safe_name}.png"
+            
+            path = self.chart_gen.generate_bar_chart(
+                agent_df, 
+                x_col='model_name', 
+                y_col='p95_sec', 
+                title=f"{agent} - LLM P95 Latency", 
+                filename=filename,
+                color='#1f77b4', # Muted Blue
+                figsize=self.chart_gen.SIZE_SMALL # Smaller charts since we have many
+            )
+            
+            if path:
+                self.add_image(f"{agent} Latency", path)
+
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str, kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False, include_usage_chart: bool = True):
         self.add_subsection(title)
         if df.empty:
@@ -695,14 +789,6 @@ class ReportGenerator:
                  formatted_pivot.columns = [f"**{c}**" for c in formatted_pivot.columns]
                  self.report_content.append(self._bold_index(formatted_pivot).to_markdown())
                  self.report_content.append("\n<br>\n")
-                 
-
-                 
-
-
-
-
-
 
              except Exception as e:
                  logger.error(f"Failed to build Model Traffic pivot: {e}")
@@ -1086,8 +1172,8 @@ class ReportGenerator:
                              # Check for constant values to avoid RuntimeWarning
                             # Check for constant values to avoid RuntimeWarning
                              # use > 0 instead of != 0 to be safe against negative variance technically impossilbe but good practice
-                             if model_corr_df['duration_ms'].std() > 0 and model_corr_df['output_token_count'].std() > 0:
-                                 corr_out = model_corr_df['duration_ms'].corr(model_corr_df['output_token_count'])
+                             if model_corr_df['duration_ms'].std() > 0 and model_corr_df['candidates_token_count'].std() > 0:
+                                 corr_out = model_corr_df['duration_ms'].corr(model_corr_df['candidates_token_count'])
                              else:
                                  corr_out = float('nan')
                              
@@ -1097,7 +1183,7 @@ class ReportGenerator:
                                  # Output + Thinking
                                  # FillNA for thoughts just in case
                                  model_corr_df['thoughts_token_count'] = model_corr_df['thoughts_token_count'].fillna(0)
-                                 model_corr_df['total_gen'] = model_corr_df['output_token_count'] + model_corr_df['thoughts_token_count']
+                                 model_corr_df['total_gen'] = model_corr_df['candidates_token_count'] + model_corr_df['thoughts_token_count']
                                  
                                  if model_corr_df['duration_ms'].std() > 0 and model_corr_df['total_gen'].std() > 0:
                                      corr_total = model_corr_df['duration_ms'].corr(model_corr_df['total_gen'])
@@ -1324,17 +1410,94 @@ class ReportGenerator:
 
         # --- System Bottlenecks ---
         self.add_section("System Bottlenecks & Impact")
-        self.add_subsection("Top Bottlenecks")
-        
-        # Helper to format Top Bottlenecks
-        if isinstance(self.agent_bottlenecks, pd.DataFrame) and not self.agent_bottlenecks.empty:
-            df_top = self._truncate_df(self.agent_bottlenecks.copy())
+        self.report_content.append("\n(AI_SUMMARY: System Bottlenecks & Impact)\n")
+
+        # Status to Emoji
+        def status_to_emoji(s):
+            if str(s) == "OK": return "🟢"
+            if str(s) == "ERROR": return "🔴"
+            return str(s)
+
+        # Helper to format timestamp column if present
+        def fmt_ts_col(df):
+            if 'timestamp' in df.columns:
+                df['timestamp'] = df['timestamp'].apply(self._format_date)
+            return df
+
+        self.add_subsection("Slowest Invocations")
+        if isinstance(self.root_bottlenecks, pd.DataFrame) and not self.root_bottlenecks.empty:
+            df_root = fmt_ts_col(self._standardize_formatting(self.root_bottlenecks.copy()))
+            if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
+                df_root = df_root.head(self.num_slowest_queries)
+            # Rank | Timestamp | Root Agent | Duration (s) | Error Message | User Message | Trace ID | Span ID
+            df_root['Rank'] = range(1, len(df_root) + 1)
             
+            if 'duration_ms' in df_root.columns:
+                df_root['duration_ms'] = (df_root['duration_ms'] / 1000).round(3)
+            else:
+                df_root['duration_ms'] = 0.0
+
+            # RCA placeholder if not present
+            if 'rca_analysis' not in df_root.columns:
+                df_root['RCA'] = "N/A"
+            else:
+                df_root['RCA'] = df_root['rca_analysis'].fillna("N/A")
+
+            if 'status' in df_root.columns:
+                df_root['status'] = df_root['status'].apply(status_to_emoji)
+            else:
+                df_root['status'] = "N/A"
+
+            # Mapping
+            cols_map_root = {
+                'Rank': 'Rank',
+                'timestamp': 'Timestamp',
+                'root_agent_name': 'Root Agent',
+                'duration_ms': 'Duration (s)',
+                'status': 'Status',
+                'content_text_summary': 'User Message',
+                'session_id': 'Session ID',
+                'trace_id': 'Trace ID',
+                'RCA': 'RCA',
+            }
+            
+            final_cols_root = []
+            rename_map_root = {}
+            for src, dst in cols_map_root.items():
+                if src in df_root.columns or src == 'Rank':
+                    final_cols_root.append(src)
+                    rename_map_root[src] = dst
+            
+            df_final_root = df_root[final_cols_root].rename(columns=rename_map_root)
+            
+            # Format Links
+            for idx, row in df_final_root.iterrows():
+                t_id = row.get('Trace ID')
+                p_id = PROJECT_ID
+                if t_id and not str(t_id).startswith('['):
+                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
+                     df_final_root.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+
+            # Bolding for Root Agent
+            df_final_root = self._bold_columns_by_pattern(df_final_root, "Root Agent")
+            self.report_content.append(self._bold_first_column(df_final_root).to_markdown(index=False))
+            self.report_content.append("\n<br>\n")
+        else:
+            self.report_content.append("No root bottlenecks found.\n")
+
+        self.add_subsection("Slowest Agent queries")
+        
+        # Helper to format Agent Bottlenecks
+        if isinstance(self.agent_bottlenecks, pd.DataFrame) and not self.agent_bottlenecks.empty:
+            df_top = fmt_ts_col(self._standardize_formatting(self._truncate_df(self.agent_bottlenecks.copy())))
+            if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
+                df_top = df_top.head(self.num_slowest_queries)
+
             # Ensure columns exist or create them
             if 'duration_ms' in df_top.columns:
-                df_top['Latency (s)'] = (df_top['duration_ms'] / 1000).round(3)
+                df_top['duration_s'] = (df_top['duration_ms'] / 1000).round(3)
             else:
-                df_top['Latency (s)'] = 0.0
+                df_top['duration_s'] = 0.0
 
             # Generate Rank
             df_top['Rank'] = range(1, len(df_top) + 1)
@@ -1345,27 +1508,44 @@ class ReportGenerator:
             else:
                 df_top['RCA'] = df_top['rca_analysis'].fillna("N/A")
 
-            # Type might be 'agent' hardcoded or from span_kind
-            df_top['Type'] = 'agent' # Mostly agents in this table?
-            
-            # Details (Trunk) -> Truncated input/output or error message?
-            if 'error_message' in df_top.columns:
-                 df_top['Details (Trunk)'] = df_top['error_message'].fillna(df_top.get('input_trunc', '')).fillna(df_top.get('instruction', ''))
+            # Root Duration (ms to s)
+            if 'root_duration_ms' in df_top.columns:
+                 df_top['root_duration_s'] = (df_top['root_duration_ms'] / 1000).round(3)
             else:
-                 df_top['Details (Trunk)'] = df_top.get('input_trunc', df_top.get('instruction', ''))
+                 df_top['root_duration_s'] = 0.0
+
+            df_top['impact'] = df_top.apply(
+                lambda row: (f"{(row.get('duration_ms', 0) / row.get('root_duration_ms') * 100):.1f}%"
+                             if row.get('root_duration_ms') and row.get('root_duration_ms') > 0 else "N/A"),
+                axis=1
+            )
+
+            if 'status' in df_top.columns:
+                df_top['status'] = df_top['status'].apply(status_to_emoji)
+            else:
+                df_top['status'] = "N/A"
+
+            if 'root_status' in df_top.columns:
+                df_top['root_status'] = df_top['root_status'].apply(status_to_emoji)
+            else:
+                df_top['root_status'] = "N/A"
 
             # Select and Order Columns
             cols_map = {
                 'Rank': 'Rank',
                 'timestamp': 'Timestamp',
-                'Type': 'Type',
-                'Latency (s)': 'Latency (s)',
                 'agent_name': 'Name',
-                'Details (Trunk)': 'Details (Trunk)',
-                'RCA': 'RCA',
+                'duration_s': 'Latency (s)',
+                'status': 'Status',
+                'content_text_summary': 'User Message',
+                'root_agent_name': 'Root Agent',
+                'root_duration_s': 'E2E (s)',
+                'root_status': 'Root Status',
+                'impact': 'Impact (%)',
                 'session_id': 'Session ID',
                 'trace_id': 'Trace ID',
-                'span_id': 'Span ID'
+                'span_id': 'Span ID',
+                'RCA': 'RCA',
             }
             
             # Filter only existing columns from map keys (except created ones)
@@ -1395,66 +1575,82 @@ class ReportGenerator:
 
             df_final_top.columns = [f"**{c}**" for c in df_final_top.columns]
             
-            # Use generic bolding for Name columns
+            # Use generic bolding for Name columns and Root Agent
             df_final_top = self._bold_columns_by_pattern(df_final_top, "Name")
+            df_final_top = self._bold_columns_by_pattern(df_final_top, "Root Agent")
             self.report_content.append(self._bold_first_column(df_final_top).to_markdown(index=False))
             self.report_content.append("\n<br>\n")
         else:
             self.report_content.append("No data available for top bottlenecks.\n")
         
-        self.add_subsection("LLM Bottlenecks")
+        self.add_subsection("Slowest LLM queries")
         if isinstance(self.llm_bottlenecks, pd.DataFrame) and not self.llm_bottlenecks.empty:
-             df_llm = self.llm_bottlenecks.copy()
+             df_llm = fmt_ts_col(self._standardize_formatting(self.llm_bottlenecks.copy()))
+             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
+                 df_llm = df_llm.head(self.num_slowest_queries)
              
              # Calculate/Ensure Columns
              df_llm['Rank'] = range(1, len(df_llm) + 1)
              
              if 'duration_s' in df_llm.columns: # Already in seconds from query
                  df_llm['LLM (s)'] = df_llm['duration_s'].round(3)
+             elif 'duration_ms' in df_llm.columns:
+                 df_llm['LLM (s)'] = (df_llm['duration_ms'] / 1000).round(3)
              else:
                  df_llm['LLM (s)'] = 0.0
                  
-             if 'ttft_s' in df_llm.columns: # Already in seconds from query
+             if 'ttft_s' in df_llm.columns: 
                  df_llm['TTFT (s)'] = df_llm['ttft_s'].round(3)
+             elif 'ttft_ms' in df_llm.columns:
+                 df_llm['TTFT (s)'] = (pd.to_numeric(df_llm['ttft_ms'], errors='coerce') / 1000).round(3)
              else:
                  df_llm['TTFT (s)'] = 0.0
-                 
-             # Impact % = LLM Duration / E2E Duration (Trace Duration)
+             
+             # Duration maps
+             if 'agent_duration_ms' in df_llm.columns:
+                 df_llm['Agent (s)'] = (pd.to_numeric(df_llm['agent_duration_ms'], errors='coerce') / 1000).round(3)
+             if 'root_duration_ms' in df_llm.columns:
+                 df_llm['E2E (s)'] = (pd.to_numeric(df_llm['root_duration_ms'], errors='coerce') / 1000).round(3)
+
+             # Impact % = LLM Duration / E2E Duration (Root Duration)
              try:
                  # Ensure numeric
-                 df_llm['duration_s'] = pd.to_numeric(df_llm['duration_s'], errors='coerce').fillna(0)
-                 df_llm['e2e_duration_s'] = pd.to_numeric(df_llm['e2e_duration_s'], errors='coerce').fillna(0)
+                 dur_llm = pd.to_numeric(df_llm.get('duration_ms', 0), errors='coerce').fillna(0)
+                 dur_e2e = pd.to_numeric(df_llm.get('root_duration_ms', 0), errors='coerce').fillna(0)
                  
-                 # Calculate percentage
-                 df_llm['Impact %'] = (df_llm['duration_s'] / df_llm['e2e_duration_s'] * 100).round(2).apply(lambda x: f"{x}%" if pd.notnull(x) else "N/A")
+                 # Avoid division by zero
+                 df_llm['Impact %'] = df_llm.apply(
+                    lambda row: (f"{(row.get('duration_ms', 0) / row.get('root_duration_ms') * 100):.1f}%" 
+                                 if row.get('root_duration_ms') and row.get('root_duration_ms') > 0 else "N/A"), 
+                    axis=1
+                 )
              except Exception:
                  df_llm['Impact %'] = "N/A"
 
              df_llm['RCA'] = df_llm.get('rca_analysis', "N/A")
              
              # Ensure columns exist before operations
-             for col in ['prompt_token_count', 'response_token_count', 'thought_tokens']:
+             for col in ['prompt_token_count', 'candidates_token_count', 'thoughts_token_count']:
                  if col not in df_llm.columns:
                      df_llm[col] = 0
 
              # Input/Output/Thought from specific keys if available
-             df_llm['Input'] = df_llm['prompt_token_count']
-             df_llm['Output'] = df_llm['response_token_count']
-             df_llm['Thought'] = df_llm['thought_tokens']
+             # Force integer formatting (no decimals) for tokens
+             df_llm['Input'] = pd.to_numeric(df_llm['prompt_token_count'], errors='coerce').fillna(0).astype(int)
+             df_llm['Output'] = pd.to_numeric(df_llm['candidates_token_count'], errors='coerce').fillna(0).astype(int)
+             df_llm['Thought'] = pd.to_numeric(df_llm['thoughts_token_count'], errors='coerce').fillna(0).astype(int)
              
              # Total Tokens
              df_llm['Total Tokens'] = (
-                 pd.to_numeric(df_llm['Input'], errors='coerce').fillna(0) + 
-                 pd.to_numeric(df_llm['Output'], errors='coerce').fillna(0) + 
-                 pd.to_numeric(df_llm['Thought'], errors='coerce').fillna(0)
+                 df_llm['Input'] + df_llm['Output'] + df_llm['Thought']
              )
- 
-             # Status to Emoji
-             def status_to_emoji(s):
-                 if str(s) == "OK": return "🟢"
-                 if str(s) == "ERROR": return "🔴"
-                 return str(s)
-            
+             
+             # TTFT (s)
+             if 'time_to_first_token_ms' in df_llm.columns:
+                 df_llm['TTFT (s)'] = (pd.to_numeric(df_llm['time_to_first_token_ms'], errors='coerce') / 1000).fillna(0).round(3)
+             else:
+                 df_llm['TTFT (s)'] = 0.0
+
              if 'status' in df_llm.columns:
                   df_llm['LLM Status'] = df_llm['status'].apply(status_to_emoji)
              else:
@@ -1474,26 +1670,27 @@ class ReportGenerator:
              cols_map = {
                 'Rank': 'Rank',
                 'timestamp': 'Timestamp',
-                'duration_s': 'LLM (s)',
-                'ttft_s': 'TTFT (s)',
+                'LLM (s)': 'LLM (s)',
+                'TTFT (s)': 'TTFT (s)',
                 'model_name': 'Model Name',
                 'LLM Status': 'LLM Status',
                 'Input': 'Input',
                 'Output': 'Output',
                 'Thought': 'Thought',
                 'Total Tokens': 'Total Tokens',
-                'Impact %': 'Impact %',
-                'RCA': 'RCA',
+                'response_text': 'Response Text',
                 'agent_name': 'Agent Name',
-                'agent_duration_s': 'Agent (s)',
-                'Agent Status': 'Agent Status',
+                'Agent (s)': 'Agent (s)',
+                'Agent Status': 'Agent Status impact',
                 'root_agent_name': 'Root Agent Name',
-                'e2e_duration_s': 'E2E (s)',
+                'E2E (s)': 'E2E (s)',
                 'Root Status': 'Root Status',
-                'user_message': 'User Message',
+                'Impact %': 'Impact %',
+                'content_text_summary': 'User Message',
                 'session_id': 'Session ID',
                 'trace_id': 'Trace ID',
-                'span_id': 'Span ID'
+                'span_id': 'Span ID',
+                'RCA': 'RCA'
             }
              
              # Fill missing columns with N/A to match user request
@@ -1534,12 +1731,16 @@ class ReportGenerator:
              
              # Generic Bolding
              df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Name")
+             df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Root Agent")
              self.report_content.append(self._bold_first_column(df_final_llm).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
 
-        self.add_subsection("Tool Bottlenecks")
+        # Slowest Tools Queries
+        self.add_subsection("Slowest Tools Queries")
         if isinstance(self.tool_bottlenecks, pd.DataFrame) and not self.tool_bottlenecks.empty:
-             df_tool = self.tool_bottlenecks.copy()
+             df_tool = fmt_ts_col(self._standardize_formatting(self.tool_bottlenecks.copy()))
+             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
+                 df_tool = df_tool.head(self.num_slowest_queries)
              # Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID
              df_tool['Rank'] = range(1, len(df_tool) + 1)
              
@@ -1549,32 +1750,47 @@ class ReportGenerator:
                  df_tool['Tool (s)'] = 0.0
              
              # Convert Agent Duration and E2E Duration to seconds
-             if 'agent_duration' in df_tool.columns:
-                 df_tool['agent_duration'] = (df_tool['agent_duration'] / 1000).round(3)
+             if 'agent_duration_ms' in df_tool.columns:
+                 df_tool['agent_duration_s'] = (pd.to_numeric(df_tool['agent_duration_ms'], errors='coerce') / 1000).round(3)
+             else:
+                 df_tool['agent_duration'] = 0.0
              
-             if 'e2e_duration' in df_tool.columns:
-                 df_tool['e2e_duration'] = (df_tool['e2e_duration'] / 1000).round(3)
+             if 'root_duration_ms' in df_tool.columns:
+                 df_tool['root_duration_s'] = (pd.to_numeric(df_tool['root_duration_ms'], errors='coerce') / 1000).round(3)
 
              # Impact % calculation
-             def calc_impact(row):
+             # Impact % calculation
+             def calc_impact1(row):
                  try:
                      dur_s = float(row.get('duration_ms', 0)) / 1000
-                     e2e_s = float(row.get('e2e_duration', 0))
+                     agent_s = float(row.get('agent_duration_ms', 0)) / 1000
                      
-                     if e2e_s > 0:
-                         return round((dur_s / e2e_s) * 100, 2)
+                     if agent_s > 0:
+                         return round((dur_s / agent_s) * 100, 2)
                      return 0.00
                  except:
                      return 0.00
-            
-             df_tool['Impact %'] = df_tool.apply(calc_impact, axis=1)
-             
-             # Fill missing
-             req_cols = ['timestamp', 'tool_name', 'status', 'tool_args', 'tool_result', 'agent_name', 'agent_duration', 'agent_status', 'root_agent_name', 'e2e_duration', 'root_status', 'user_message', 'session_id', 'trace_id', 'span_id', 'input_token_count', 'output_token_count', 'rca_analysis']
-             for c in req_cols:
-                 if c not in df_tool.columns:
-                     df_tool[c] = "N/A"
-                     
+
+             def calc_impact2(row):
+                 try:
+                     dur_s = float(row.get('duration_ms', 0)) / 1000
+                     root_agent_s = float(row.get('root_duration_ms', 0)) / 1000
+
+                     if root_agent_s > 0:
+                         return round((dur_s / root_agent_s) * 100, 2)
+                     return 0.00
+                 except:
+                     return 0.00
+
+             df_tool['impact_agent'] = df_tool.apply(calc_impact1, axis=1)
+             df_tool['impact_root'] = df_tool.apply(calc_impact2, axis=1)
+
+             # Format generic code columns
+             if 'tool_args' in df_tool.columns:
+                 df_tool['tool_args'] = df_tool['tool_args'].apply(self._format_as_code)
+             if 'tool_result' in df_tool.columns:
+                 df_tool['tool_result'] = df_tool['tool_result'].apply(self._format_as_code)
+
              # Status to Emoji
              def status_to_emoji(s):
                  if str(s) == "OK": return "🟢"
@@ -1605,14 +1821,15 @@ class ReportGenerator:
                  'Tool Status': 'Tool Status',
                  'tool_args': 'Arguments',
                  'tool_result': 'Result',
-                 'Impact %': 'Impact %',
                  'agent_name': 'Agent Name',
-                 'agent_duration': 'Agent (s)',
+                 'agent_duration_s': 'Agent (s)',
                  'Agent Status': 'Agent Status',
+                 'impact_agent': 'Impact %',
                  'root_agent_name': 'Root Agent',
-                 'e2e_duration': 'E2E (s)',
+                 'root_duration_s': 'E2E (s)',
                  'Root Status': 'Root Status',
-                 'user_message': 'User Message',
+                 'impact_root': 'Impact %',
+                 'content_text_summary': 'User Message',
                  'session_id': 'Session ID',
                  'trace_id': 'Trace ID',
                  'span_id': 'Span ID'
@@ -1653,12 +1870,11 @@ class ReportGenerator:
         # Helper for Error Tables
         def format_error_table(df, cols_mapping):
             if df.empty: return None
-            df_err = df.copy()
+            df_err = self._standardize_formatting(df.copy())
             df_err['Rank'] = range(1, len(df_err) + 1)
             
             # Formats
-            if 'timestamp' in df_err.columns:
-                df_err['Timestamp'] = df_err['timestamp']
+            # Timestamp handled by _standardize_formatting
             
             # Fill missing
             for k, v in cols_mapping.items():
@@ -1698,6 +1914,7 @@ class ReportGenerator:
             
             # Generic Bolding
             df_final = self._bold_columns_by_pattern(df_final, "Name")
+            df_final = self._bold_columns_by_pattern(df_final, "Root Agent")
             return self._bold_first_column(df_final).to_markdown(index=False)
 
         # 1. Root Agent Errors
@@ -1708,12 +1925,12 @@ class ReportGenerator:
             'timestamp': 'Timestamp',
             'root_agent_name': 'Root Agent',
             'error_message': 'Error Message',
-            'user_message': 'User Message',
+            'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
             'invocation_id': 'Invocation ID'
         }
         if not self.root_errors.empty:
-            tbl = format_error_table(self._truncate_df(self.root_errors.head(self.config.get("num_error_queries", 20))), root_map)
+            tbl = format_error_table(self._truncate_df(self.root_errors.head(self.num_error_queries)), root_map)
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
         else:
@@ -1732,7 +1949,7 @@ class ReportGenerator:
             'error_message': 'Error Message',
             'root_agent_name': 'Root Agent',
             'root_status': 'Root Status',
-            'user_message': 'User Message',
+            'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
             'span_id': 'Span ID'
         }
@@ -1740,7 +1957,7 @@ class ReportGenerator:
             if 'root_status' in self.agent_errors.columns:
                 self.agent_errors['root_status'] = self.agent_errors['root_status'].apply(self._status_emoji)
 
-            tbl = format_error_table(self._truncate_df(self.agent_errors.head(self.config.get("num_error_queries", 20))), agent_map)
+            tbl = format_error_table(self._truncate_df(self.agent_errors.head(self.num_error_queries)), agent_map)
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
         else:
@@ -1755,11 +1972,11 @@ class ReportGenerator:
             'tool_name': 'Tool Name',
             'tool_args': 'Tool Args',
             'error_message': 'Error Message',
-            'agent_name': 'Parent Agent',
+            'agent_name': 'Agent Name',
             'agent_status': 'Agent Status',
             'root_agent_name': 'Root Agent',
             'root_status': 'Root Status',
-            'user_message': 'User Message',
+            'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
             'span_id': 'Span ID' 
         }
@@ -1770,7 +1987,10 @@ class ReportGenerator:
              if 'root_status' in self.tool_errors.columns:
                  self.tool_errors['root_status'] = self.tool_errors['root_status'].apply(self._status_emoji)
                  
-             tbl = format_error_table(self._truncate_df(self.tool_errors.head(self.config.get("num_error_queries", 20))), tool_map)
+             if 'tool_args' in self.tool_errors.columns:
+                 self.tool_errors['tool_args'] = self.tool_errors['tool_args'].apply(self._format_as_code)
+
+             tbl = format_error_table(self._truncate_df(self.tool_errors.head(self.num_error_queries)), tool_map)
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
         else:
@@ -1790,7 +2010,7 @@ class ReportGenerator:
             'agent_status': 'Agent Status',
             'root_agent_name': 'Root Agent',
             'root_status': 'Root Status',
-            'user_message': 'User Message',
+            'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
             'span_id': 'Span ID' 
         }
@@ -1800,13 +2020,17 @@ class ReportGenerator:
              if 'root_status' in self.llm_errors.columns:
                  self.llm_errors['root_status'] = self.llm_errors['root_status'].apply(self._status_emoji)
 
+             # Robustly format llm_config
+             if 'llm_config' in self.llm_errors.columns:
+                 self.llm_errors['llm_config'] = self.llm_errors['llm_config'].apply(self._format_as_code)
+
              # Convert duration_ms to duration_s
              if 'duration_ms' in self.llm_errors.columns:
                  self.llm_errors['duration_s'] = (self.llm_errors['duration_ms'] / 1000).round(2)
              else:
                  self.llm_errors['duration_s'] = 0.0
 
-             tbl = format_error_table(self._truncate_df(self.llm_errors.head(self.config.get("num_error_queries", 20))), llm_map)
+             tbl = format_error_table(self._truncate_df(self.llm_errors.head(self.num_error_queries)), llm_map)
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
         else:
@@ -1853,7 +2077,7 @@ class ReportGenerator:
                 rec_df = pd.DataFrame(self.empty_responses["records"])
                 
                 if not rec_df.empty:
-                    rec_df = self._truncate_df(rec_df)
+                    rec_df = self._standardize_formatting(self._truncate_df(rec_df))
                     rec_df['Rank'] = range(1, len(rec_df) + 1)
                     
                     # Ensure Latency (s)
@@ -1869,14 +2093,15 @@ class ReportGenerator:
                         'start_time': 'Timestamp', # Fallback
                         'model_name': 'Model Name',
                         'agent_name': 'Agent Name',
-                        'user_message': 'User Message',
-                        'input_trunc': 'User Message', # Fallback
+                        'content_text_summary': 'User Message',
                         'prompt_tokens': 'Prompt Tokens',
                         'prompt_token_count': 'Prompt Tokens', # Fallback
                         'Latency (s)': 'Latency (s)',
                         'trace_id': 'Trace ID',
                         'span_id': 'Span ID' 
                     }
+
+                    # Format Timestamp handled by _standardize_formatting
                     
                     # Use helper formatted table logic (or manually here since we have custom Latency calc)
                     # Reuse generic logic for missing cols & renaming
@@ -2054,8 +2279,8 @@ class ReportGenerator:
         # Averages
         md.append("\n**Average Stats for Outliers**\n")
         md.append(f"- **Avg Duration**: {averages.get('duration_ms', 0)/1000:.2f}s")
-        md.append(f"- **Avg Input Tokens**: {averages.get('input_tokens', 0):.1f}")
-        md.append(f"- **Avg Output Tokens**: {averages.get('output_tokens', 0):.1f}")
+        md.append(f"- **Avg Input Tokens**: {averages.get('prompt_token_count', 0):.1f}")
+        md.append(f"- **Avg Output Tokens**: {averages.get('candidates_token_count', 0):.1f}")
         
         # Samples
         md.append("\n### Sample Outliers\n")

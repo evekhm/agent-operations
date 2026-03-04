@@ -8,11 +8,11 @@
           "num_empty_llm_responses": 20,
           "num_queries_to_analyze_rca": 0
         },
-        "presentation": {
+        "data_presentation": {
             "chart_scale": 0.5,
             "max_column_width_chars": 250,
-            "num_error_queries": 20,
-            "num_slowest_queries": 20
+            "num_error_queries": 5,
+            "num_slowest_queries": 5
         },
         "kpis": {
           "end_to_end": {

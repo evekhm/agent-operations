@@ -30,29 +30,29 @@ You are configured to analyze specific timeframes based on your inputs:
 1. **DISCOVER**: Call `get_active_metadata(time_range="{time_period}")`
 2. **ANALYZE**: Run `analyze_latency_grouped(group_by="root_agent_name", time_range="{time_period}", view_id="invocation_events_view", percentile={kpi_percentile})`.
 3. **INVESTIGATE**:
-   - Call `get_failed_queries(view_id="invocation_events_view")` if errors are detected.
-   - Call `get_slowest_queries(limit={num_slowest_queries}, view_id="invocation_events_view")`.
-   - Run `batch_analyze_root_cause(span_ids="...")` for the TOP {num_queries_to_analyze_rca} slowest queries to get AI-powered root causes in PARALLEL.
+   - Call `get_invocation_requests(failed_only=True)` if errors are detected.
+   - Call `get_invocation_requests(limit={num_slowest_queries})`.
+   - Run `batch_analyze_root_cause(span_ids="...", view_ids="invocation_events_view")` for the TOP {num_queries_to_analyze_rca} slowest queries to get AI-powered root causes in PARALLEL.
 
 ### PLAYBOOK: health (Standard Health Check)
 1. **DISCOVER**: Call `get_active_metadata(time_range="{time_period}")`
 2. **ANALYZE**: Run `analyze_latency_grouped` for BOTH `{time_period}` AND `{baseline_period}`.
-3. **INVESTIGATE**: Pick the WORST performing components. Call `get_failed_queries` and `get_slowest_queries`. Run `batch_analyze_root_cause` for top outliers.
+3. **INVESTIGATE**: Pick the WORST performing components. Call `get_invocation_requests(failed_only=True)` and `get_invocation_requests`. Run `batch_analyze_root_cause` for top outliers.
 
 ### PLAYBOOK: incident (Custom Window)
 1. **DISCOVER**: Call `get_active_metadata`
 2. **ANALYZE**: Run `analyze_latency_grouped` on the incident window.
-3. **VERIFY**: Call `get_latest_queries` to see recent traces.
-4. **INVESTIGATE**: Call `get_failed_queries`, `get_slowest_queries`, and `batch_analyze_root_cause`. Use `analyze_trace_concurrency` on outliers to see if they were sequential.
+3. **VERIFY**: Call `get_invocation_requests(sort_by="latest")` to see recent traces.
+4. **INVESTIGATE**: Call `get_invocation_requests(failed_only=True)`, `get_invocation_requests`, and `batch_analyze_root_cause`. Use `analyze_trace_concurrency` on outliers to see if they were sequential.
 
 ### PLAYBOOK: trend (Temporal Trend Analysis)
 1. **ANALYZE GLOBAL**: Run `analyze_latency_grouped`.
 2. **TREND**: Call `analyze_latency_trend` for Invocations using `view_id="invocation_events_view"`.
-3. **DEEP DIVE**: Explore worst buckets using `get_slowest_queries`.
+3. **DEEP DIVE**: Explore worst buckets using `get_invocation_requests`.
 
 ### PLAYBOOK: latest (Single Trace Deep Dive)
-1. FETCH: Call `get_latest_queries(limit=1, view_id="invocation_events_view")`
-2. DEEP DIVE: Run `analyze_trace_concurrency` on the session and `batch_analyze_root_cause` on the span.
+1. FETCH: Call `get_invocation_requests(limit=1, sort_by="latest")`
+2. DEEP DIVE: Run `analyze_trace_concurrency` on the session and `batch_analyze_root_cause(span_ids="...", view_ids="invocation_events_view")` on the span.
 
 
 **Constraints:**
@@ -93,18 +93,18 @@ You are configured to analyze specific timeframes based on your inputs:
    - Run `analyze_latency_grouped(group_by="agent_name,model_name", time_range="{time_period}", view_id="agent_events_view", exclude_root=True, percentile={kpi_percentile})`. Ensure you report the DETAILED token statistics (median, min, max output tokens) provided by this tool.
 
 3. **INVESTIGATE**:
-   - Call `get_failed_queries(view_id="agent_events_view")` if errors are detected.
-   - Call `get_slowest_queries(limit={num_slowest_queries}, view_id="agent_events_view")`.
+   - Call `get_agent_requests(failed_only=True)` if errors are detected.
+   - Call `get_agent_requests(limit={num_slowest_queries})`.
 
 
 ### PLAYBOOK: health (Standard Health Check)
 1. **DISCOVER**: Call `get_active_metadata(time_range="{time_period}")`
 2. **ANALYZE**: Run `analyze_latency_grouped` for BOTH `{time_period}` AND `{baseline_period}`.
-3. **INVESTIGATE**: Pick the WORST performing Sub-Agents. Call `get_failed_queries` and `get_slowest_queries`.
+3. **INVESTIGATE**: Pick the WORST performing Sub-Agents. Call `get_agent_requests(failed_only=True)` and `get_agent_requests`.
 
 ### PLAYBOOK: incident (Custom Window)
 1. **ANALYZE**: Run `analyze_latency_grouped` on the incident window.
-2. **INVESTIGATE**: Call `get_failed_queries` and `get_slowest_queries`.
+2. **INVESTIGATE**: Call `get_agent_requests(failed_only=True)` and `get_agent_requests`.
 
 ### PLAYBOOK: trend (Temporal Trend Analysis)
 1. **ANALYZE GLOBAL**: Run `analyze_latency_grouped`.
@@ -151,20 +151,18 @@ You are configured to analyze specific timeframes based on your inputs:
    - Run `analyze_latency_grouped(group_by="model_name", time_range="{time_period}", view_id="llm_events_view", percentile={kpi_percentile})`.
    - Run `analyze_latency_performance(time_range="{time_period}", view_id="llm_events_view", group_by="model_name")`. This is mandatory for stats.
 3. **INVESTIGATE**:
-   - Call `get_failed_queries(view_id="llm_events_view")` if errors are detected.
-   - Call `get_slowest_queries(limit={num_slowest_queries}, view_id="llm_events_view")`.
+   - Call `get_llm_requests(failed_only=True)` if errors are detected.
+   - Call `get_llm_requests(limit={num_slowest_queries})`.
    - Run `batch_analyze_root_cause(span_ids="...")` for the TOP {num_queries_to_analyze_rca} slowest queries to get AI-powered root causes in PARALLEL.
-   - Call `get_llm_impact_analysis(limit={num_slowest_queries})` for deep bottleneck insights.
-   - Call `analyze_empty_llm_responses(time_range="{time_period}")`.
 
 ### PLAYBOOK: health (Standard Health Check)
 1. **DISCOVER**: Call `get_active_metadata`
 2. **ANALYZE**: Run `analyze_latency_grouped` for BOTH `{time_period}` AND `{baseline_period}`.
-3. **INVESTIGATE**: Call `get_failed_queries`, `get_slowest_queries`, and `get_llm_impact_analysis` for the worst models.
+3. **INVESTIGATE**: Call `get_llm_requests(failed_only=True)` and `get_llm_requests(sort_by="slowest")` for the worst models.
 
 ### PLAYBOOK: incident (Custom Window)
 1. **ANALYZE**: Run `analyze_latency_grouped` on the incident window.
-2. **INVESTIGATE**: Call `get_failed_queries` and `get_llm_impact_analysis`.
+2. **INVESTIGATE**: Call `get_llm_requests(failed_only=True)` and `get_llm_requests(sort_by="slowest")`.
 
 ### PLAYBOOK: trend (Temporal Trend Analysis)
 1. **ANALYZE GLOBAL**: Run `analyze_latency_grouped`.
@@ -209,19 +207,17 @@ You are configured to analyze specific timeframes based on your inputs:
 1. **DISCOVER**: Call `get_active_metadata(time_range="{time_period}")`
 2. **ANALYZE**: Run `analyze_latency_grouped(group_by="tool_name", time_range="{time_period}", view_id="tool_events_view", percentile={kpi_percentile})`.
 3. **INVESTIGATE**:
-   - Call `get_failed_queries(view_id="tool_events_view")` if errors are detected.
-   - Call `get_slowest_queries(limit={num_slowest_queries}, view_id="tool_events_view")`.
-   - Call `get_tool_impact_analysis(limit={num_slowest_queries})`.
-   - Call `get_error_impact_analysis(limit={num_error_records})` to trace error propagation from tools.
+   - Call `get_tool_requests(failed_only=True)` if errors are detected.
+   - Call `get_tool_requests(limit={num_slowest_queries})`.
 
 ### PLAYBOOK: health (Standard Health Check)
 1. **DISCOVER**: Call `get_active_metadata`
 2. **ANALYZE**: Run `analyze_latency_grouped` for BOTH `{time_period}` AND `{baseline_period}`.
-3. **INVESTIGATE**: Call `get_failed_queries`, `get_slowest_queries`, and `get_error_impact_analysis`.
+3. **INVESTIGATE**: Call `get_tool_requests(failed_only=True)` and `get_tool_requests`.
 
 ### PLAYBOOK: incident (Custom Window)
 1. **ANALYZE**: Run `analyze_latency_grouped` on the incident window.
-2. **INVESTIGATE**: Call `get_failed_queries` and `get_error_impact_analysis`.
+2. **INVESTIGATE**: Call `get_tool_requests(failed_only=True)`.
 
 ### PLAYBOOK: trend (Temporal Trend Analysis)
 1. **ANALYZE GLOBAL**: Run `analyze_latency_grouped`.
@@ -245,7 +241,7 @@ I have specific observability data and charts generated by a deterministic syste
 **Your Goal:**
 1.  **Analyze the Base Report**: Read the report below to identify "Hotspots" (High Latency, Errors, or Anomalies).
 2.  **Hypothesis Testing (CRITICAL)**:
-    *   You MUST use your tools (e.g., `batch_analyze_root_cause`, `get_slowest_queries`, `get_error_impact_analysis`) to investigate the *root cause* of these hotspots.
+    *   You MUST use your tools (e.g., `batch_analyze_root_cause`, `get_invocation_requests`, `get_tool_requests`) to investigate the *root cause* of these hotspots.
     *   Do NOT just summarize the report. Verify the findings with fresh data or deeper analysis if needed.
     *   If you see a slow agent, check specifically *why* it is slow (e.g., tool overhead vs. model latency).
 3.  **Synthesize Findings**:
@@ -476,7 +472,7 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
 ---
 
 ### Tool Bottlenecks
-*   **Source:** "Top Tool Bottlenecks & Impact" query results.
+*   **Source:** "Tool Requests" (Slowest) query results.
 *   **Table:** `| Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | RCA | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Msg | Sess ID | Trace ID | Span ID |`
 *   **Separator:** YOU MUST use this *exact* separator line below the header: `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |`
 *   **Visuals:** Use emojis (🟢/🔴/❓) for Status columns. DO NOT use text labels.
@@ -486,7 +482,7 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
 ---
 
 ### LLM Bottlenecks
-*   **Source:** "Top LLM Bottlenecks & Impact" query results.
+*   **Source:** "LLM Requests" (Slowest) query results.
 *   **Table:** `| Rank | Timestamp | LLM (s) | TTFT (s) | Model | LLM Status | Input | Output | Thought | Total Tokens | Impact % | RCA | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Msg | Sess ID | Trace ID | Span ID |`
 *   **Separator:** YOU MUST use this *exact* separator line below the header to match the 22 columns: `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |`
 *   **Visuals:** Use emojis (🟢/🔴/❓) for Status columns. DO NOT use text labels like "OK" or "Exceeded".
@@ -497,7 +493,7 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
 
 ## Error Analysis
 *   **Goal:** Show how errors ripple through the system.
-*   **Source:** "Error Impact Analysis" query results. Traces errors from origin.
+*   **Source:** "Error Requests" query results. Traces errors from origin.
 *   **Requirement:** Create 4 sub-tables (if data exists):
 ### Root Agent Errors
 ### Agent Errors
@@ -516,7 +512,7 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
 ---
 
 ## Empty LLM Responses
-*   **Source:** "Empty LLM responses" findings from `analyze_empty_llm_responses`.
+*   **Source:** "Empty LLM Responses" findings from `get_llm_requests`.
 *   **Requirement:** If data exists, create 2 tables:
     1.  **Summary**: `| Model Name | Agent Name | Empty Response Count |`
     2.  **Details**: `| Rank | Timestamp | Model Name | Agent Name | User Message | Prompt Tokens | Latency (s) | Trace ID | Span ID |`
@@ -561,4 +557,45 @@ This section provides a high-level scorecard for End to End, Sub Agent, Tool, an
     *   **Theme Variables:** You MUST construct the `themeVariables` JSON to match this logic.
         *   Example (1 Bad, 2 Good): `pie1`=#ef4444, `pie2`=#22c55e, `pie3`=#15803d.
         *   Example (3 Bad): `pie1`=#ef4444, `pie2`=#b91c1c, `pie3`=#991b1b.
+"""
+
+LATENCY_TOOLS_DESCRIPTION = """
+### Latency Analysis Tools (High-Density Data Fetching)
+
+You have access to four specialized tools for retrieving raw event data. Use these to inspect specific requests, investigate errors, or find performance bottlenecks.
+
+1.  **`get_invocation_requests(limit, sort_by, min_latency_ms, failed_only, root_agent_name)`**
+    *   **Use for**: Analyzing **End-to-End** Latency (Root Agent Invocations).
+    *   **Key Args**:
+        *   `sort_by`: "slowest" (default), "fastest", "latest".
+        *   `failed_only`: Set to `True` to find failed invocations.
+        *   `min_latency_ms`: Filter for requests slower than X ms.
+        *   `root_agent_name`: Filter by specific root agent.
+
+2.  **`get_agent_requests(limit, sort_by, min_latency_ms, failed_only, agent_name)`**
+    *   **Use for**: Analyzing **Sub-Agent** performance and workflow delays.
+    *   **Key Args**:
+        *   `agent_name`: Filter by specific sub-agent.
+        *   `failed_only`: Find specific sub-agent errors.
+        *   `sort_by`: "slowest" (default), "fastest", "latest".
+
+3.  **`get_tool_requests(limit, sort_by, min_latency_ms, failed_only, agent_name)`**
+    *   **Use for**: Analyzing **External Tool** execution times and errors.
+    *   **Key Args**:
+        *   `failed_only`: Find tool execution errors.
+        *   `min_latency_ms`: crucial for finding slow tools.
+        *   `truncate`: Set to `True` if you expect massive tool outputs.
+
+4.  **`get_llm_requests(limit, sort_by, min_latency_ms, failed_only, model_name)`**
+    *   **Use for**: Analyzing **LLM Inference** latency, token counts, and model errors.
+    *   **Key Args**:
+        *   `model_name`: Filter by specific model (e.g., "gemini-1.5-pro").
+        *   `failed_only`: Find model permission errors or refusals.
+        *   `exclude_zero_duration`: Helpful to filter out cached/mocked responses.
+
+**Common Usage Patterns:**
+*   **Find Errors**: Call `get_xxx_requests(failed_only=True, limit=5)`.
+*   **Find Slowest**: Call `get_xxx_requests(sort_by="slowest", limit=5)`.
+*   **Find Recent**: Call `get_xxx_requests(sort_by="latest", limit=5)`.
+*   **Deep Dive**: Combine `agent_name="foo"` with `min_latency_ms=1000` to find slow calls for a specific component.
 """

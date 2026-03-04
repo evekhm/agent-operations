@@ -28,7 +28,7 @@ api_retry_options = HttpRetryOptions(
 )
 
 from google.adk.models.google_llm import Gemini
-from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses, get_failed_llm_queries
+from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
     # detect_sequential_bottlenecks
@@ -36,18 +36,13 @@ from .agent_tools.analytics.concurrency import (
 from .agent_tools.analytics.latency import (
     get_active_metadata,
     analyze_latency_grouped,
-    get_slowest_queries,
-    get_fastest_queries,
-    get_failed_invocation_queries,
-    get_failed_tool_queries,
-    get_failed_agent_queries,
-    get_latest_queries,
+    get_llm_requests,
+    get_agent_requests,
+    get_tool_requests,
+    get_invocation_requests,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_latency_trend,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance
 )
 from .agent_tools.analytics.sql import run_sql_query
@@ -70,22 +65,16 @@ setup_telemetry()
 analyst_tools = [
     get_active_metadata,
     analyze_latency_grouped,
-    get_slowest_queries,
-    get_failed_llm_queries,
-    get_failed_invocation_queries,
-    get_failed_tool_queries,
-    get_failed_agent_queries,
-    get_fastest_queries,
-    get_latest_queries,
+    get_llm_requests,
+    get_agent_requests,
+    get_tool_requests,
+    get_invocation_requests,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
     # detect_sequential_bottlenecks,
     run_sql_query,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance,
     analyze_empty_llm_responses
 ]
