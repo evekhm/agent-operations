@@ -45,6 +45,13 @@ class ReportMarkdownBuilder:
         return f"[{display}]({self.format_span_url(t_id, s_id)})"
 
     @staticmethod
+    def bold_index(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty: return df
+        df = df.copy()
+        df.index = [f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x for x in df.index]
+        return df
+
+    @staticmethod
     def bold_first_column(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty: return df
         df = df.copy()

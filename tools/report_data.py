@@ -25,14 +25,11 @@ from agents.observability_agent.agent_tools.analytics.llm_diagnostics import (
     analyze_empty_llm_responses
 )
 from agents.observability_agent.agent_tools.analytics.correlation import fetch_correlation_data
+from agents.observability_agent.agent_tools.analytics.latency import get_raw_invocation_events, get_raw_agent_events
 from agents.observability_agent.config import (
     AGENT_EVENTS_VIEW_ID,
-    INVOCATION_EVENTS_VIEW_ID,
-    PROJECT_ID,
-    DATASET_ID
+    INVOCATION_EVENTS_VIEW_ID
 )
-from agents.observability_agent.utils.common import build_standard_where_clause
-from agents.observability_agent.utils.bq import execute_bigquery
 
 # Load Environment from root
 load_dotenv(os.path.join(dir_path, "../.env"), override=True)
@@ -69,25 +66,36 @@ class ReportDataManager:
         self.presentation_num_slowest = self.presentation_config.get("num_slowest_queries", 20)
         self.presentation_num_errors = self.presentation_config.get("num_error_queries", 20)
 
-    def json_to_df(self, json_input: Any) -> pd.DataFrame:
+    @staticmethod
+    def json_to_df(json_input: Any) -> pd.DataFrame:
         try:
             if isinstance(json_input, pd.DataFrame):
-                return json_input
-            if isinstance(json_input, str):
+                df = json_input
+            elif isinstance(json_input, str):
+                df = None
                 data = json.loads(json_input)
             else:
+                df = None
                 data = json_input
-                
-            if isinstance(data, dict):
-                # Try common keys for list data
-                for key in ["data", "requests", "impact_analysis", "batch_analysis", "records", "tool_errors", "llm_errors", "agent_errors", "root_errors"]:
-                    if key in data and isinstance(data[key], list):
-                         return pd.DataFrame(data[key])
-                pass
 
-            if isinstance(data, list):
-                return pd.DataFrame(data)
-            return pd.DataFrame()
+            if df is None:
+                if isinstance(data, dict):
+                    # Try common keys for list data
+                    for key in ["data", "requests", "impact_analysis", "batch_analysis", "records", "tool_errors", "llm_errors", "agent_errors", "root_errors"]:
+                        if key in data and isinstance(data[key], list):
+                             df = pd.DataFrame(data[key])
+                             break
+                    if df is None:
+                         df = pd.DataFrame()
+                elif isinstance(data, list):
+                    df = pd.DataFrame(data)
+                else:
+                    df = pd.DataFrame()
+
+            if not df.empty and 'duration_ms' in df.columns:
+                df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
+
+            return df
         except Exception as e:
             logger.error(f"Failed to parse JSON/Data to DataFrame: {e}")
             return pd.DataFrame()
@@ -97,131 +105,32 @@ class ReportDataManager:
         """Fetches raw LLM event data using fetch_correlation_data tool."""
         try:
             raw_json = await fetch_correlation_data(time_range=time_range, limit=5000)
-            df = self.json_to_df(raw_json)
-            
-            if df.empty:
-                return df
-
-            # Calculate seconds fields
-            if 'duration_ms' in df.columns:
-                df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
-            
-            if 'time_to_first_token_ms' in df.columns:
-                df['ttft_seconds'] = pd.to_numeric(df['time_to_first_token_ms'], errors='coerce') / 1000.0
-            else:
-                df['ttft_seconds'] = 0.0
-
-            # Ensure numeric
-            # correlation.py returns prompt_token_count, candidates_token_count, thoughts_token_count
-            cols_to_numeric = ['prompt_token_count', 'candidates_token_count', 'thoughts_token_count']
-            for col in cols_to_numeric:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
-            if 'timestamp' in df.columns:
-                 df['timestamp'] = pd.to_datetime(df['timestamp'])
-
-            # Map columns for ReportGenerator compatibility
-            # correlation.py: prompt_token_count, candidates_token_count, thoughts_token_count
-            # generate_report.py expects: input_tokens, output_tokens, thought_tokens
-            if 'prompt_token_count' in df.columns:
-                df['input_tokens'] = df['prompt_token_count']
-            if 'candidates_token_count' in df.columns:
-                df['output_tokens'] = df['candidates_token_count']
-            if 'thoughts_token_count' in df.columns:
-                df['thought_tokens'] = df['thoughts_token_count']
-
-            return df
+            return self.json_to_df(raw_json)
         except Exception as e:
             logger.error(f"Failed to fetch raw LLM data: {e}")
             return pd.DataFrame()
 
     async def fetch_raw_invocation_data(self, time_range: str = "24h", limit: int = 2000):
-        """Fetches raw E2E invocation event data from BigQuery."""
-        where_clause = build_standard_where_clause(time_range=time_range)
-        query = f"""
-        SELECT
-            root_agent_name as agent_name,
-            duration_ms,
-            timestamp
-        FROM `{PROJECT_ID}.{DATASET_ID}.invocation_events_view` AS T
-        WHERE {where_clause}
-          AND duration_ms > 0
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
+        """Fetches raw E2E invocation event data from BigQuery using the standard agent tool."""
         try:
-            df = await execute_bigquery(query)
-            if df.empty: return df
-            df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
-            if 'timestamp' in df.columns:
-                 df['timestamp'] = pd.to_datetime(df['timestamp'])
-            return df
+            raw_json = await get_raw_invocation_events(time_range=time_range, limit=limit)
+            return self.json_to_df(raw_json)
         except Exception as e:
             logger.error(f"Failed to fetch raw invocation data: {e}")
             return pd.DataFrame()
 
     async def fetch_raw_agent_data(self, time_range: str = "24h", limit: int = 5000):
-        """Fetches raw Agent execution event data from BigQuery."""
-        where_clause = build_standard_where_clause(time_range=time_range)
-        query = f"""
-        WITH Agents AS (
-            SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.agent_events_view` AS T WHERE {where_clause}
-        )
-        SELECT
-            A.span_id,
-            A.agent_name,
-            L.model_name,
-            A.duration_ms,
-            A.timestamp
-        FROM Agents AS A
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.llm_events_view` AS L
-          ON A.trace_id = L.trace_id AND A.span_id = L.parent_span_id
-        WHERE A.duration_ms > 0
-          AND A.agent_name != A.root_agent_name
-        ORDER BY A.timestamp DESC
-        LIMIT {limit}
-        """
+        """Fetches raw Agent execution event data from BigQuery using the standard agent tool."""
         try:
-            df = await execute_bigquery(query)
-            if df.empty: return df
-            df['latency_seconds'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
-            if 'timestamp' in df.columns:
-                 df['timestamp'] = pd.to_datetime(df['timestamp'])
-            return df
+            raw_json = await get_raw_agent_events(time_range=time_range, limit=limit)
+            return self.json_to_df(raw_json)
         except Exception as e:
             logger.error(f"Failed to fetch raw agent data: {e}")
             return pd.DataFrame()
 
-    async def fetch_llm_bottlenecks_with_details(self, limit: int = 5):
-        """Fetches LLM bottlenecks using fetch_slowest_requests tool."""
-        try:
-            raw_json = await fetch_slowest_requests(time_range=self.time_range_desc, limit=limit)
-            df = self.json_to_df(raw_json)
-            
-            if df.empty:
-                return df
 
-            if 'duration_ms' in df.columns:
-                df['duration_s'] = pd.to_numeric(df['duration_ms'], errors='coerce') / 1000.0
-                
-            if 'time_to_first_token_ms' in df.columns:
-                df['ttft_s'] = pd.to_numeric(df['time_to_first_token_ms'], errors='coerce') / 1000.0
-                
-            rename_map = {
-                'response_tokens': 'response_token_count',
-                'prompt_tokens': 'prompt_token_count',
-                'preview': 'input_preview',
-                'thought_tokens': 'thought_tokens'
-            }
-            df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
-            
-            return df
-        except Exception as e:
-             logger.error(f"Failed to fetch detailed LLM bottlenecks: {e}")
-             return pd.DataFrame()
-
-    async def trace_task(self, name, awaitable):
+    @staticmethod
+    async def trace_task(name, awaitable):
         logger.info(f"   [START] Task: {name}")
         try:
             res = await awaitable

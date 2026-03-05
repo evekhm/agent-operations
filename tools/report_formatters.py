@@ -16,7 +16,6 @@ class ReportDataFormatter:
         if len(s) >= 19 and s[4] == '-' and s[7] == '-' and s[10] in ('T', ' '):
             return s[:19].replace('T', ' ')
         try:
-             import pandas as pd
              return pd.to_datetime(val).strftime("%Y-%m-%d %H:%M:%S")
         except: return s
 
@@ -57,14 +56,12 @@ class ReportDataFormatter:
 
     @staticmethod
     def pass_fail(value, target, inverse=False) -> str:
-        import pandas as pd
         if value is None or pd.isna(value): return "⚪"
         if inverse: return "🟢" if value <= target else "🔴"
         return "🟢" if value >= target else "🔴"
 
     @staticmethod
     def format_token_metric(row, avg_col, p95_col) -> str:
-        import pandas as pd
         avg = row.get(avg_col)
         p95 = row.get(p95_col)
         if pd.isna(avg) or pd.isna(p95): return "-"
@@ -72,7 +69,6 @@ class ReportDataFormatter:
 
     def standardize_table_formatting(self, df: pd.DataFrame) -> pd.DataFrame:
         """Standardizes durations to seconds, applies status emojis, and formats code."""
-        import pandas as pd
         if df.empty: return df
         df = df.copy()
         

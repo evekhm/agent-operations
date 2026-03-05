@@ -115,8 +115,9 @@ def clear_query_cache():
 
 def _get_cache_path(query: str, timeout: int, query_parameters: list = None) -> str:
     """Generate cache file path based on query hash and parameters."""
+    from ..config import TABLE_ID
     params_str = str(query_parameters) if query_parameters else ""
-    content = f"{query}::{timeout}::{PROJECT_ID}::{DATASET_ID}::{params_str}"
+    content = f"{query}::{timeout}::{PROJECT_ID}::{DATASET_ID}::{TABLE_ID}::{params_str}"
     query_hash = hashlib.md5(content.encode()).hexdigest()
     return os.path.join(CACHE_DIR, f"{query_hash}.json")
 

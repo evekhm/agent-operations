@@ -23,6 +23,16 @@ from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
 from ...utils.telemetry import trace_span
 
+from .queries import (
+    ANALYZE_LATENCY_GROUPS_QUERY,
+    GET_CONCURRENT_REQUEST_IMPACT_QUERY,
+    ANALYZE_REQUEST_QUEUING_QUERY,
+    GET_CONFIG_OUTLIERS_QUERY,
+    FETCH_SINGLE_QUERY,
+    ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY,
+    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,22 +82,10 @@ async def analyze_latency_groups(
             filter_config=filter_config
         )
         
-        query = f"""
-        SELECT
-          T.agent_name,
-          T.root_agent_name,
-          T.model_name,
-          COUNT(*) as count,
-          AVG(duration_ms) as avg_latency_ms,
-          MIN(duration_ms) as min_latency_ms,
-          MAX(duration_ms) as max_latency_ms,
-          STDDEV(duration_ms) as std_latency_ms
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY root_agent_name, agent_name, model_name
-        ORDER BY count DESC
-        LIMIT {limit}
-        """
+        query = ANALYZE_LATENCY_GROUPS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
 
         df = await execute_bigquery(query)
         
@@ -154,24 +152,9 @@ async def get_concurrent_request_impact(
         )
         
         # Using TIMESTAMP_TRUNC to minute.
-        query = f"""
-        WITH ConcurrencyCounts AS (
-            SELECT
-                TIMESTAMP_TRUNC(timestamp, MINUTE) as time_bucket,
-                COUNT(*) as concurrent_requests,
-                AVG(duration_ms) as avg_latency_in_bucket
-            FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-            WHERE {where_clause}
-            GROUP BY time_bucket
+        query = GET_CONCURRENT_REQUEST_IMPACT_QUERY.format(
+            where_clause=where_clause
         )
-        SELECT
-            concurrent_requests,
-            AVG(avg_latency_in_bucket) as avg_latency_for_level,
-            COUNT(*) as occurrences
-        FROM ConcurrencyCounts
-        GROUP BY concurrent_requests
-        ORDER BY concurrent_requests ASC
-        """
         
         df = await execute_bigquery(query)
         
@@ -232,23 +215,9 @@ async def analyze_request_queuing(
             }
         )
         
-        query = f"""
-        WITH Bursts AS (
-             SELECT
-                TIMESTAMP_TRUNC(timestamp, SECOND) as second_bucket,
-                COUNT(*) as requests_per_second
-             FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-             WHERE {where_clause}
-             GROUP BY second_bucket
-             HAVING requests_per_second > 1
+        query = ANALYZE_REQUEST_QUEUING_QUERY.format(
+            where_clause=where_clause
         )
-        SELECT
-            requests_per_second,
-            COUNT(*) as burst_count
-        FROM Bursts
-        GROUP BY requests_per_second
-        ORDER BY requests_per_second DESC
-        """
         
         df = await execute_bigquery(query)
         bursts = []
@@ -325,21 +294,12 @@ async def get_config_outliers(
         config_select_str = ",\n            ".join(config_selects)
         group_by_str = ", ".join(group_by_cols)
         
-        query = f"""
-        SELECT
-            agent_name,
-            model_name,
-            {config_select_str},
-            AVG(duration_ms) as avg_latency,
-            STDDEV(duration_ms) as stddev_latency,
-            COUNT(*) as request_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY {group_by_str}
-        HAVING request_count > 5
-        ORDER BY avg_latency DESC
-        LIMIT {limit}
-        """
+        query = GET_CONFIG_OUTLIERS_QUERY.format(
+            config_select_str=config_select_str,
+            group_by_str=group_by_str,
+            limit=limit,
+            where_clause=where_clause
+        )
         
         df = await execute_bigquery(query)
         outliers = []
@@ -392,23 +352,7 @@ async def fetch_single_query(span_id: str) -> str:
     logger.info(f"[TOOL CALL-fetch_single_query] fetch_single_query(span_id='{span_id}')")
     try:
         # Query the view directly
-        query = f"""
-        SELECT
-          T.timestamp,
-          T.span_id,
-          T.full_request,
-          T.full_response,
-          T.model_name,
-          T.agent_name,
-          T.duration_ms,
-          T.thoughts_token_count,
-          T.candidates_token_count AS output_token_count,
-          T.prompt_token_count,
-          T.total_token_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE CAST(T.span_id AS STRING) = @span_id
-        LIMIT 1
-        """
+        query = FETCH_SINGLE_QUERY.format()
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -500,16 +444,9 @@ async def analyze_empty_llm_responses(
         where_clause += " AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
 
         # 1. Get summary stats
-        summary_query = f"""
-        SELECT
-            model_name,
-            agent_name,
-            COUNT(*) as empty_response_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY model_name, agent_name
-        ORDER BY empty_response_count DESC
-        """
+        summary_query = ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY.format(
+            where_clause=where_clause
+        )
         
         summary_df = await execute_bigquery(summary_query)
         stats = []
@@ -522,22 +459,10 @@ async def analyze_empty_llm_responses(
                 })
 
         # 2. Get detailed records
-        records_query = f"""
-        SELECT
-            T.span_id,
-            T.trace_id,
-            T.timestamp,
-            T.model_name,
-            T.agent_name,
-            T.prompt_token_count,
-            T.duration_ms,
-            I.content_text_summary
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE {where_clause}
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
+        records_query = ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
         
         records_df = await execute_bigquery(records_query)
         records = []

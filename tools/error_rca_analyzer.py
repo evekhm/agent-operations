@@ -6,6 +6,8 @@ import pandas as pd
 from typing import Dict, Any
 from google import genai
 
+from agents.observability_agent.config import RCA_MAX_CONCURRENT_REQUESTS
+
 logger = logging.getLogger(__name__)
 
 RCA_PROMPT = """
@@ -21,30 +23,31 @@ Telemetry Event Data:
 Return ONLY valid JSON. No markdown blocks, no prefixes.
 """
 
-async def _get_rca(client, df_name, idx, row_dict, prompt):
-    try:
-        response = await client.aio.models.generate_content(
-            model='gemini-2.5-pro',
-            contents=prompt,
-        )
-        text = response.text.strip()
-        # Remove markdown blocks if agent hallucinated them
-        if text.startswith("```json"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        elif text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            
-        data = json.loads(text)
-        return {
-            "category": data.get("category", "Unknown Priority"),
-            "rca_analysis": data.get("rca_analysis", "Extracted text but missing rca_analysis key.")
-        }
-    except Exception as e:
-        logger.error(f"Failed to generate RCA for {df_name} row {idx}: {e}")
-        return {
-            "category": "Generation Failed",
-            "rca_analysis": "RCA Generation failed."
-        }
+async def _get_rca(client, df_name, idx, row_dict, prompt, semaphore):
+    async with semaphore:
+        try:
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-pro',
+                contents=prompt,
+            )
+            text = response.text.strip()
+            # Remove markdown blocks if agent hallucinated them
+            if text.startswith("```json"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            elif text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                
+            data = json.loads(text)
+            return {
+                "category": data.get("category", "Unknown Priority"),
+                "rca_analysis": data.get("rca_analysis", "Extracted text but missing rca_analysis key.")
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate RCA for {df_name} row {idx}: {e}")
+            return {
+                "category": "Generation Failed",
+                "rca_analysis": "RCA Generation failed."
+            }
 
 async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, Any]:
     """
@@ -69,7 +72,14 @@ async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, 
         'llm_bottlenecks',
         'tool_bottlenecks'
     ]
-    
+    # Grab concurrency limit from environment variables, throttle to max 5 concurrent LLM calls by default to prevent 429 / Deadline errors
+    try:
+        max_concurrent_requests = int(RCA_MAX_CONCURRENT_REQUESTS)
+    except ValueError:
+        max_concurrent_requests = 5
+        logger.warning("Invalid integer in RCA_MAX_CONCURRENT_REQUESTS. Defaulting to 5.")
+        
+    sem = asyncio.Semaphore(max_concurrent_requests)
     tasks = []
     task_mapping = []
     
@@ -88,7 +98,7 @@ async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, 
                         row_dict.pop(col, None)
                         
                     prompt = RCA_PROMPT.format(error_data=json.dumps(row_dict, indent=2, default=str))
-                    tasks.append(_get_rca(client, df_name, idx, row_dict, prompt))
+                    tasks.append(_get_rca(client, df_name, idx, row_dict, prompt, sem))
                     task_mapping.append(df_name)
                 except Exception as e:
                     logger.warning(f"   Failed to prepare RCA prompt for row {idx} in {df_name}: {e}")

@@ -617,3 +617,5 @@ Report Context:
 Project: {project_id}
 Timeframe: {time_period}
 """
+
+ROOT_CAUSE_ANALYSIS_PROMPT = 'Analyze this request log and explain the root cause of the latency or error. Be concise. Focus ONLY on factors visible in the log (e.g. LLM prompt size, external API delays). NEVER use the words "sequential" or "parallel", as the agent architecture is fixed and already concurrent. Describe only what is in the data. Log: '

@@ -38,6 +38,7 @@ LOCATION = os.getenv('LOCATION', "us")
 #Agent produced BQ Analytics
 AGENT_DATASET_ID = os.getenv('AGENT_DATASET_ID', DATASET_ID)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
+RCA_MAX_CONCURRENT_REQUESTS = os.getenv('RCA_MAX_CONCURRENT_REQUESTS', '5')
 
 MAX_CHARS_PAYLOAD_SQL = os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000') # max chars for the returned SQL payload to be
 # truncated (e.g when using LLM)

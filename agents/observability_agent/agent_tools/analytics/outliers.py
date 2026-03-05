@@ -6,6 +6,7 @@ from ...utils.bq import execute_bigquery
 from ...utils.common import build_standard_where_clause, AnalysisEncoder
 from ...utils.caching import cached_tool
 from ...config import PROJECT_ID, DATASET_ID, AGENT_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, LLM_EVENTS_VIEW_ID
+from .queries import GET_OUTLIER_THRESHOLD_QUERY, GET_OUTLIER_RECORDS_QUERY
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +69,11 @@ async def analyze_outlier_patterns(
         
         # Actually standard SQL PERCENTILE_CONT logic might be tricky in subselects without grouping.
         # Simpler: Get APPROX_QUANTILES
-        threshold_query = f"""
-        SELECT APPROX_QUANTILES({metric}, 100)[OFFSET({int(threshold_percentile*100)})] as threshold
-        FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
-        WHERE {where_clause} AND T.parent_span_id IS NULL
-        """
+        threshold_query = GET_OUTLIER_THRESHOLD_QUERY.format(
+            metric=metric,
+            percentile_offset=int(threshold_percentile*100),
+            where_clause=where_clause
+        )
         
         df_thresh = await execute_bigquery(threshold_query)
         if df_thresh.empty:
@@ -81,25 +82,12 @@ async def analyze_outlier_patterns(
         threshold_val = df_thresh.iloc[0]['threshold']
         
         # 2. Fetch Outliers
-        outlier_query = f"""
-        SELECT 
-            T.agent_name,
-            T.model_name,
-            -- We might want joined tool usage? That's complex.
-            -- Let's stick to Agent-level attributes first.
-            T.input_token_count,
-            T.output_token_count,
-            T.total_token_count,
-            T.duration_ms,
-            T.status,
-            T.trace_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
-        WHERE {where_clause} 
-        AND T.parent_span_id IS NULL
-        AND T.{metric} >= {threshold_val}
-        ORDER BY T.{metric} DESC
-        LIMIT 1000
-        """
+        outlier_query = GET_OUTLIER_RECORDS_QUERY.format(
+            metric=metric,
+            threshold_val=threshold_val,
+            where_clause=where_clause,
+            limit=1000
+        )
         
         df_outliers = await execute_bigquery(outlier_query)
         
@@ -125,9 +113,9 @@ async def analyze_outlier_patterns(
                 "status": df_outliers['status'].value_counts(normalize=True).to_dict()
             },
             "averages": {
-                "input_tokens": float(df_outliers['input_token_count'].mean()),
-                "output_tokens": float(df_outliers['output_token_count'].mean()),
-                "duration_ms": float(df_outliers['duration_ms'].mean())
+                "prompt_token_count": float(df_outliers['prompt_token_count'].mean()) if 'prompt_token_count' in df_outliers.columns else 0.0,
+                "candidates_token_count": float(df_outliers['candidates_token_count'].mean()) if 'candidates_token_count' in df_outliers.columns else 0.0,
+                "duration_ms": float(df_outliers['duration_ms'].mean()) if 'duration_ms' in df_outliers.columns else 0.0
             },
             "samples": df_outliers.head(limit).to_dict(orient="records")
         }

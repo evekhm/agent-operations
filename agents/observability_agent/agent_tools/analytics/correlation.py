@@ -13,6 +13,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from ...utils.bq import execute_bigquery
 from ...utils.common import build_standard_where_clause
+from .queries import FETCH_CORRELATION_DATA_QUERY
 
 logger = logging.getLogger(__name__)
 
@@ -34,28 +35,12 @@ async def fetch_correlation_data(
     """
     where_clause = build_standard_where_clause(time_range=time_range)
     
-    query = f"""
-    SELECT
-        root_agent_name,
-        agent_name,
-        model_name,
-        total_token_count,
-        prompt_token_count,
-        candidates_token_count,
-        thoughts_token_count,
-        duration_ms,
-        timestamp,
-        time_to_first_token_ms
-    FROM `{{PROJECT_ID}}.{{DATASET_ID}}.llm_events_view` AS T
-    WHERE {where_clause}
-      AND total_token_count > 0
-      AND duration_ms > 0
-    ORDER BY timestamp DESC
-    LIMIT {limit}
-    """
+    from ...config import LLM_EVENTS_VIEW_ID
     
-    from ...config import PROJECT_ID, DATASET_ID
-    query = query.format(PROJECT_ID=PROJECT_ID, DATASET_ID=DATASET_ID)
+    query = FETCH_CORRELATION_DATA_QUERY.format(
+        limit=limit,
+        where_clause=where_clause
+    )
     
     try:
         df = await execute_bigquery(query)
