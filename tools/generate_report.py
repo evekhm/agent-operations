@@ -30,6 +30,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from agents.observability_agent.utils.views import ensure_all_views
 from report_charts import ChartGenerator, OK_COLOR, ERR_COLOR
 from report_data import ReportDataManager
+from report_formatters import ReportDataFormatter
+from report_markdown_builder import ReportMarkdownBuilder
 
 logger = logging.getLogger(__name__)
 class ReportGenerator:
@@ -129,89 +131,9 @@ class ReportGenerator:
         self.max_column_width = int(os.getenv("MAX_COLUMN_WIDTH_CHARS",
                                               self.pres_config.get("max_column_width_chars", 250)))
 
-
-
-
-
-
-    def _format_date(self, val):
-        """Formats timestamp to YYYY-MM-DD HH:MM:SS."""
-        if pd.isna(val) or val == "":
-            return "N/A"
-        
-        # Determine if it's already a datetime object
-        if hasattr(val, 'strftime'):
-            return val.strftime("%Y-%m-%d %H:%M:%S")
-            
-        s = str(val)
-        # Try simplistic truncation for ISO-like strings (most common)
-        # Matches 2026-02-24T18:30:44.609050+00:00 OR 2026-02-24 18:30:44.609050
-        if len(s) >= 19:
-            # Check for YYYY-MM-DD
-            if s[4] == '-' and s[7] == '-':
-                # Check for T or space
-                if s[10] in ('T', ' '):
-                    return s[:19].replace('T', ' ')
-        
-        # Fallback to pandas parsing (slower but robust)
-        try:
-             dt = pd.to_datetime(val)
-             return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except:
-             return s
-
-
-    def _standardize_formatting(self, df):
-        """Standardize timestamps and durations in DataFrame.
-           Modifies DataFrame in-place and returns it.
-        """
-        if df.empty: return df
-        
-        # Timestamp Formatting
-        for col in ['timestamp', 'start_time', 'end_time']:
-            if col in df.columns:
-                df[col] = df[col].apply(self._format_date)
-        return df
-
-    def _format_as_code(self, x):
-        """Wraps JSON-like strings or dicts in backticks for markdown."""
-        if x is None or pd.isna(x) or x == "":
-            return "N/A"
-        
-        # If it's a list or dict, dump it
-        if isinstance(x, (list, dict)):
-            try:
-                val = json.dumps(x)
-                return f"`{val}`"
-            except:
-                return f"`{str(x)}`"
-        
-        s = str(x).strip()
-        # Generic check: if it looks like JSON/Code, wrap it
-        # We check for starting { or [ 
-        if len(s) > 0 and (s.startswith('{') or s.startswith('[')):
-             return f"`{s}`"
-             
-        return s
-
-    def _truncate_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Truncates string columns to max_column_width."""
-        if df.empty:
-            return df
-            
-        # Remove duplicate columns to avoid ambiguity
-        df_trunc = df.loc[:, ~df.columns.duplicated()].copy()
-        
-        for col in df_trunc.columns:
-            # Check dtype safely
-            if df_trunc[col].dtype == 'object':
-                # Convert to string and truncate
-                df_trunc[col] = df_trunc[col].astype(str).apply(
-                    lambda x: x[:self.max_column_width] + "..." if len(x) > self.max_column_width else x
-                )
-        return df_trunc
-
-
+        # Initialize explicit decoupled builders
+        self.formatter = ReportDataFormatter(self.max_column_width)
+        self.md_builder = ReportMarkdownBuilder(PROJECT_ID)
 
     def add_section(self, title: str, content: str = ""):
         self.report_content.append(f"\n## {title}\n")
@@ -237,24 +159,6 @@ class ReportGenerator:
             else:
                 self.report_content.append(f"[![{title}]({rel_path})]({rel_path})\n<br>\n")
 
-
-
-    def _status_emoji(self, status: str) -> str:
-        return "🟢" if status == "OK" else "🔴"
-
-    def _pass_fail(self, value, target, inverse=False):
-        if value is None or pd.isna(value): return "⚪"
-        if inverse: # Lower is better
-            return "🟢" if value <= target else "🔴"
-        return "🟢" if value >= target else "🔴"
-
-    def _format_token_metric(self, row, avg_col, p95_col):
-        avg = row.get(avg_col)
-        p95 = row.get(p95_col)
-        if pd.isna(avg) or pd.isna(p95):
-            return "-"
-        return f"{int(avg)} / {int(p95)}"
-
     def _build_standard_table(self, df: pd.DataFrame, target_latency_sec: float, target_error_pct: float, name_col: str, include_tokens: bool = True) -> pd.DataFrame:
         if df.empty: return pd.DataFrame()
         
@@ -279,11 +183,11 @@ class ReportGenerator:
             df_disp[disp_p_col] = None
 
         df_disp['Target (s)'] = target_latency_sec
-        df_disp['Status'] = df_disp[disp_p_col].apply(lambda x: self._pass_fail(x, target_latency_sec, inverse=True))
+        df_disp['Status'] = df_disp[disp_p_col].apply(lambda x: self.formatter.pass_fail(x, target_latency_sec, inverse=True))
         
         df_disp['Err %'] = df_disp['error_rate_pct']
         df_disp['Target (%)'] = target_error_pct
-        df_disp['Err Status'] = df_disp['error_rate_pct'].apply(lambda x: self._pass_fail(x, target_error_pct, inverse=True))
+        df_disp['Err Status'] = df_disp['error_rate_pct'].apply(lambda x: self.formatter.pass_fail(x, target_error_pct, inverse=True))
         
         def get_overall(row):
             if row['Status'] == "🔴" or row['Err Status'] == "🔴":
@@ -296,10 +200,10 @@ class ReportGenerator:
         df_disp[disp_p_col] = df_disp[disp_p_col].apply(lambda x: "-" if pd.isna(x) else x)
 
         if include_tokens:
-            df_disp['Input Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_input_tokens', 'p95_input_tokens'), axis=1)
-            df_disp['Output Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_output_tokens', 'p95_output_tokens'), axis=1)
-            df_disp['Thought Tok (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_thought_tokens', 'p95_thought_tokens'), axis=1)
-            df_disp['Tokens Consumed (Avg/P95)'] = df_disp.apply(lambda r: self._format_token_metric(r, 'avg_total_tokens', 'p95_total_tokens'), axis=1)
+            df_disp['Input Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_input_tokens', 'p95_input_tokens'), axis=1)
+            df_disp['Output Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_output_tokens', 'p95_output_tokens'), axis=1)
+            df_disp['Thought Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_thought_tokens', 'p95_thought_tokens'), axis=1)
+            df_disp['Tokens Consumed (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_total_tokens', 'p95_total_tokens'), axis=1)
 
         df_disp = df_disp.rename(columns={name_col: 'Name'})
         
@@ -316,7 +220,7 @@ class ReportGenerator:
         final_cols_valid = [c for c in final_cols_order if c in df_disp.columns]
         
         final_df = df_disp[final_cols_valid].copy()
-        return self._bold_first_column(final_df)
+        return self.md_builder.bold_first_column(final_df)
 
     def _format_links(self, df: pd.DataFrame) -> pd.DataFrame:
         """Formats trace_id and span_id as Markdown links."""
@@ -325,15 +229,10 @@ class ReportGenerator:
         
         # Helper to safely format
         def fmt_trace(tid):
-            if not tid or tid == 'N/A' or pd.isna(tid): return tid
-            return f"[{tid}](https://console.cloud.google.com/traces/explorer;traceId={tid}?project={PROJECT_ID})"
+            return self.md_builder.format_trace_md_link(tid)
 
         def fmt_span(row):
-            tid = row.get('trace_id')
-            sid = row.get('span_id')
-            if not sid or sid == 'N/A' or pd.isna(sid): return sid
-            if not tid or tid == 'N/A' or pd.isna(tid): return sid
-            return f"[{sid}](https://console.cloud.google.com/traces/explorer;traceId={tid};spanId={sid}?project={PROJECT_ID})"
+            return self.md_builder.format_span_md_link(row.get('span_id'), row.get('trace_id'))
 
         if 'span_id' in df.columns:
             # Requires trace_id to be present for the link
@@ -450,46 +349,6 @@ class ReportGenerator:
         # Generate
         path = self.chart_gen.generate_pie_chart(data_series, title, filename, colors=colors)
         if path: self.add_image(title, path)
-
-    def _bold_first_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Bolds the values in the first column of the DataFrame."""
-        if df.empty:
-            return df
-        df = df.copy()
-        first_col = df.columns[0]
-        # Only apply bold if not already bolded (basic check)
-        df[first_col] = df[first_col].apply(lambda x: f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x)
-        return df
-
-    def _bold_index(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Bolds the index of the DataFrame."""
-        if df.empty:
-            return df
-        df = df.copy()
-        df.index = df.index.map(lambda x: f"**{x}**" if pd.notna(x) and not str(x).strip().startswith("**") else x)
-        return df
-
-    def _bold_columns(self, df: pd.DataFrame, columns: list) -> pd.DataFrame:
-        """Bolds value in specific columns."""
-        if df.empty:
-            return df
-        df = df.copy()
-        for col in columns:
-            if col in df.columns:
-                df[col] = df[col].apply(lambda x: f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x)
-        return df
-
-    def _bold_columns_by_pattern(self, df: pd.DataFrame, pattern: str = "Name") -> pd.DataFrame:
-        """Bolds values in columns matching the pattern (case-insensitive)."""
-        if df.empty:
-            return df
-        df = df.copy()
-        for col in df.columns:
-            # Check if pattern is in column name (handling bold markdown wrappers in col name)
-            clean_col = col.replace('*', '').strip()
-            if pattern.lower() in clean_col.lower():
-                 df[col] = df[col].apply(lambda x: f"**{x}**" if pd.notna(x) and str(x).strip() and not str(x).strip().startswith("**") else x)
-        return df
 
     def _render_agent_model_charts(self):
         """Generates separate bar charts for each agent, showing Pure LLM Latency by Model."""
@@ -662,7 +521,6 @@ class ReportGenerator:
                 if path:
                     self.add_image(f"{agent} via {model} Token Sequence", path)
 
-
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str, kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False, include_usage_chart: bool = True):
         self.add_subsection(title)
         self.report_content.append(f"\n(AI_SUMMARY: {title})\n")
@@ -726,8 +584,7 @@ class ReportGenerator:
                 filename=f"{chart_prefix}_err_status.png",
                 size_col="Requests"
             )
-        
-    
+
     def _extract_rcas(self, df_final):
         if 'RCA' in df_final.columns:
             for idx, row in df_final.iterrows():
@@ -740,11 +597,7 @@ class ReportGenerator:
                     self.rca_counter += 1
         return df_final
 
-    def build_report(self):
-        logger.info("   [BUILD] Starting build_report...")
-        # --- Header ---
-        self.report_content = [f"# Agents Observability Report\n"]
-        
+    def _render_report_header(self):
         # Calculate Analysis Window
         end_dt = datetime.utcnow()
         start_dt = end_dt - timedelta(days=7) # Default
@@ -775,12 +628,14 @@ class ReportGenerator:
         self.report_content.append(pd.DataFrame(header_data, columns=["Property", "Value"]).to_markdown(index=False, headers=["**Property**", "**Value**"]))
         self.report_content.append("\n---\n")
 
+    def _render_executive_summary(self):
         # --- Executive Summary ---
         self.add_section("Executive Summary")
         # Placeholder for AI augmentation
         self.report_content.append("\n(Executive Summary will be generated by AI Agent)\n")
         self.report_content.append("\n---\n")
 
+    def _render_performance_end_to_end(self):
         # --- Performance ---
         self.add_section("Performance")
         self.report_content.append("\n(AI_SUMMARY: Performance)\n")
@@ -851,48 +706,7 @@ class ReportGenerator:
 
         self.report_content.append("\n---\n")
 
-        # --- Agent Level ---
-        self._render_performance_section(
-            title="Agent Level",
-            df=self.df_agents,
-            time_col="avg_ms",
-            name_col="agent_name",
-            kpi_target_key="kpis.agent.latency_target",
-            kpi_error_key="kpis.agent.error_target",
-            include_usage_chart=True # Default, but explicit
-        )
-        
-
-
-        self.report_content.append("\n---\n")
-
-        # --- Tool Level ---
-        self._render_performance_section(
-            title="Tool Level",
-            df=self.df_tools,
-            time_col="avg_ms",
-            name_col="tool_name",
-            kpi_target_key="kpis.tool.latency_target",
-            kpi_error_key="kpis.tool.error_target",
-            include_tokens=False,
-            include_usage_chart=True
-        )
-        self.report_content.append("\n---\n")
-
-        # --- Model Level ---
-        self._render_performance_section(
-            title="Model Level",
-            df=self.df_models,
-            time_col="avg_ms",
-            name_col="model_name",
-            kpi_target_key="kpis.llm.latency_target",
-            kpi_error_key="kpis.llm.error_target",
-            include_tokens=True,
-            include_usage_chart=True
-        )
-        self.report_content.append("\n---\n")
-
-
+    def _render_agent_details(self):
         self.add_section("Agent Details")
         self.report_content.append("\n(AI_SUMMARY: Agent Composition)\n")
         
@@ -911,7 +725,7 @@ class ReportGenerator:
              # Create temporary bold headers for markdown
              dist_table_disp = dist_table.rename(columns=lambda x: f"**{x}**")
              self.report_content.append(f"**Total Requests:** {total}\n")
-             self.report_content.append(self._bold_first_column(dist_table_disp).to_markdown(index=False))
+             self.report_content.append(self.md_builder.bold_first_column(dist_table_disp).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
              
              # Agent Composition Pie Chart (Neutral Distribution)
@@ -1209,6 +1023,7 @@ class ReportGenerator:
         self.report_content.append("<br>")
         self.report_content.append("\n---\n")
 
+    def _render_model_details(self):
         self.add_section("Model Details")
         self.report_content.append("\n(AI_SUMMARY: Model Composition)\n")
         
@@ -1219,7 +1034,7 @@ class ReportGenerator:
              dist_table['%'] = (dist_table['total_count'] / total * 100).round(2)
              dist_table.columns = ['**Name**', '**Requests**', '**%**']
              self.report_content.append(f"**Total Requests:** {total}\n")
-             self.report_content.append(self._bold_first_column(dist_table).to_markdown(index=False))
+             self.report_content.append(self.md_builder.bold_first_column(dist_table).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
 
              # Model Usage Pie Chart
@@ -1438,7 +1253,7 @@ class ReportGenerator:
 
              token_df = pd.DataFrame(stats_rows)
              token_df.columns = [f"**{c}**" for c in token_df.columns]
-             self.report_content.append(self._bold_first_column(token_df).to_markdown(index=False))
+             self.report_content.append(self.md_builder.bold_first_column(token_df).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
 
              # Add specific per-model agent token distribution charts
@@ -1497,7 +1312,7 @@ class ReportGenerator:
                     
                     dist_df = pd.DataFrame(table_rows)
                     dist_df.columns = [f"**{c}**" for c in dist_df.columns]
-                    self.report_content.append(self._bold_first_column(dist_df).to_markdown(index=False))
+                    self.report_content.append(self.md_builder.bold_first_column(dist_df).to_markdown(index=False))
                     self.report_content.append("\n")
 
                     # Mermaid Chart
@@ -1532,6 +1347,22 @@ class ReportGenerator:
         # self.add_section("Advanced Charts")
         # self.generate_advanced_charts()
 
+    def _append_inline_rca_list(self, df, prefix):
+        if 'rca_analysis' in df.columns:
+            has_rcas = False
+            rca_block = ["**Detailed RCA Analysis:**\n"]
+            for idx, row in df.iterrows():
+                rca_text = str(row.get('rca_analysis', 'N/A')).replace('&nbsp;', '').strip()
+                if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('['):
+                    has_rcas = True
+                    rank = row.get('Rank', idx + 1)
+                    anchor_id = f"rca-{prefix}-{rank}"
+                    rca_block.append(f"- <a id=\"{anchor_id}\"></a>**Rank {rank}**: {rca_text}\n")
+            if has_rcas:
+                self.report_content.extend(rca_block)
+                self.report_content.append("<br>\n")
+
+    def _render_system_bottlenecks(self):
         # --- System Bottlenecks ---
         self.add_section("System Bottlenecks & Impact")
         self.report_content.append("\n(AI_SUMMARY: System Bottlenecks & Impact)\n")
@@ -1548,24 +1379,11 @@ class ReportGenerator:
                 df['timestamp'] = df['timestamp'].apply(self._format_date)
             return df
 
-        def append_inline_rca_list(df, prefix):
-            if 'rca_analysis' in df.columns:
-                has_rcas = False
-                rca_block = ["**Detailed RCA Analysis:**\n"]
-                for idx, row in df.iterrows():
-                    rca_text = str(row.get('rca_analysis', 'N/A')).replace('&nbsp;', '').strip()
-                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('['):
-                        has_rcas = True
-                        rank = row.get('Rank', idx + 1)
-                        anchor_id = f"rca-{prefix}-{rank}"
-                        rca_block.append(f"- <a id=\"{anchor_id}\"></a>**Rank {rank}**: {rca_text}\n")
-                if has_rcas:
-                    self.report_content.extend(rca_block)
-                    self.report_content.append("<br>\n")
+
 
         self.add_subsection("Slowest Invocations")
         if isinstance(self.root_bottlenecks, pd.DataFrame) and not self.root_bottlenecks.empty:
-            df_root = fmt_ts_col(self._standardize_formatting(self.root_bottlenecks.copy()))
+            df_root = fmt_ts_col(self.formatter.standardize_formatting(self.root_bottlenecks.copy()))
             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                 df_root = df_root.head(self.num_slowest_queries)
             # Rank | Timestamp | Root Agent | Duration (s) | Error Message | User Message | Trace ID | Span ID
@@ -1612,9 +1430,8 @@ class ReportGenerator:
             for idx, row in df_final_root.iterrows():
                 t_id = row.get('Trace ID')
                 p_id = PROJECT_ID
-                if t_id and not str(t_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                     df_final_root.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                if t_id:
+                     df_final_root.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                      
                 if 'rca_analysis' in df_root.columns:
                     rca_text = str(df_root.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
@@ -1623,10 +1440,10 @@ class ReportGenerator:
                         df_final_root.at[idx, 'Rank'] = f"[{rank_val}](#rca-root-{rank_val})"
 
             # Bolding for Root Agent
-            df_final_root = self._bold_columns_by_pattern(df_final_root, "Root Agent")
-            self.report_content.append(self._bold_first_column(df_final_root).to_markdown(index=False))
+            df_final_root = self.md_builder.bold_columns_by_pattern(df_final_root, "Root Agent")
+            self.report_content.append(self.md_builder.bold_first_column(df_final_root).to_markdown(index=False))
             self.report_content.append("\n<br>\n")
-            append_inline_rca_list(df_root, "root")
+            self._append_inline_rca_list(df_root, "root")
         else:
             self.report_content.append("No root bottlenecks found.\n")
 
@@ -1634,7 +1451,7 @@ class ReportGenerator:
         
         # Helper to format Agent Bottlenecks
         if isinstance(self.agent_bottlenecks, pd.DataFrame) and not self.agent_bottlenecks.empty:
-            df_top = fmt_ts_col(self._standardize_formatting(self._truncate_df(self.agent_bottlenecks.copy())))
+            df_top = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(self.agent_bottlenecks.copy())))
             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                 df_top = df_top.head(self.num_slowest_queries)
 
@@ -1709,13 +1526,11 @@ class ReportGenerator:
                 s_id = row.get('Span ID')
                 p_id = PROJECT_ID
                 
-                if t_id and not str(t_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                     df_final_top.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                if t_id:
+                     df_final_top.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                 
-                if t_id and s_id and not str(s_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
-                     df_final_top.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
+                if t_id and s_id:
+                     df_final_top.at[idx, 'Span ID'] = self.md_builder.format_span_md_link(s_id, t_id, f"`{s_id}`")
 
                 if 'rca_analysis' in df_top.columns:
                     rca_text = str(df_top.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
@@ -1725,17 +1540,17 @@ class ReportGenerator:
 
             df_final_top.columns = [f"**{c}**" for c in df_final_top.columns]
             
-            df_final_top = self._bold_columns_by_pattern(df_final_top, "Name")
-            df_final_top = self._bold_columns_by_pattern(df_final_top, "Root Agent")
-            self.report_content.append(self._bold_first_column(df_final_top).to_markdown(index=False))
+            df_final_top = self.md_builder.bold_columns_by_pattern(df_final_top, "Name")
+            df_final_top = self.md_builder.bold_columns_by_pattern(df_final_top, "Root Agent")
+            self.report_content.append(self.md_builder.bold_first_column(df_final_top).to_markdown(index=False))
             self.report_content.append("\n<br>\n")
-            append_inline_rca_list(df_top, "agent")
+            self._append_inline_rca_list(df_top, "agent")
         else:
             self.report_content.append("No data available for top bottlenecks.\n")
         
         self.add_subsection("Slowest LLM queries")
         if isinstance(self.llm_bottlenecks, pd.DataFrame) and not self.llm_bottlenecks.empty:
-             df_llm = fmt_ts_col(self._standardize_formatting(self.llm_bottlenecks.copy()))
+             df_llm = fmt_ts_col(self.formatter.standardize_formatting(self.llm_bottlenecks.copy()))
              if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                  df_llm = df_llm.head(self.num_slowest_queries)
              
@@ -1869,13 +1684,11 @@ class ReportGenerator:
                 s_id = row.get('Span ID')
                 p_id = PROJECT_ID
                 
-                if t_id and not str(t_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                     df_final_llm.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                if t_id:
+                     df_final_llm.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                 
-                if t_id and s_id and not str(s_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
-                     df_final_llm.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
+                if t_id and s_id:
+                     df_final_llm.at[idx, 'Span ID'] = self.md_builder.format_span_md_link(s_id, t_id, f"`{s_id}`")
 
                 if 'rca_analysis' in df_llm.columns:
                     rca_text = str(df_llm.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
@@ -1885,16 +1698,16 @@ class ReportGenerator:
 
              df_final_llm.columns = [f"**{c}**" for c in df_final_llm.columns]
              
-             df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Name")
-             df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Root Agent")
-             self.report_content.append(self._bold_first_column(df_final_llm).to_markdown(index=False))
+             df_final_llm = self.md_builder.bold_columns_by_pattern(df_final_llm, "Name")
+             df_final_llm = self.md_builder.bold_columns_by_pattern(df_final_llm, "Root Agent")
+             self.report_content.append(self.md_builder.bold_first_column(df_final_llm).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
-             append_inline_rca_list(df_llm, "llm")
+             self._append_inline_rca_list(df_llm, "llm")
 
         # Slowest Tools Queries
         self.add_subsection("Slowest Tools Queries")
         if isinstance(self.tool_bottlenecks, pd.DataFrame) and not self.tool_bottlenecks.empty:
-             df_tool = fmt_ts_col(self._standardize_formatting(self.tool_bottlenecks.copy()))
+             df_tool = fmt_ts_col(self.formatter.standardize_formatting(self.tool_bottlenecks.copy()))
              if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                  df_tool = df_tool.head(self.num_slowest_queries)
              # Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID
@@ -2007,13 +1820,11 @@ class ReportGenerator:
                 s_id = row.get('Span ID')
                 p_id = PROJECT_ID
                 
-                if t_id and not str(t_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                     df_final.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                if t_id:
+                     df_final.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                 
-                if t_id and s_id and not str(s_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
-                     df_final.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
+                if t_id and s_id:
+                     df_final.at[idx, 'Span ID'] = self.md_builder.format_span_md_link(s_id, t_id, f"`{s_id}`")
 
                 if 'rca_analysis' in df_tool.columns:
                     rca_text = str(df_tool.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
@@ -2023,18 +1834,19 @@ class ReportGenerator:
 
              df_final.columns = [f"**{c}**" for c in df_final.columns]
              
-             df_final = self._bold_columns_by_pattern(df_final, "Name")
-             self.report_content.append(self._bold_first_column(df_final).to_markdown(index=False))
+             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Name")
+             self.report_content.append(self.md_builder.bold_first_column(df_final).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
-             append_inline_rca_list(df_tool, "tool")
+             self._append_inline_rca_list(df_tool, "tool")
 
+    def _render_error_analysis(self):
         # --- Error Analysis ---
         self.add_section("Error Analysis")
         self.report_content.append("\n(AI_SUMMARY: Error Analysis)\n")
         
         def format_error_table(df, cols_mapping, prefix):
             if df.empty: return None, None
-            df_err = self._standardize_formatting(df.copy())
+            df_err = self.formatter.standardize_formatting(df.copy())
             df_err['Rank'] = range(1, len(df_err) + 1)
             
             # Formats
@@ -2063,7 +1875,7 @@ class ReportGenerator:
             df_final['Rank'] = df_final['Rank'].astype(object)
             
             # Now truncate all fields to max_column_width so tables don't explode
-            df_final = self._truncate_df(df_final)
+            df_final = self.formatter.truncate_df(df_final)
             
             # Links
             for idx, row in df_final.iterrows():
@@ -2071,13 +1883,11 @@ class ReportGenerator:
                 s_id = row.get('Span ID')
                 p_id = PROJECT_ID
                 
-                if t_id and not str(t_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                     df_final.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                if t_id:
+                     df_final.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                 
-                if t_id and s_id and not str(s_id).startswith('['):
-                     link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
-                     df_final.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
+                if t_id and s_id:
+                     df_final.at[idx, 'Span ID'] = self.md_builder.format_span_md_link(s_id, t_id, f"`{s_id}`")
                 
                 # Invocation ID link if present
                 inv_id = row.get('Invocation ID')
@@ -2094,9 +1904,9 @@ class ReportGenerator:
             df_final.columns = [f"**{c}**" for c in df_final.columns]
             
             # Generic Bolding
-            df_final = self._bold_columns_by_pattern(df_final, "Name")
-            df_final = self._bold_columns_by_pattern(df_final, "Root Agent")
-            return self._bold_first_column(df_final).to_markdown(index=False), df_err
+            df_final = self.md_builder.bold_columns_by_pattern(df_final, "Name")
+            df_final = self.md_builder.bold_columns_by_pattern(df_final, "Root Agent")
+            return self.md_builder.bold_first_column(df_final).to_markdown(index=False), df_err
 
         # 1. Root Agent Errors
         self.add_subsection("Root Errors")
@@ -2117,7 +1927,7 @@ class ReportGenerator:
             tbl, processed_df = format_error_table(self.root_errors.head(self.num_error_queries), root_map, "root")
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
-            append_inline_rca_list(processed_df, "err-root")
+            self._append_inline_rca_list(processed_df, "err-root")
         else:
             self.report_content.append("No Root Agent errors found.\n")
 
@@ -2141,13 +1951,12 @@ class ReportGenerator:
             'span_id': 'Span ID'
         }
         if not self.agent_errors.empty:
-            if 'root_status' in self.agent_errors.columns:
-                self.agent_errors['root_status'] = self.agent_errors['root_status'].apply(self._status_emoji)
+            self.agent_errors = self.formatter.standardize_table_formatting(self.agent_errors)
 
             tbl, processed_df = format_error_table(self.agent_errors.head(self.num_error_queries), agent_map, "agent")
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
-            append_inline_rca_list(processed_df, "err-agent")
+            self._append_inline_rca_list(processed_df, "err-agent")
         else:
             self.report_content.append("No Agent errors found.\n")
 
@@ -2171,11 +1980,7 @@ class ReportGenerator:
             'span_id': 'Span ID' 
         }
         if not self.tool_errors.empty:
-             # Map status emoji
-             if 'agent_status' in self.tool_errors.columns:
-                 self.tool_errors['agent_status'] = self.tool_errors['agent_status'].apply(self._status_emoji)
-             if 'root_status' in self.tool_errors.columns:
-                 self.tool_errors['root_status'] = self.tool_errors['root_status'].apply(self._status_emoji)
+             self.tool_errors = self.formatter.standardize_table_formatting(self.tool_errors)
                  
              if 'tool_args' in self.tool_errors.columns:
                  self.tool_errors['tool_args'] = self.tool_errors['tool_args'].apply(self._format_as_code)
@@ -2183,7 +1988,7 @@ class ReportGenerator:
              tbl, processed_df = format_error_table(self.tool_errors.head(self.num_error_queries), tool_map, "tool")
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
-             append_inline_rca_list(processed_df, "err-tool")
+             self._append_inline_rca_list(processed_df, "err-tool")
         else:
              self.report_content.append("No Tool errors found.\n")
 
@@ -2208,30 +2013,20 @@ class ReportGenerator:
             'span_id': 'Span ID' 
         }
         if not self.llm_errors.empty:
-             if 'agent_status' in self.llm_errors.columns:
-                 self.llm_errors['agent_status'] = self.llm_errors['agent_status'].apply(self._status_emoji)
-             if 'root_status' in self.llm_errors.columns:
-                 self.llm_errors['root_status'] = self.llm_errors['root_status'].apply(self._status_emoji)
+             self.llm_errors = self.formatter.standardize_table_formatting(self.llm_errors)
 
              # Robustly format llm_config
              if 'llm_config' in self.llm_errors.columns:
                  self.llm_errors['llm_config'] = self.llm_errors['llm_config'].apply(self._format_as_code)
 
-             # Convert duration_ms to duration_s
-             if 'duration_ms' in self.llm_errors.columns:
-                 self.llm_errors['duration_s'] = (self.llm_errors['duration_ms'] / 1000).round(2)
-             else:
-                 self.llm_errors['duration_s'] = 0.0
-
              tbl, processed_df = format_error_table(self.llm_errors.head(self.num_error_queries), llm_map, "llm")
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
-             append_inline_rca_list(processed_df, "err-llm")
+             self._append_inline_rca_list(processed_df, "err-llm")
         else:
              self.report_content.append("No LLM errors found.\n")
 
-
-
+    def _render_empty_responses(self):
         # --- Empty LLM Responses ---
         self.add_section("Empty LLM Responses")
         if self.empty_responses and isinstance(self.empty_responses, dict):
@@ -2255,11 +2050,8 @@ class ReportGenerator:
                     cols = ['Agent Name', 'Model Name', 'Empty Response Count']
                     stat_df = stat_df[[c for c in cols if c in stat_df.columns]]
                     
-                    # Bold Agent and Model Name
-                    if 'Agent Name' in stat_df.columns:
-                        stat_df['Agent Name'] = stat_df['Agent Name'].apply(lambda x: f"**{x}**")
-                    if 'Model Name' in stat_df.columns:
-                        stat_df['Model Name'] = stat_df['Model Name'].apply(lambda x: f"**{x}**")
+                    # Standardize table formatting
+                    stat_df = self.formatter.standardize_table_formatting(stat_df)
                         
                     self.report_content.append(stat_df.to_markdown(index=False))
                     self.report_content.append("\n<br>\n")
@@ -2270,7 +2062,7 @@ class ReportGenerator:
                 rec_df = pd.DataFrame(self.empty_responses["records"])
                 
                 if not rec_df.empty:
-                    rec_df = self._standardize_formatting(self._truncate_df(rec_df))
+                    rec_df = self.formatter.standardize_formatting(self.formatter.truncate_df(rec_df))
                     rec_df['Rank'] = range(1, len(rec_df) + 1)
                     
                     # Ensure Latency (s)
@@ -2324,25 +2116,19 @@ class ReportGenerator:
 
                     df_final_rec = rec_df[final_r].rename(columns=ren_r)
                     
-                    # Bold Agent and Model in Details too
-                    if 'Agent Name' in df_final_rec.columns:
-                        df_final_rec['Agent Name'] = df_final_rec['Agent Name'].apply(lambda x: f"**{x}**")
-                    if 'Model Name' in df_final_rec.columns:
-                        df_final_rec['Model Name'] = df_final_rec['Model Name'].apply(lambda x: f"**{x}**")
+                    # Standardize table formatting
+                    df_final_rec = self.formatter.standardize_table_formatting(df_final_rec)
                     
                     # Links
                     for idx, row in df_final_rec.iterrows():
                         t_id = row.get('Trace ID')
                         s_id = row.get('Span ID')
-                        p_id = PROJECT_ID
                         
-                        if t_id and not str(t_id).startswith('['):
-                             link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
-                             df_final_rec.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                        if t_id:
+                             df_final_rec.at[idx, 'Trace ID'] = self.md_builder.format_trace_md_link(t_id, f"`{t_id}`")
                         
-                        if t_id and s_id and not str(s_id).startswith('['):
-                             link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
-                             df_final_rec.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
+                        if t_id and s_id:
+                             df_final_rec.at[idx, 'Span ID'] = self.md_builder.format_span_md_link(s_id, t_id, f"`{s_id}`")
                     
                     df_final_rec.columns = [f"**{c}**" for c in df_final_rec.columns]
                     self.report_content.append(df_final_rec.to_markdown(index=False))
@@ -2351,6 +2137,8 @@ class ReportGenerator:
         self.report_content.append("\n---\n")
 
         # --- Root Cause Insights ---
+
+    def _render_root_cause_insights(self):
         self.add_section("Root Cause Insights")
         self.report_content.append("(Root Cause Insights will be generated by AI Agent)\n")
 
@@ -2462,6 +2250,61 @@ class ReportGenerator:
                         self.add_image(title, os.path.join(self.assets_dir, filename))
                     except Exception as e:
                         logger.error(f"Failed to generate explicit scatter plot: {e}")
+
+    def build_report(self):
+        logger.info("   [BUILD] Starting build_report...")
+        # --- Header ---
+        self.report_content = [f"# Agents Observability Report\n"]
+        
+        self._render_report_header()
+        self._render_executive_summary()
+        self._render_performance_end_to_end()
+
+        # --- Agent Level ---
+        self._render_performance_section(
+            title="Agent Level",
+            df=self.df_agents,
+            time_col="avg_ms",
+            name_col="agent_name",
+            kpi_target_key="kpis.agent.latency_target",
+            kpi_error_key="kpis.agent.error_target",
+            include_usage_chart=True # Default, but explicit
+        )
+        self.report_content.append("\n---\n")
+
+        # --- Tool Level ---
+        self._render_performance_section(
+            title="Tool Level",
+            df=self.df_tools,
+            time_col="avg_ms",
+            name_col="tool_name",
+            kpi_target_key="kpis.tool.latency_target",
+            kpi_error_key="kpis.tool.error_target",
+            include_tokens=False,
+            include_usage_chart=True
+        )
+        self.report_content.append("\n---\n")
+
+        # --- Model Level ---
+        self._render_performance_section(
+            title="Model Level",
+            df=self.df_models,
+            time_col="avg_ms",
+            name_col="model_name",
+            kpi_target_key="kpis.llm.latency_target",
+            kpi_error_key="kpis.llm.error_target",
+            include_tokens=True,
+            include_usage_chart=True
+        )
+        self.report_content.append("\n---\n")
+
+        self._render_agent_details()
+        self._render_model_details()
+        self._render_system_bottlenecks()
+        self._render_error_analysis()
+        self._render_empty_responses()
+        self._render_root_cause_insights()
+
     def save(self) -> str:
         filename = f"observability_{self.playbook}_report_{self.timestamp}.md"
         filepath = os.path.join(self.report_dir, filename)
@@ -2571,11 +2414,12 @@ class ReportGenerator:
         md.append("|:------|:------|-------------:|-------------:|:-------|:---------|")
         
         for s in samples[:5]:
-             trace_link = f"[{s.get('trace_id')[:8]}](https://console.cloud.google.com/traces/explorer;traceId={s.get('trace_id')}?project={PROJECT_ID})"
+             trace_link = self.md_builder.format_trace_md_link(s.get('trace_id'), f"[{str(s.get('trace_id'))[:8]}]")
              md.append(f"| {s.get('agent_name')} | {s.get('model_name')} | {s.get('duration_ms', 0)/1000:.2f} | {s.get('input_token_count')} | {s.get('status')} | {trace_link} |")
              
         md.append("\n\n---\n")
         return "\n".join(md)
+
 
 def load_config() -> Dict[str, Any]:
     try:
@@ -2588,6 +2432,7 @@ def load_config() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Failed to load config.json: {e}")
         return {}
+
 
 async def generate_report_content(save_file: bool = True, config: Dict[str, Any] = None, data: Dict[str, Any] = None) -> str:
     # Ensure views exist before querying only if we are taking the data-pulling path
@@ -2606,7 +2451,6 @@ async def generate_report_content(save_file: bool = True, config: Dict[str, Any]
         data = await data_manager.fetch_all_data()
     
     generator = ReportGenerator(data, config, base_dir=base_dir)
-    # await generator.fetch_data() # Removed as data is passed in
     generator.build_report()
     
     if save_file:
@@ -2619,3 +2463,4 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
+

@@ -251,16 +251,20 @@ class ReportDataManager:
             percentile=self.percentile_e2e
         ))
         task_tools = self.trace_task("Tools", analyze_latency_grouped(group_by="tool_name",
-                                                                      view_id=TOOL_EVENTS_VIEW_ID, time_range=self.time_range_desc, percentile=self.percentile_tool))
+                                                                      view_id=TOOL_EVENTS_VIEW_ID,
+                                                                      time_range=self.time_range_desc,
+                                                                      percentile=self.percentile_tool))
         
         task_models = self.trace_task("Models", analyze_latency_grouped(group_by="model_name",
                                                                         view_id=LLM_EVENTS_VIEW_ID,
-                                                                        time_range=self.time_range_desc, percentile=self.percentile_llm))
+                                                                        time_range=self.time_range_desc,
+                                                                        percentile=self.percentile_llm))
         
         task_agent_models_e2e = self.trace_task("AgentModelsE2E", analyze_latency_grouped(group_by="agent_name,model_name",
                                                                                           view_id=AGENT_EVENTS_VIEW_ID,
                                                                                           time_range=self.time_range_desc,
                                                                                           percentile=self.percentile_agent))
+
         task_agent_models_llm = self.trace_task("AgentModelsLLM", analyze_latency_grouped(group_by="agent_name,model_name",
                                                                     percentile=self.percentile_llm))
 
