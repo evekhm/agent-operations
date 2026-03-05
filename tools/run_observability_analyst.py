@@ -204,7 +204,90 @@ async def main():
                     for _, row in df_opt.iterrows():
                         opt_dict.append({k: v for k, v in row.to_dict().items() if pd.notnull(v)})
                     optimized[key] = opt_dict
+
+            # ADD AGGREGATED CHART SUMMARIES
+            chart_summaries = {}
             
+            try:
+                # E2E Latency Sequences (Root Agents)
+                if 'df_raw_invocations' in raw_data and raw_data['df_raw_invocations'] is not None and not raw_data['df_raw_invocations'].empty:
+                    df_inv = raw_data['df_raw_invocations']
+                    if 'agent_name' in df_inv.columns and 'latency_seconds' in df_inv.columns:
+                        seq_summary = {}
+                        for agent in df_inv['agent_name'].unique():
+                            agent_df = df_inv[df_inv['agent_name'] == agent]
+                            if 'timestamp' in agent_df.columns:
+                                agent_df = agent_df.sort_values('timestamp')
+                            if not agent_df.empty:
+                                # Capture trend
+                                seq_summary[agent] = {
+                                    'count': len(agent_df),
+                                    'min_latency_s': round(agent_df['latency_seconds'].min(), 3),
+                                    'max_latency_s': round(agent_df['latency_seconds'].max(), 3),
+                                    'mean_latency_s': round(agent_df['latency_seconds'].mean(), 3),
+                                }
+                                if len(agent_df) >= 2:
+                                    mid = len(agent_df) // 2
+                                    first_half_mean = agent_df['latency_seconds'].iloc[:mid].mean()
+                                    second_half_mean = agent_df['latency_seconds'].iloc[mid:].mean()
+                                    if first_half_mean > 0:
+                                        seq_summary[agent]['trend'] = 'increasing' if second_half_mean > first_half_mean * 1.1 else 'decreasing' if second_half_mean < first_half_mean * 0.9 else 'stable'
+                                    else:
+                                        seq_summary[agent]['trend'] = 'unknown'
+                        chart_summaries['E2E_Sequence_Trends'] = seq_summary
+            
+                # Agent Composition & Traffic
+                if 'df_agents' in raw_data and raw_data['df_agents'] is not None and not raw_data['df_agents'].empty:
+                    df_a = raw_data['df_agents']
+                    if 'total_count' in df_a.columns and 'agent_name' in df_a.columns:
+                         chart_summaries['Agent_Distribution'] = dict(zip(df_a['agent_name'], df_a['total_count']))
+            
+                # Model Usage
+                if 'df_models' in raw_data and raw_data['df_models'] is not None and not raw_data['df_models'].empty:
+                    df_m = raw_data['df_models']
+                    if 'total_count' in df_m.columns and 'model_name' in df_m.columns:
+                         chart_summaries['Model_Usage'] = dict(zip(df_m['model_name'], df_m['total_count']))
+                         
+                # Agent Overhead
+                if 'df_raw_llm' in raw_data and raw_data['df_raw_llm'] is not None and 'df_raw_agents' in raw_data and raw_data['df_raw_agents'] is not None:
+                    df_llm = raw_data['df_raw_llm']
+                    df_agents = raw_data['df_raw_agents']
+                    if not df_llm.empty and not df_agents.empty and 'agent_name' in df_llm.columns and 'latency_seconds' in df_llm.columns and 'agent_name' in df_agents.columns and 'latency_seconds' in df_agents.columns:
+                        llm_agg = df_llm.groupby('agent_name')['latency_seconds'].quantile(0.95).reset_index()
+                        llm_agg.rename(columns={'latency_seconds': 'pure_llm_sec'}, inplace=True)
+                        agent_agg = df_agents.groupby('agent_name')['latency_seconds'].quantile(0.95).reset_index()
+                        agent_agg.rename(columns={'latency_seconds': 'total_agent_sec'}, inplace=True)
+                        overhead_df = pd.merge(agent_agg, llm_agg, on='agent_name', how='inner')
+                        overhead_df['overhead_sec'] = overhead_df['total_agent_sec'] - overhead_df['pure_llm_sec']
+                        overhead_df['overhead_sec'] = overhead_df['overhead_sec'].clip(lower=0)
+                        overhead_df = overhead_df.sort_values('total_agent_sec', ascending=False).head(10)
+                        
+                        overhead_dict = {}
+                        for _, row in overhead_df.iterrows():
+                            overhead_dict[row['agent_name']] = {
+                                'total_p95_sec': round(row['total_agent_sec'], 3),
+                                'pure_llm_p95_sec': round(row['pure_llm_sec'], 3),
+                                'overhead_sec': round(row['overhead_sec'], 3)
+                            }
+                        chart_summaries['Agent_Overhead'] = overhead_dict
+                        
+                # Token Correlation (Latency vs Output)
+                if 'df_correlation' in raw_data and raw_data['df_correlation'] is not None and not raw_data['df_correlation'].empty:
+                    df_corr = raw_data['df_correlation']
+                    corr_summary = {}
+                    if 'model_name' in df_corr.columns and 'duration_ms' in df_corr.columns and 'candidates_token_count' in df_corr.columns:
+                        for model in df_corr['model_name'].unique():
+                            model_df = df_corr[df_corr['model_name'] == model]
+                            if len(model_df) > 5:
+                                 if model_df['duration_ms'].std() > 0 and model_df['candidates_token_count'].std() > 0:
+                                     c_out = model_df['duration_ms'].corr(model_df['candidates_token_count'])
+                                     corr_summary[model] = round(c_out, 3)
+                        chart_summaries['Model_Token_Latency_Correlation'] = corr_summary
+                        
+                optimized['chart_summaries'] = chart_summaries
+            except Exception as e:
+                print(f"Warning: Failed to compute chart summaries: {e}")
+        
             return json.dumps(optimized, indent=2, default=str)
         # -1. SYNC VIEWS
         print("🔄 Syncing Observability Data Views...")

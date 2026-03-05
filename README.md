@@ -107,6 +107,13 @@ TABLE_ID="agent_events_v2"
 
 You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks.
 
+### Reporting Features
+The report generation pipeline encompasses an array of visual and AI-augmented features to deliver executive-level diagnostics:
+1. **Advanced Sequencing & Overhead Analysis**: Decomposes multi-agent execution paths to isolate pure LLM latency from system "overhead" (tool calls, prompt processing).
+2. **Inline AI Root Cause Analysis (RCA)**: Automatically detects system bottlenecks and uses a Gemini-powered analyzer to inject dense categorization and technical RCAs directly into the performance tables.
+3. **Hypothesis Testing**: Generates granular Agent-vs-Model scatter plots mapping Latency to Token Count in the Appendix, allowing you to mathematically prove degradation patterns.
+4. **Holistic Cross-Section Agent**: Ingests raw JSON telemetry metrics along with the Markdown report body to synthesize a ReAct-powered executive summary outlining systemic issues and recommended architecture improvements.
+
 > **Tip**
 > To view generated reports it is recommended to use the [Markdown Viewer](https://chromewebstore.google.com/detail/markdown-viewer/ckkdlimhmcjmikdlpkmbgfkaikojcbjk?hl=en-US&utm_source=ext_sidebar) Chrome Extension.
 > Use **Github Wide** as Theme and make sure to enable **'mermaid'** and **'emoji'** as Content.
