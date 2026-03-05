@@ -4,7 +4,16 @@ from typing import List, Dict
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import seaborn as sns
 import numpy as np
+
+# Try to load custom configuration
+try:
+    from agents.observability_agent.config import CHART_TITLE_SIZE, SHOW_CHART_TITLES, CHART_LABEL_SIZE
+except ImportError:
+    CHART_TITLE_SIZE = 10
+    SHOW_CHART_TITLES = False
+    CHART_LABEL_SIZE = 8
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -14,15 +23,15 @@ logger = logging.getLogger("ChartGenerator")
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_theme(style="whitegrid", palette="muted")
 plt.rcParams.update({
-    'font.size': 9,
-    'axes.titlesize': 11,
+    'font.size': CHART_LABEL_SIZE,
+    'axes.titlesize': CHART_TITLE_SIZE,
     'axes.titleweight': 'bold',
-    'axes.labelsize': 10,
-    'xtick.labelsize': 9,
-    'ytick.labelsize': 9,
-    'legend.fontsize': 9,
-    'legend.title_fontsize': 10,
-    'figure.titlesize': 12,
+    'axes.labelsize': CHART_LABEL_SIZE,
+    'xtick.labelsize': CHART_LABEL_SIZE,
+    'ytick.labelsize': CHART_LABEL_SIZE,
+    'legend.fontsize': CHART_LABEL_SIZE,
+    'legend.title_fontsize': CHART_TITLE_SIZE,
+    'figure.titlesize': CHART_TITLE_SIZE,
     'figure.titleweight': 'bold'
 })
 
@@ -113,12 +122,14 @@ class ChartGenerator:
             legend_labels, 
             title=None, 
             loc="center left", 
-            fontsize=9,
+            fontsize=CHART_LABEL_SIZE,
             ncol=ncols
         )
         
-        # Absolute title positioning
-        fig.text(0.0, 0.95, title, fontsize=9, fontweight='bold', ha='left', va='top')
+        # Absolute title positioning (using transparent text if hidden to preserve aspect ratio bbox)
+        display_title = title if SHOW_CHART_TITLES else "."
+        text_color = 'black' if SHOW_CHART_TITLES else 'none'
+        fig.text(0.0, 0.95, display_title, fontsize=CHART_TITLE_SIZE, fontweight='bold', ha='left', va='top', color=text_color)
         
         # Save explicitly with tight_layout so the canvas bounds fit the legend
         path = os.path.join(self.output_dir, filename)
@@ -144,7 +155,8 @@ class ChartGenerator:
         plt.figure(figsize=self._get_figsize(*base_size))
         
         sns.barplot(data=df, x=x_col, y=y_col, color=color or NEUTRAL_COLOR)
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel(x_col.replace('_', ' ').title())
         plt.ylabel(y_col.replace('_', ' ').title())
         plt.xticks(rotation=45, ha='right')
@@ -172,7 +184,8 @@ class ChartGenerator:
         
         bars = plt.barh(df[y_col], df[x_col], color=colors if colors is not None else NEUTRAL_COLOR, edgecolor='none', alpha=0.9)
         
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel(x_col.replace('_', ' ').title())
         
         # Add value labels
@@ -188,7 +201,7 @@ class ChartGenerator:
             # Smart positioning: inside if bar is wide enough, outside otherwise
             plt.text(width + str(width).count('.')*0.01, bar.get_y() + bar.get_height()/2, 
                      f' {label}', 
-                     va='center', fontsize=9, color='black')
+                     va='center', fontsize=CHART_LABEL_SIZE, color='black')
             
         plt.gca().invert_yaxis() # Top to bottom
         sns.despine(left=True, bottom=True) # Cleaner look for horizontal bars
@@ -227,7 +240,7 @@ class ChartGenerator:
                         bar.get_y() + bar.get_height() / 2,
                         f'{width:.2f}s',
                         ha='center', va='center',
-                        color='black', fontsize=9
+                        color='black', fontsize=max(6, CHART_LABEL_SIZE - 2)
                     )
 
             if left is None:
@@ -235,7 +248,8 @@ class ChartGenerator:
             else:
                 left += df[col]
                 
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel("Latency (s)")
         plt.ylabel(x_col.replace('_', ' ').title())
         plt.xticks(rotation=0)
@@ -273,7 +287,8 @@ class ChartGenerator:
             else:
                 left += df[col]
                 
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel("Tokens")
         plt.ylabel(x_col.replace('_', ' ').title())
         plt.xticks(rotation=0)
@@ -302,7 +317,8 @@ class ChartGenerator:
         
         plt.stackplot(x_values, *y_data, labels=labels, colors=colors, alpha=0.8)
         
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel("Request Order (Chronological)")
         plt.ylabel("Tokens")
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -314,7 +330,8 @@ class ChartGenerator:
         if df.empty: return None
         plt.figure(figsize=self._get_figsize(*self.SIZE_MEDIUM))
         sns.barplot(data=df, x=x_col, y=y_col, color=NEUTRAL_COLOR)
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         sns.despine()
         return self.save_plot(filename)
 
@@ -324,7 +341,8 @@ class ChartGenerator:
             figsize = self._get_figsize(*self.SIZE_MEDIUM)
         plt.figure(figsize=figsize)
         sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, style=hue_col, s=80)
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         sns.despine()
         return self.save_plot(filename)
@@ -341,7 +359,8 @@ class ChartGenerator:
         p95_val = df[col].quantile(0.95)
         
         plt.hist(df[col], bins=bins, alpha=0.8, color=color, edgecolor='white')
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel(col.replace('_', ' ').title())
         plt.ylabel('Frequency')
         
@@ -363,9 +382,9 @@ class ChartGenerator:
         # Aggregate data for stacking
         pivot_df = df.groupby([x_col, hue_col]).size().unstack(fill_value=0)
         
-        # Sort by Total Height (Descending)
+        # Sort by Total Height (Ascending so largest is at the top)
         pivot_df['total'] = pivot_df.sum(axis=1)
-        pivot_df = pivot_df.sort_values('total', ascending=False)
+        pivot_df = pivot_df.sort_values('total', ascending=True)
         pivot_df = pivot_df.drop(columns=['total'])
         
         base_size = figsize if figsize else self.SIZE_LARGE
@@ -373,15 +392,17 @@ class ChartGenerator:
         
         colors = sns.color_palette("muted", len(pivot_df.columns))
         
-        pivot_df.plot(kind='bar', stacked=True, figsize=self._get_figsize(*base_size), color=colors, edgecolor='white', width=0.8, rot=45)
+        pivot_df.plot(kind='barh', stacked=True, figsize=self._get_figsize(*base_size), color=colors, edgecolor='white', width=0.8)
         
-        plt.title(title, pad=15)
-        plt.xlabel(x_col.replace('_', ' ').title())
-        plt.ylabel('Count')
-        plt.xticks(rotation=45, ha='right')
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
+        plt.xlabel('Count')
+        plt.ylabel(x_col.replace('_', ' ').title())
+        plt.xticks(fontsize=CHART_LABEL_SIZE)
+        plt.yticks(fontsize=CHART_LABEL_SIZE)
         # Move legend outside if too many items
-        plt.legend(title=hue_col.replace('_', ' ').title(), bbox_to_anchor=(1.05, 1), loc='upper left')
-        sns.despine()
+        plt.legend(title=hue_col.replace('_', ' ').title(), bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=CHART_LABEL_SIZE, title_fontsize=CHART_LABEL_SIZE)
+        sns.despine(left=True, bottom=False)
         
         return self.save_plot(filename)
 
@@ -397,7 +418,8 @@ class ChartGenerator:
         
         bars = plt.bar(counts.index, counts.values, color=colors if colors else NEUTRAL_COLOR, edgecolor='white')
         
-        plt.title(title, pad=15)
+        if SHOW_CHART_TITLES:
+            plt.title(title, pad=15)
         plt.xlabel(col.replace('_', ' ').title())
         plt.ylabel('Count')
         plt.xticks(rotation=45, ha='right')
@@ -407,7 +429,7 @@ class ChartGenerator:
             height = bar.get_height()
             if height > 0:
                 plt.text(bar.get_x() + bar.get_width()/2., height,
-                         f'{int(height)}', ha='center', va='bottom', fontsize=9)
+                         f'{int(height)}', ha='center', va='bottom', fontsize=CHART_LABEL_SIZE)
         sns.despine()         
         return self.save_plot(filename)
 
@@ -436,7 +458,8 @@ class ChartGenerator:
             plt.xscale('log')
             # plt.yscale('log') # Optional: log-log
             
-        plt.title(title, fontsize=14, fontweight='bold')
+        if SHOW_CHART_TITLES:
+            plt.title(title, fontsize=CHART_TITLE_SIZE, fontweight='bold')
         plt.xlabel(x_col.replace('_', ' ').title() + (' (Log Scale)' if scale == 'log' else ''))
         plt.ylabel(y_col.replace('_', ' ').title())
         plt.grid(True, alpha=0.3)
@@ -485,7 +508,8 @@ class ChartGenerator:
         ma = df[y_col].rolling(window=window, center=True).mean()
         plt.plot(df['request_order'], ma, color='red', linewidth=2, alpha=0.8, label=f'{window}-pt Moving Avg')
         
-        plt.title(title, fontsize=14, fontweight='bold')
+        if SHOW_CHART_TITLES:
+            plt.title(title, fontsize=CHART_TITLE_SIZE)
         plt.xlabel('Request Order')
         plt.ylabel(y_col.replace('_', ' ').title())
         plt.legend()

@@ -6,7 +6,7 @@
           "num_slowest_queries": 50,
           "num_error_queries": 200,
           "num_empty_llm_responses": 20,
-          "num_queries_to_analyze_rca": 0
+          "num_queries_to_analyze_rca": 5
         },
         "data_presentation": {
             "chart_scale": 0.5,

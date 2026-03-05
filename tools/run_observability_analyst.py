@@ -186,167 +186,306 @@ async def main():
         session_service = InMemorySessionService()
         await session_service.create_session(session_id=session_id, user_id=user_id, app_name="observability_analyst_app")
         
+        def optimize_data_for_ai(raw_data: dict) -> str:
+            import pandas as pd
+            optimized = {}
+            # Columns that consume massive amounts of tokens but don't help with high-level math/trends
+            drop_cols = ['content_text_summary', 'error_message', 'User Message', 'Tool Args', 'Details (Trunk)']
+            
+            for key in ['df_roots', 'df_agents', 'df_tools', 'df_models']:
+                df = raw_data.get(key)
+                if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                    # Drop text columns if they exist
+                    cols_to_drop = [c for c in drop_cols if c in df.columns]
+                    df_opt = df.drop(columns=cols_to_drop)
+                    
+                    # Convert to dict, dropping NaNs
+                    opt_dict = []
+                    for _, row in df_opt.iterrows():
+                        opt_dict.append({k: v for k, v in row.to_dict().items() if pd.notnull(v)})
+                    optimized[key] = opt_dict
+            
+            return json.dumps(optimized, indent=2, default=str)
+        # -1. SYNC VIEWS
+        print("🔄 Syncing Observability Data Views...")
+        from agents.observability_agent.utils.views import ensure_all_views
+        try:
+            ensure_all_views()
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to sync views: {e}")
+
+        # 0. FETCH DATA
+        print("📥 Fetching Telemetry Data...")
+        from tools.report_data import ReportDataManager
+        data_manager = ReportDataManager(config)
+        raw_data = await data_manager.fetch_all_data()
+
+        # 0.5 INLINE RCA (Optional based on toggle)
+        enable_ai = str(os.getenv("ENABLE_AI_AUGMENTATION", "true")).lower() in ("true", "1", "yes")
+        
+        if enable_ai:
+            from tools.error_rca_analyzer import perform_inline_rca
+            rca_limit = config.get("num_queries_to_analyze_rca", 1)
+            raw_data = await perform_inline_rca(raw_data, limit=rca_limit)
+        else:
+            print("⏩ Skipping Inline RCA (ENABLE_AI_AUGMENTATION is false)")
+        
+        # DEBUG DUMP
+        if 'root_bottlenecks' in raw_data and not raw_data['root_bottlenecks'].empty:
+            raw_data['root_bottlenecks'].to_json('debug_root_bottlenecks.json', orient='records', indent=2)
+        
         # 1. GENERATE DETERMINISTIC REPORT
         print("📊 Generating Deterministic Report (Data & Charts)...")
         from tools.generate_report import generate_report_content
         # Pass the fully merged config (which includes kpis) so it doesn't reload and lose defaults
-        base_report_markdown = await generate_report_content(save_file=False, config=config)
+        base_report_markdown = await generate_report_content(save_file=False, config=config, data=raw_data)
         print(f"   ✅ Base Report Generated ({len(base_report_markdown)} chars)")
 
         # 2. AUGMENT WITH AGENT (Executive Summary & Recommendations)
-        print("🤖 Augmenting Report with Agent Insights...")
-        
-        from agents.observability_agent.prompts import AUGMENTATION_PROMPT
-        
-        # Hydrate the prompt with Context + Data
-        kpis_string = _format_kpis_for_prompt(kpis)
-        
-        augmentor_agent.instruction = AUGMENTATION_PROMPT.format(
-            time_period=time_period,
-            kpis_string=kpis_string,
-            project_id=PROJECT_ID,
-            base_report_markdown=base_report_markdown
-        )
-        
-        # Run the Agent using Runner
-        augmentor_runner = Runner(
-            agent=augmentor_agent,
-            session_service=session_service,
-            app_name="observability_analyst_app"
-        )
-        
-        user_msg = types.Content(role="user", parts=[types.Part(text="Please analyze the report and generate the required JSON output containing all summaries, bottlenecks, insights, and recommendations as specified in your instructions. Your response MUST be valid JSON.")])
-        
-        
-        event_count = 0
-        async for event in augmentor_runner.run_async(
-            user_id=user_id, 
-            session_id=session_id, 
-            new_message=user_msg
-        ):
-             event_count += 1
-             if event.content:
-                text_chunk = ""
-                if hasattr(event.content, "parts"):
-                    for part in event.content.parts:
-                        if part.text: text_chunk += part.text
-                elif isinstance(event.content, str):
-                     text_chunk = event.content
-                
-                if text_chunk:
-                    print(text_chunk, end="", flush=True)
-                    response_text += text_chunk
-        
-        
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f"\n\n✅ **Analysis & Augmentation Complete** (Execution Time: {execution_time:.2f} seconds)")
-        
-        # Parse output and inject into base report
-        final_report = base_report_markdown
-        import re
-        
-        # Find JSON in response
-        # The agent sometimes wraps the JSON in ```json ... ``` blocks
-        import re
-        
-        # Try to extract from a markdown json block first
-        json_match = re.search(r"```(?:json)?(.*?)```", response_text, re.DOTALL)
-        json_str = json_match.group(1).strip() if json_match else response_text
-
-        # If not, try to find the first { and the last }
-        json_match = re.search(r"(\{.*\})", json_str, re.DOTALL)
-        
-        if json_match:
-            try:
-                # Use strict=False to allow unescaped control characters in strings
-                insights = json.loads(json_match.group(1), strict=False)
-                exec_summary = insights.get("executive_summary", "No summary generated.")
-                performance_summary = insights.get("performance_summary", "No summary generated.")
-                end_to_end_summary = insights.get("end_to_end_summary", "No summary generated.")
-                agent_level_summary = insights.get("agent_level_summary", "No summary generated.")
-                tool_level_summary = insights.get("tool_level_summary", "No summary generated.")
-                model_level_summary = insights.get("model_level_summary", "No summary generated.")
-                agent_composition_summary = insights.get("agent_composition_summary", "No summary generated.")
-                model_composition_summary = insights.get("model_composition_summary", "No summary generated.")
-                bottlenecks_summary = insights.get("bottlenecks_summary", "No summary generated.")
-                error_analysis_summary = insights.get("error_analysis_summary", "No summary generated.")
-                
-                root_cause_insights = insights.get("root_cause_insights", "No insights generated.") or "No insights generated."
-                recommendations = insights.get("recommendations", "No recommendations generated.") or "No recommendations generated."
-                
-                # Ensure all summaries are strings
-                exec_summary = exec_summary or ""
-                performance_summary = performance_summary or ""
-                end_to_end_summary = end_to_end_summary or ""
-                agent_level_summary = agent_level_summary or ""
-                tool_level_summary = tool_level_summary or ""
-                model_level_summary = model_level_summary or ""
-                agent_composition_summary = agent_composition_summary or ""
-                model_composition_summary = model_composition_summary or ""
-                bottlenecks_summary = bottlenecks_summary or ""
-                error_analysis_summary = error_analysis_summary or ""
-                
-                # Sanitize: Remove leading headers if Agent included them (prevent duplication)
-                def clean_section(text):
-                    lines = text.split('\n')
-                    cleaned = []
-                    for line in lines:
-                        # Remove markdown headers #, ##, ### anywhere in the first few lines?
-                        # Or just remove lines that ARE headers.
-                        if line.lstrip().startswith('#'): continue
-                        cleaned.append(line)
-                    return '\n'.join(cleaned).strip()
-
-                exec_summary = clean_section(exec_summary)
-                root_cause_insights = clean_section(root_cause_insights)
-                recommendations = clean_section(recommendations)
-
-                # INJECT into Report
-                final_report = base_report_markdown.replace(
-                    "(Executive Summary will be generated by AI Agent)", 
-                    exec_summary
-                ).replace(
-                    "(AI_SUMMARY: Performance)",
-                    performance_summary
-                ).replace(
-                    "(AI_SUMMARY: End to End)",
-                    end_to_end_summary
-                ).replace(
-                    "(AI_SUMMARY: Agent Level)",
-                    agent_level_summary
-                ).replace(
-                    "(AI_SUMMARY: Tool Level)",
-                    tool_level_summary
-                ).replace(
-                    "(AI_SUMMARY: Model Level)",
-                    model_level_summary
-                ).replace(
-                    "(AI_SUMMARY: Agent Composition)",
-                    agent_composition_summary
-                ).replace(
-                    "(AI_SUMMARY: Model Composition)",
-                    model_composition_summary
-                ).replace(
-                    "(AI_SUMMARY: System Bottlenecks & Impact)",
-                    bottlenecks_summary
-                ).replace(
-                    "(AI_SUMMARY: Error Analysis)",
-                    error_analysis_summary
-                ).replace(
-                    "(Root Cause Insights will be generated by AI Agent)", 
-                    root_cause_insights
-                ).replace(
-                    "(Recommendations will be generated by AI Agent)", 
-                    recommendations
-                )
-                print("   ✨ Successfully injected AI insights into report.")
-            except json.JSONDecodeError:
-                logger.error("Failed to parse Agent JSON response.")
-                print("   ⚠️ Failed to parse Agent JSON response. Using base report.")
+        if not enable_ai:
+            print("⏩ Skipping heavy JSON AI Augmentation (fallback to simple text augmentation)")
+            from agents.observability_agent.prompts import LEGACY_REPORT_AGENT_INSTRUCTION
+            
+            augmentor_agent.instruction = LEGACY_REPORT_AGENT_INSTRUCTION.format(
+                time_period=time_period,
+                project_id=PROJECT_ID
+            )
+            
+            report_runner = Runner(
+                agent=augmentor_agent,
+                session_service=session_service,
+                app_name="observability_analyst_app"
+            )
+            
+            report_msg = types.Content(role="user", parts=[types.Part(text=f"Please read the following report and provide an executive summary and recommendations:\n{base_report_markdown}")])
+            
+            print("🤖 Appending concise AI insights...")
+            response_text = ""
+            async for event in report_runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=report_msg
+            ):
+                if event.content:
+                    text_chunk = ""
+                    if hasattr(event.content, "parts"):
+                        for part in event.content.parts:
+                            if part.text: text_chunk += part.text
+                    elif isinstance(event.content, str):
+                        text_chunk = event.content
+                    if text_chunk:
+                        print(text_chunk, end="", flush=True)
+                        response_text += text_chunk
+            
+            # Legacy path just appends to the bottom
+            final_report = f"{base_report_markdown}\n\n{response_text}"
+            
         else:
-            logger.warning("No JSON found in agent response.")
-            print("   ⚠️ No JSON found in agent response. Using base report.")
+            print("🤖 Augmenting Report with deep JSON Agent Insights...")
+            
+            from agents.observability_agent.prompts import AUGMENTATION_PROMPT
+            
+            # Optimize raw data for AI context (strip heavy text columns)
+            raw_data_json = optimize_data_for_ai(raw_data)
+            
+            # Hydrate the prompt with Context + Data
+            kpis_string = _format_kpis_for_prompt(kpis)
+            
+            augmentor_agent.instruction = AUGMENTATION_PROMPT.format(
+                time_period=time_period,
+                kpis_string=kpis_string,
+                project_id=PROJECT_ID,
+                base_report_markdown=base_report_markdown,
+                raw_data_json=raw_data_json
+            )
+        
+            # Run the Agent using Runner
+            augmentor_runner = Runner(
+                agent=augmentor_agent,
+                session_service=session_service,
+                app_name="observability_analyst_app"
+            )
+            
+            user_msg = types.Content(role="user", parts=[types.Part(text="Please analyze the report and generate the required JSON output containing all summaries, bottlenecks, insights, and recommendations as specified in your instructions. Your response MUST be valid JSON.")])
+            
+            
+            event_count = 0
+            async for event in augmentor_runner.run_async(
+                user_id=user_id, 
+                session_id=session_id, 
+                new_message=user_msg
+            ):
+                 event_count += 1
+                 if event.content:
+                    text_chunk = ""
+                    if hasattr(event.content, "parts"):
+                        for part in event.content.parts:
+                            if part.text: text_chunk += part.text
+                    elif isinstance(event.content, str):
+                         text_chunk = event.content
+                    
+                    if text_chunk:
+                        print(text_chunk, end="", flush=True)
+                        response_text += text_chunk
+            
+            
+            end_time = time.time()
+            execution_time = end_time - start_time
+            print(f"\n\n✅ **Analysis & Augmentation Complete** (Execution Time: {execution_time:.2f} seconds)")
+        
+            # Parse output and inject into base report
+            final_report = base_report_markdown
+            import re
+            
+            # Find JSON in response
+            # Try to extract from a markdown json block first
+            json_match = re.search(r"```(?:json)?(.*?)```", response_text, re.DOTALL)
+            json_str = json_match.group(1).strip() if json_match else response_text
+
+            # If not, try to find the first { and the last }
+            json_match = re.search(r"(\{.*\})", json_str, re.DOTALL)
+            
+            if json_match:
+                try:
+                    # Use strict=False to allow unescaped control characters in strings
+                    insights = json.loads(json_match.group(1), strict=False)
+                    exec_summary = insights.get("executive_summary", "No summary generated.")
+                    performance_summary = insights.get("performance_summary", "No summary generated.")
+                    end_to_end_summary = insights.get("end_to_end_summary", "No summary generated.")
+                    agent_level_summary = insights.get("agent_level_summary", "No summary generated.")
+                    tool_level_summary = insights.get("tool_level_summary", "No summary generated.")
+                    model_level_summary = insights.get("model_level_summary", "No summary generated.")
+                    agent_composition_summary = insights.get("agent_composition_summary", "No summary generated.")
+                    model_composition_summary = insights.get("model_composition_summary", "No summary generated.")
+                    bottlenecks_summary = insights.get("bottlenecks_summary", "No summary generated.")
+                    error_analysis_summary = insights.get("error_analysis_summary", "No summary generated.")
+                    
+                    root_cause_insights = insights.get("root_cause_insights", "No insights generated.") or "No insights generated."
+                    recommendations = insights.get("recommendations", "No recommendations generated.") or "No recommendations generated."
+                    
+                    # Ensure all summaries are strings
+                    exec_summary = exec_summary or ""
+                    performance_summary = performance_summary or ""
+                    end_to_end_summary = end_to_end_summary or ""
+                    agent_level_summary = agent_level_summary or ""
+                    tool_level_summary = tool_level_summary or ""
+                    model_level_summary = model_level_summary or ""
+                    agent_composition_summary = agent_composition_summary or ""
+                    model_composition_summary = model_composition_summary or ""
+                    bottlenecks_summary = bottlenecks_summary or ""
+                    error_analysis_summary = error_analysis_summary or ""
+                    
+                    # Sanitize: Remove leading headers if Agent included them (prevent duplication)
+                    def clean_section(text):
+                        lines = text.split('\n')
+                        cleaned = []
+                        for line in lines:
+                            if line.lstrip().startswith('#'): continue
+                            cleaned.append(line)
+                        return '\n'.join(cleaned).strip()
+
+                    exec_summary = clean_section(exec_summary)
+                    root_cause_insights = clean_section(root_cause_insights)
+                    recommendations = clean_section(recommendations)
+
+                    # INJECT into Report
+                    final_report = base_report_markdown.replace(
+                        "(Executive Summary will be generated by AI Agent)", 
+                        exec_summary
+                    ).replace(
+                        "(AI_SUMMARY: Performance)",
+                        performance_summary
+                    ).replace(
+                        "(AI_SUMMARY: End to End)",
+                        end_to_end_summary
+                    ).replace(
+                        "(AI_SUMMARY: Agent Level)",
+                        agent_level_summary
+                    ).replace(
+                        "(AI_SUMMARY: Tool Level)",
+                        tool_level_summary
+                    ).replace(
+                        "(AI_SUMMARY: Model Level)",
+                        model_level_summary
+                    ).replace(
+                        "(AI_SUMMARY: Agent Composition)",
+                        agent_composition_summary
+                    ).replace(
+                        "(AI_SUMMARY: Model Composition)",
+                        model_composition_summary
+                    ).replace(
+                        "(AI_SUMMARY: System Bottlenecks & Impact)",
+                        bottlenecks_summary
+                    ).replace(
+                        "(AI_SUMMARY: Error Analysis)",
+                        error_analysis_summary
+                    ).replace(
+                        "(Root Cause Insights will be generated by AI Agent)", 
+                        root_cause_insights
+                    ).replace(
+                        "(Recommendations will be generated by AI Agent)", 
+                        recommendations
+                    )
+                    print("   ✨ Successfully injected AI insights into report.")
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse Agent JSON response.")
+                    print("   ⚠️ Failed to parse Agent JSON response. Using base report.")
+            else:
+                logger.warning("No JSON found in agent response.")
+                print("   ⚠️ No JSON found in agent response. Using base report.")
+
+        # 3. HOLISTIC CROSS-SECTION ANALYSIS
+        if not enable_ai:
+            print("⏩ Skipping Holistic Cross-Section Analysis (ENABLE_AI_AUGMENTATION is false)")
+            holistic_response = ""
+        else:
+            print("\n🧠 Generating Holistic Cross-Section Analysis (This may take a minute depending on tool usage)...")
+            from agents.whole_report_agent.agent import create_holistic_agent
+            
+            holistic_agent = create_holistic_agent()
+            # Hydrate prompt with context
+            holistic_agent.instruction = holistic_agent.instruction.format(
+                time_period=time_period,
+                project_id=PROJECT_ID,
+                base_report_markdown=final_report,
+                raw_data_json=raw_data_json
+            )
+            
+            holistic_runner = Runner(
+                agent=holistic_agent,
+                session_service=session_service,
+                app_name="observability_analyst_app"
+            )
+            
+            # Trigger the agent
+            holistic_msg = types.Content(role="user", parts=[types.Part(text="Please generate the '## Holistic Cross-Section Analysis' section using the context provided in your system instructions. Call your BigQuery tools to investigate deeper ONLY if you spot anomalies in the raw data or Report. Output purely the markdown text.")])
+            
+            holistic_response = ""
+            async for event in holistic_runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=holistic_msg
+            ):
+                if event.content:
+                    text_chunk = ""
+                    if hasattr(event.content, "parts"):
+                        for part in event.content.parts:
+                            if part.text: text_chunk += part.text
+                    elif isinstance(event.content, str):
+                        text_chunk = event.content
+                        
+                    if text_chunk:
+                        print(text_chunk, end="", flush=True)
+                        holistic_response += text_chunk
+                        
+            print("\n\n✅ **Holistic Analysis Complete**")
+            
+        # Append before the Appendix
+        if holistic_response.strip():
+            if "## Appendix" in final_report:
+                final_report = final_report.replace("## Appendix", f"{holistic_response.strip()}\n\n## Appendix")
+            else:
+                final_report += f"\n\n{holistic_response.strip()}\n"
 
         # Save Report
         if final_report.strip():
@@ -366,6 +505,9 @@ async def main():
             print(f"   (Absolute Path: {abs_report_path})")
         else:
             print("\n⚠️ No report content generated.")
+        
+        total_end_time = time.time()
+        print(f"\n⏱️ Total script execution wall time: {total_end_time - start_time:.2f} seconds")
         
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")

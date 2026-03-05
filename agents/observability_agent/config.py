@@ -70,6 +70,13 @@ os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'True'
 AGENT_VERSION = "0.0.1"
 
 # =========================================
+# VISUAL CONFIGURATION
+# =========================================
+CHART_TITLE_SIZE = int(os.getenv('CHART_TITLE_SIZE', 10))
+CHART_LABEL_SIZE = int(os.getenv('CHART_LABEL_SIZE', 8))
+SHOW_CHART_TITLES = str(os.getenv('SHOW_CHART_TITLES', 'False')).lower() in ('true', '1', 't')
+
+# =========================================
 # LATENCY DIMENSIONS
 # =========================================
 CURRENT_DIMENSION_LIST = [

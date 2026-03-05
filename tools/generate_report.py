@@ -118,6 +118,8 @@ class ReportGenerator:
         self.chart_gen = ChartGenerator(self.assets_dir, scale=self.chart_scale)
         
         self.report_content = []
+        self.rca_counter = 1
+        self.rca_dict = {}
         
         # Extract Percentile from config (default to 95.5 if not found)
         self.percentile = 95.5
@@ -565,6 +567,11 @@ class ReportGenerator:
             
             # Sort by total tokens descending for better visualization
             agg_df['total'] = agg_df['input_tokens'] + agg_df['thought_tokens'] + agg_df['output_tokens']
+            
+            # Filter out agents with NO token usage
+            agg_df = agg_df[agg_df['total'] > 0]
+            if agg_df.empty: continue
+            
             agg_df = agg_df.sort_values(by='total', ascending=True) # Ascending because barh plots bottom-to-top
             
             safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
@@ -583,38 +590,82 @@ class ReportGenerator:
             if path:
                 self.add_image(f"Token Breakdown for {model}", path)
 
+    def _render_appendix(self):
+        self.add_section("Appendix")
+        
+        # 1. Agent Execution Latency (By Model)
+        try:
+            df_agents = getattr(self, 'df_raw_agents', pd.DataFrame())
+            if not df_agents.empty and 'agent_name' in df_agents.columns and 'model_name' in df_agents.columns:
+                self.add_subsection("Agent Latency (By Model)")
+                self.report_content.append("These charts breakdown the Agent execution sequences further by the underlying LLM model used for that request. This helps isolate whether an Agent's latency spike is tied to a specific model's degradation.\n\n")
+
+                active_agents = set()
+                if hasattr(self, 'df_agents') and not self.df_agents.empty and 'total_count' in self.df_agents.columns:
+                    active_agents = set(self.df_agents[self.df_agents['total_count'] > 0]['agent_name'])
+
+                for agent in sorted(df_agents['agent_name'].unique()):
+                    if active_agents and agent not in active_agents:
+                        continue 
+                        
+                    agent_df = df_agents[df_agents['agent_name'] == agent]
+                    self.report_content.append(f"\n#### {agent}\n")
+                    
+                    for model in sorted(agent_df['model_name'].unique()):
+                        am_df = agent_df[agent_df['model_name'] == model]
+                        if am_df.empty: continue
+                        safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
+                        safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                        chart_filename = f'seq_agent_model_{safe_a}_{safe_m}.png'
+                        
+                        self.chart_gen.generate_sequence_plot(
+                            am_df, 'latency_seconds', f"{agent} via {model} Latency Sequence", chart_filename
+                        )
+                        
+                        self.add_image(f"{agent} via {model} Latency Sequence", os.path.join(self.assets_dir, chart_filename))
+        except Exception as e:
+            logger.error(f"Failed to generate Agent sequence plots in appendix: {e}")
+
+        # 2. Token Usage Over Time
+        df = getattr(self, 'df_raw_llm', pd.DataFrame())
         if not df.empty:
-            self.report_content.append("\n---\n")
             self.add_subsection("Token Usage Over Time")
             self.report_content.append("The charts below display the chronological token consumption (Input, Thought, Output) for each Agent-Model combination over the test run. This helps identify context window growth or token ballooning over time.\n\n")
-            
-            for model in models:
-                model_df = df[df['model_name'] == model]
-                agents_for_model = sorted(model_df['agent_name'].unique())
-                for agent in agents_for_model:
-                    am_df = model_df[model_df['agent_name'] == agent]
-                    if am_df.empty or len(am_df) < 5: 
-                        continue # Skip if too few points to show a trend
-                    
-                    safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
-                    safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
-                    filename = f"token_seq_{safe_a}_{safe_m}.png"
-                    
-                    path = self.chart_gen.generate_time_series_stacked_area(
-                        df=am_df,
-                        x_col='timestamp',
-                        y_cols=['input_tokens', 'thought_tokens', 'output_tokens'],
-                        title=f"{agent} via {model} (Token Usage Sequence)",
-                        filename=filename,
-                        colors=['#1f77b4', '#9467bd', '#2ca02c'],
-                        figsize=self.chart_gen.SIZE_LARGE
-                    )
-                    if path:
-                        self.add_image(f"{agent} via {model} Token Sequence", path)
+        
+        models = sorted(df['model_name'].unique())
+        for model in models:
+            model_df = df[df['model_name'] == model]
+            agents_for_model = sorted(model_df['agent_name'].unique())
+            for agent in agents_for_model:
+                am_df = model_df[model_df['agent_name'] == agent]
+                if am_df.empty or len(am_df) < 5: 
+                    continue # Skip if too few points to show a trend
+                
+                # Verify they actually use tokens
+                total_tokens = am_df['input_tokens'].mean() + am_df['thought_tokens'].mean() + am_df['output_tokens'].mean()
+                if total_tokens <= 0:
+                    continue
+                
+                safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
+                filename = f"token_seq_{safe_a}_{safe_m}.png"
+                
+                path = self.chart_gen.generate_time_series_stacked_area(
+                    df=am_df,
+                    x_col='timestamp',
+                    y_cols=['input_tokens', 'thought_tokens', 'output_tokens'],
+                    title=f"{agent} via {model} (Token Usage Sequence)",
+                    filename=filename,
+                    colors=['#1f77b4', '#9467bd', '#2ca02c'],
+                    figsize=self.chart_gen.SIZE_LARGE
+                )
+                if path:
+                    self.add_image(f"{agent} via {model} Token Sequence", path)
 
 
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str, kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False, include_usage_chart: bool = True):
         self.add_subsection(title)
+        self.report_content.append(f"\n(AI_SUMMARY: {title})\n")
         if df.empty:
             self.report_content.append(f"No {title.lower()} data available.\n")
             return
@@ -676,10 +727,23 @@ class ReportGenerator:
                 size_col="Requests"
             )
         
+    
+    def _extract_rcas(self, df_final):
+        if 'RCA' in df_final.columns:
+            for idx, row in df_final.iterrows():
+                rca_text = row.get('RCA')
+                clean_text = str(rca_text).replace('&nbsp;', '').strip()
+                if clean_text and clean_text != 'N/A' and not clean_text.startswith('Not Analyzed') and not clean_text.startswith('['):
+                    rca_name = f"RCA-{self.rca_counter}"
+                    self.rca_dict[rca_name] = clean_text
+                    df_final.at[idx, 'RCA'] = f"[{rca_name}](#{rca_name.lower()})"
+                    self.rca_counter += 1
+        return df_final
+
     def build_report(self):
         logger.info("   [BUILD] Starting build_report...")
         # --- Header ---
-        self.report_content = [f"# Autonomous Observability Intelligence Report\n"]
+        self.report_content = [f"# Agents Observability Report\n"]
         
         # Calculate Analysis Window
         end_dt = datetime.utcnow()
@@ -719,11 +783,13 @@ class ReportGenerator:
 
         # --- Performance ---
         self.add_section("Performance")
+        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("This section provides a high-level scorecard for End to End, Sub Agent, Tool, and LLM levels, assessing compliance against defined Service Level Objectives (SLOs).\n")
         self.report_content.append("\n---\n")
 
         # End to End (Roots)
         self.add_subsection("End to End")
+        self.report_content.append("\n(AI_SUMMARY: End to End)\n")
         self.report_content.append("This shows user-facing performance from start to end of an invocation.\n")
         if not self.df_roots.empty:
             target_lat = self.config.get("kpis", {}).get("end_to_end", {}).get("latency_target", 10.0)
@@ -748,39 +814,40 @@ class ReportGenerator:
             try:
                 df_invocations = self.data.get('df_raw_invocations', pd.DataFrame())
                 if not df_invocations.empty and 'agent_name' in df_invocations.columns:
-                    self.report_content.append("**Root Agent E2E Execution Sequence**\n")
+                    self.report_content.append("**Root Agent Execution**\n")
                     self.report_content.append("The following charts display the end-to-end execution latency for each top-level Root Agent over the course of the test run, plotted in the order the requests were received. This helps identify degradation in overall system performance over time.\n\n")
                     
-                    for root_agent in df_invocations['agent_name'].unique():
+                    for root_agent in sorted(df_invocations['agent_name'].unique()):
                         root_df = df_invocations[df_invocations['agent_name'] == root_agent]
                         if root_df.empty: continue
                         
                         safe_name = str(root_agent).replace(' ', '_').replace('/', '_').lower()
+
+                        # Latency Request Order
                         chart_filename = f'e2e_sequence_{safe_name}.png'
-                        chart_title = f"{root_agent} E2E Execution Latency (Request Order)"
-                        
+                        chart_title = f"{root_agent} Latency (Request Order)"
                         self.chart_gen.generate_sequence_plot(
                             root_df, 'latency_seconds', chart_title, chart_filename
                         )
                         self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
-                        
-            except Exception as e:
-                logger.error(f"Failed to generate E2E sequence plot: {e}")
 
-            # Detailed Latency Histogram (E2E)
-            try:
-                df_invocations = self.data.get('df_raw_invocations', pd.DataFrame()).copy()
-                if not df_invocations.empty and 'duration_ms' in df_invocations.columns:
-                    df_invocations['latency_seconds'] = df_invocations['duration_ms'] / 1000.0
-                    self.chart_gen.generate_histogram(
-                        df_invocations, 'latency_seconds', 
-                        'Detailed E2E Latency Histogram', 
-                        'latency_histogram.png',
-                        figsize=(10, 6)
-                    )
-                    self.add_image("Detailed E2E Latency Histogram", os.path.join(self.assets_dir, 'latency_histogram.png'))
+                        # Latency Histogram
+                        if 'duration_ms' in root_df.columns:
+                            root_df_hist = root_df.copy()
+                            root_df_hist['latency_seconds'] = root_df_hist['duration_ms'] / 1000.0
+                            hist_filename = f'e2e_histogram_{safe_name}.png'
+                            hist_title = f"{root_agent} Latency Histogram"
+                            self.chart_gen.generate_histogram(
+                                root_df_hist, 'latency_seconds',
+                                hist_title,
+                                hist_filename,
+                                figsize=(10, 6)
+                            )
+                            self.add_image(hist_title, os.path.join(self.assets_dir, hist_filename))
+
+
             except Exception as e:
-                logger.error(f"Failed to generate latency histogram: {e}")
+                logger.error(f"Failed to generate sequence plot: {e}")
 
         self.report_content.append("\n---\n")
 
@@ -796,6 +863,8 @@ class ReportGenerator:
         )
         
 
+
+        self.report_content.append("\n---\n")
 
         # --- Tool Level ---
         self._render_performance_section(
@@ -824,7 +893,8 @@ class ReportGenerator:
         self.report_content.append("\n---\n")
 
 
-        self.add_section("Agent Decomposition")
+        self.add_section("Agent Details")
+        self.report_content.append("\n(AI_SUMMARY: Agent Composition)\n")
         
         self.add_subsection("Distribution")
         if isinstance(self.df_agents, pd.DataFrame) and not self.df_agents.empty:
@@ -988,13 +1058,46 @@ class ReportGenerator:
                     y_cols=['pure_llm_sec', 'overhead_sec'], 
                     title="Agent Overhead vs Pure LLM Latency", 
                     filename="agent_overhead_composition.png",
-                    colors=['#66b3ff', '#ff9999'] # Light Blue (LLM), Light Red (Overhead)
+                    colors=['#66b3ff', '#ff9999'], # Light Blue (LLM), Light Red (Overhead)
+                    figsize=(14, 8) # Widen to fix smashed view
                 )
                 if path:
                     self.add_image("Agent Overhead Comparison", path)
                 
             except Exception as e:
                 logger.error(f"Failed to generate Agent Overhead chart: {e}")
+
+        self.report_content.append("\n---\n")
+
+        # Agent Level Sequence Charts moved to Agent Decomposition
+        try:
+            df_agents = self.df_raw_agents
+            if not df_agents.empty and 'agent_name' in df_agents.columns and 'model_name' in df_agents.columns:
+                
+                self.add_subsection("Agent Execution Latency (Request Order)")
+                self.report_content.append("The following charts display the end-to-end latency for each specific Agent over time, highlighting performance trends and potential internal degradation.\n\n")
+                
+                # Per Agent Overall
+                # Only include agents that actually had traffic
+                active_agents = set()
+                if not self.df_agents.empty and 'total_count' in self.df_agents.columns:
+                    active_agents = set(self.df_agents[self.df_agents['total_count'] > 0]['agent_name'])
+                
+                for agent in sorted(df_agents['agent_name'].unique()):
+                    if active_agents and agent not in active_agents:
+                        continue # Skip agents with no data
+                        
+                    agent_df = df_agents[df_agents['agent_name'] == agent]
+                    if agent_df.empty: continue
+                    safe_name = str(agent).replace(' ', '_').replace('/', '_').lower()
+                    chart_filename = f'seq_agent_overall_{safe_name}.png'
+                    chart_title = f"{agent} Execution Latency Sequence (Request Order)"
+                    self.chart_gen.generate_sequence_plot(
+                        agent_df, 'latency_seconds', chart_title, chart_filename
+                    )
+                    self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
+        except Exception as e:
+            logger.error(f"Failed to generate Agent sequence plots: {e}")
 
         self.report_content.append("\n---\n")
 
@@ -1005,13 +1108,14 @@ class ReportGenerator:
             for agent in sorted(agents):
                 agent_df = self.df_agent_models[self.df_agent_models['agent_name'] == agent]
                 if agent_df.empty: continue
-                
+
                 # Transpose for the specific format: Cols = Models, Rows = Metrics
                 # Metrics: Mean Output, Median Output, Min, Max, Corr Latency/Output, Corr Latency/Thought
-                
+
                 # We need to prepare a dict structure first. To ensure consistency with the global table,
                 # we maintain EXACTLY the same rows and ordering.
                 metrics_data = {
+                    "Amount of Requests": {},
                     "Mean Input Tokens": {},
                     "P95 Input Tokens": {},
                     "Mean Thought Tokens": {},
@@ -1026,16 +1130,17 @@ class ReportGenerator:
                     "Latency vs Output+Thinking Corr.": {},
                     "Correlation Strength": {},
                 }
-                
+
                 for _, row in agent_df.iterrows():
                     m = row['model_name']
-                    
+
                     def safe_round(val):
                         if isinstance(val, (int, float)):
                             if pd.isna(val): return "N/A"
                             return f"{val:.2f}"
                         return "N/A"
 
+                    metrics_data["Amount of Requests"][m] = row.get('total_count', 'N/A')
                     metrics_data["Mean Input Tokens"][m] = safe_round(row.get('avg_input_tokens'))
                     metrics_data["P95 Input Tokens"][m] = safe_round(row.get('p95_input_tokens'))
                     metrics_data["Mean Thought Tokens"][m] = safe_round(row.get('avg_thought_tokens'))
@@ -1046,23 +1151,23 @@ class ReportGenerator:
                     metrics_data["Min Output Tokens"][m] = safe_round(row.get('min_output_tokens'))
                     metrics_data["Max Output Tokens"][m] = safe_round(row.get('max_output_tokens'))
                     metrics_data["Mean Total Tokens"][m] = safe_round(row.get('avg_total_tokens'))
-                    
+
                     # Calculate Correlations per Agent-Model using df_raw_llm
                     if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
                         subset = self.df_raw_llm[
-                            (self.df_raw_llm['agent_name'] == agent) & 
+                            (self.df_raw_llm['agent_name'] == agent) &
                             (self.df_raw_llm['model_name'] == m)
-                        ]
-                        
+                            ]
+
                         if len(subset) > 1:
-                            
+
                             # Latency vs Output
                             if subset['latency_seconds'].std() > 0 and subset['output_tokens'].std() > 0:
                                 corr_out = subset['latency_seconds'].corr(subset['output_tokens'])
                                 metrics_data["Latency vs Output Corr."][m] = f"{corr_out:.3f}" if not pd.isna(corr_out) else "N/A"
                             else:
                                 metrics_data["Latency vs Output Corr."][m] = "N/A"
-                            
+
                             # Latency vs Output + Thinking
                             total_gen = subset['output_tokens'] + subset['thought_tokens']
                             if subset['latency_seconds'].std() > 0 and total_gen.std() > 0:
@@ -1071,7 +1176,7 @@ class ReportGenerator:
                             else:
                                 metrics_data["Latency vs Output+Thinking Corr."][m] = "N/A"
                                 corr_gen = float('nan') # Ensure variables exist for next block
-                            
+
                             # Strength (using Output+Thinking as primary if valid, else Output)
                             primary_corr = corr_gen if not pd.isna(corr_gen) else corr_out
                             if pd.isna(primary_corr):
@@ -1092,67 +1197,20 @@ class ReportGenerator:
                         metrics_data["Latency vs Output Corr."][m] = "N/A"
                         metrics_data["Latency vs Output+Thinking Corr."][m] = "N/A"
                         metrics_data["Correlation Strength"][m] = "N/A"
-                
+
                 # Convert to DF
                 stats_df = pd.DataFrame(metrics_data).T
                 stats_df.columns = [f"**{c}**" for c in stats_df.columns]
                 stats_df.index.name = "**Metric**"
-                
+
                 self.report_content.append(f"\n**{agent}**\n")
                 self.report_content.append(self._bold_index(stats_df).to_markdown())
                 self.report_content.append("\n<br>\n")
         self.report_content.append("<br>")
-
-        # Agent Level Sequence Charts moved to Agent Decomposition
-        try:
-            df_agents = self.df_raw_agents
-            if not df_agents.empty and 'agent_name' in df_agents.columns and 'model_name' in df_agents.columns:
-                
-                self.add_subsection("Agent Execution Latency (Request Order)")
-                self.report_content.append("The following charts display the end-to-end latency for each specific Agent over time, highlighting performance trends and potential internal degradation.\n\n")
-                
-                # Per Agent Overall
-                for agent in df_agents['agent_name'].unique():
-                    agent_df = df_agents[df_agents['agent_name'] == agent]
-                    if agent_df.empty: continue
-                    safe_name = str(agent).replace(' ', '_').replace('/', '_').lower()
-                    chart_filename = f'seq_agent_overall_{safe_name}.png'
-                    chart_title = f"{agent} Execution Latency Sequence (Request Order)"
-                    self.chart_gen.generate_sequence_plot(
-                        agent_df, 'latency_seconds', chart_title, chart_filename
-                    )
-                    self.add_image(chart_title, os.path.join(self.assets_dir, chart_filename))
-                
-                self.add_subsection("Agent Execution Latency (By Model)")
-                self.report_content.append("These charts breakdown the Agent execution sequences further by the underlying LLM model used for that request. This helps isolate whether an Agent's latency spike is tied to a specific model's degradation.\n\n")
-
-                # Per Agent Per Model
-                for agent in df_agents['agent_name'].unique():
-                    agent_df = df_agents[df_agents['agent_name'] == agent]
-                    
-                    # Add subheading for the agent
-                    self.report_content.append(f"\n#### {agent}\n")
-                    
-                    for model in agent_df['model_name'].unique():
-                        am_df = agent_df[agent_df['model_name'] == model]
-                        if am_df.empty: continue
-                        safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
-                        safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
-                        chart_filename = f'seq_agent_model_{safe_a}_{safe_m}.png'
-                        
-                        self.chart_gen.generate_sequence_plot(
-                            am_df, 'latency_seconds', f"{agent} via {model} Latency Sequence", chart_filename
-                        )
-                        
-                        self.report_content.append(f"\n**{agent} via {model}**\n")
-                        self.add_image(f"{agent} via {model} Latency Sequence", os.path.join(self.assets_dir, chart_filename))
-
-        except Exception as e:
-            logger.error(f"Failed to generate Agent sequence plots: {e}")
-
         self.report_content.append("\n---\n")
 
-        self.add_section("Model Composition")
+        self.add_section("Model Details")
+        self.report_content.append("\n(AI_SUMMARY: Model Composition)\n")
         
         self.add_subsection("Distribution")
         if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
@@ -1265,7 +1323,7 @@ class ReportGenerator:
                 self.report_content.append("\n### Model Latency Sequences\n")
                 self.report_content.append("The following charts display the pure LLM execution latency (excluding agent overhead) for each generated response throughout the test run.\n\n")
 
-                for model in df_llm['model_name'].unique():
+                for model in sorted(df_llm['model_name'].unique()):
                     model_df = df_llm[df_llm['model_name'] == model]
                     if model_df.empty: continue
                     safe_name = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
@@ -1286,7 +1344,7 @@ class ReportGenerator:
                  # Check for thoughts_token_count
                  has_thoughts = 'thoughts_token_count' in self.df_correlation.columns
                  
-                 for model in self.df_models['model_name'].unique():
+                 for model in sorted(self.df_models['model_name'].unique()):
                      model_corr_df = self.df_correlation[self.df_correlation['model_name'] == model].copy()
                      if len(model_corr_df) > 5: # Need enough points
                          # Output Correlation
@@ -1320,6 +1378,7 @@ class ReportGenerator:
              stats_rows = []
              # Define rows: Metric Name -> Col Name (in df_models)
              stat_defs = [
+                 ("Amount of Requests", "total_count"),
                  ("Mean Input Tokens", "avg_input_tokens"),
                  ("P95 Input Tokens", "p95_input_tokens"),
                  ("Mean Thought Tokens", "avg_thought_tokens"),
@@ -1340,7 +1399,10 @@ class ReportGenerator:
                      if pd.isna(val):
                          val = "-"
                      elif isinstance(val, (int, float)):
-                         val = f"{float(val):.2f}"
+                         if label == "Amount of Requests":
+                             val = f"{int(val)}"
+                         else:
+                             val = f"{float(val):.2f}"
                      row[r['model_name']] = val
                  stats_rows.append(row)
              
@@ -1349,7 +1411,7 @@ class ReportGenerator:
              row_corr_tot = {"Metric": "Latency vs Output+Thinking Corr."}
              row_strength = {"Metric": "Correlation Strength"}
              
-             for model in self.df_models['model_name'].unique():
+             for model in sorted(self.df_models['model_name'].unique()):
                  corrs = correlation_map.get(model, {})
                  c_out = corrs.get('out', 'N/A')
                  c_tot = corrs.get('total', 'N/A')
@@ -1461,83 +1523,14 @@ class ReportGenerator:
         self.report_content.append("\n---\n")
 
 
-        # 7. Hypothesis Testing: Correlation Analysis
-        self.add_section("Hypothesis Testing: Latency & Tokens")
-        if not self.df_correlation.empty:
-            # Latency (ms) to seconds for better readability
-            self.df_correlation['duration_s'] = self.df_correlation['duration_ms'] / 1000.0
-            
 
-
-            # --- Advanced Token Tracking Charts ---
-            if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
-                df_llm = self.df_raw_llm.copy()
-                df_llm['latency_seconds'] = df_llm['duration_ms'] / 1000.0
-                df_llm['input_tokens'] = df_llm['prompt_token_count'].fillna(0) if 'prompt_token_count' in df_llm.columns else 0
-                df_llm['output_tokens'] = df_llm['candidates_token_count'].fillna(0) if 'candidates_token_count' in df_llm.columns else 0
-                df_llm['thought_tokens'] = df_llm['thoughts_token_count'].fillna(0) if 'thoughts_token_count' in df_llm.columns else 0
-                
-                # Filter out pure errors with no tokens mapping?
-                if 'output_tokens' in df_llm.columns:
-                    df_llm = df_llm[df_llm['output_tokens'] > 0]
-                
-                # 4. Latency vs Output Token Count (Linear)
-                try:
-                    self.chart_gen.generate_scatter_with_trend(
-                        df_llm, 'output_tokens', 'latency_seconds', 'input_tokens',
-                        'Latency vs Output Token Count (Linear)',
-                        'latency_vs_output_linear.png',
-                        scale='linear'
-                    )
-                    self.add_image("Latency vs Output Token Count (Linear)", os.path.join(self.assets_dir, 'latency_vs_output_linear.png'))
-                except Exception as e:
-                    logger.error(f"Failed to generate linear scatter: {e}")
-
-                # 5. Latency vs Output Token Count (Log)
-                try:
-                    self.chart_gen.generate_scatter_with_trend(
-                        df_llm, 'output_tokens', 'latency_seconds', 'input_tokens',
-                        'Latency vs Output Token Count (Log Scale)',
-                        'latency_vs_output_log.png',
-                        scale='log'
-                    )
-                    self.add_image("Latency vs Output Token Count (Log)", os.path.join(self.assets_dir, 'latency_vs_output_log.png'))
-                except Exception as e:
-                    logger.error(f"Failed to generate log scatter: {e}")
-
-                # 6. Latency vs Output + Thought Tokens
-                try:
-                    # Check if thought_tokens has data, otherwise just use output
-                    if df_llm['thought_tokens'].sum() > 0:
-                        df_llm['total_generated_tokens'] = df_llm['output_tokens'] + df_llm['thought_tokens']
-                        title_suffix = "(Output + Thought)"
-                        x_col = 'total_generated_tokens'
-                    else:
-                        df_llm['total_generated_tokens'] = df_llm['output_tokens']
-                        title_suffix = "(Output Only - No Thoughts)"
-                        x_col = 'output_tokens'
-                        
-                    self.chart_gen.generate_scatter_with_trend(
-                        df_llm, x_col, 'latency_seconds', 'input_tokens',
-                        f'Latency vs Generated Tokens {title_suffix}',
-                        'latency_vs_generated_tokens.png',
-                        scale='linear'
-                    )
-                    self.add_image(f"Latency vs Generated Tokens {title_suffix}", os.path.join(self.assets_dir, 'latency_vs_generated_tokens.png'))
-                except Exception as e:
-                    logger.error(f"Failed to generate token scatter: {e}")
-        else:
-            self.report_content.append("No data available for correlation analysis.\n")
-
-        self.report_content.append("\n---\n")
-
-        # 7. Outlier Analysis
-        self.report_content.append(self._generate_outlier_analysis_section())
-
-        # --- Advanced Charts ---
-        logger.info("   [BUILD] Generating Advanced Charts section...")
-        self.add_section("Advanced Charts")
-        self.generate_advanced_charts()
+        # # 7. Outlier Analysis
+        # self.report_content.append(self._generate_outlier_analysis_section())
+        #
+        # # --- Advanced Charts ---
+        # logger.info("   [BUILD] Generating Advanced Charts section...")
+        # self.add_section("Advanced Charts")
+        # self.generate_advanced_charts()
 
         # --- System Bottlenecks ---
         self.add_section("System Bottlenecks & Impact")
@@ -1554,6 +1547,21 @@ class ReportGenerator:
             if 'timestamp' in df.columns:
                 df['timestamp'] = df['timestamp'].apply(self._format_date)
             return df
+
+        def append_inline_rca_list(df, prefix):
+            if 'rca_analysis' in df.columns:
+                has_rcas = False
+                rca_block = ["**Detailed RCA Analysis:**\n"]
+                for idx, row in df.iterrows():
+                    rca_text = str(row.get('rca_analysis', 'N/A')).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('['):
+                        has_rcas = True
+                        rank = row.get('Rank', idx + 1)
+                        anchor_id = f"rca-{prefix}-{rank}"
+                        rca_block.append(f"- <a id=\"{anchor_id}\"></a>**Rank {rank}**: {rca_text}\n")
+                if has_rcas:
+                    self.report_content.extend(rca_block)
+                    self.report_content.append("<br>\n")
 
         self.add_subsection("Slowest Invocations")
         if isinstance(self.root_bottlenecks, pd.DataFrame) and not self.root_bottlenecks.empty:
@@ -1589,7 +1597,7 @@ class ReportGenerator:
                 'content_text_summary': 'User Message',
                 'session_id': 'Session ID',
                 'trace_id': 'Trace ID',
-                'RCA': 'RCA',
+                'span_id': 'Span ID'
             }
             
             final_cols_root = []
@@ -1598,8 +1606,8 @@ class ReportGenerator:
                 if src in df_root.columns or src == 'Rank':
                     final_cols_root.append(src)
                     rename_map_root[src] = dst
-            
             df_final_root = df_root[final_cols_root].rename(columns=rename_map_root)
+            df_final_root['Rank'] = df_final_root['Rank'].astype(object)
             
             # Format Links
             for idx, row in df_final_root.iterrows():
@@ -1608,11 +1616,18 @@ class ReportGenerator:
                 if t_id and not str(t_id).startswith('['):
                      link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id}?project={p_id}"
                      df_final_root.at[idx, 'Trace ID'] = f"[`{t_id}`]({link})"
+                     
+                if 'rca_analysis' in df_root.columns:
+                    rca_text = str(df_root.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('nan'):
+                        rank_val = row.get('Rank')
+                        df_final_root.at[idx, 'Rank'] = f"[{rank_val}](#rca-root-{rank_val})"
 
             # Bolding for Root Agent
             df_final_root = self._bold_columns_by_pattern(df_final_root, "Root Agent")
             self.report_content.append(self._bold_first_column(df_final_root).to_markdown(index=False))
             self.report_content.append("\n<br>\n")
+            append_inline_rca_list(df_root, "root")
         else:
             self.report_content.append("No root bottlenecks found.\n")
 
@@ -1675,8 +1690,7 @@ class ReportGenerator:
                 'impact': 'Impact (%)',
                 'session_id': 'Session ID',
                 'trace_id': 'Trace ID',
-                'span_id': 'Span ID',
-                'RCA': 'RCA',
+                'span_id': 'Span ID'
             }
             
             # Filter only existing columns from map keys (except created ones)
@@ -1687,8 +1701,8 @@ class ReportGenerator:
                 if src in df_top.columns:
                     final_cols.append(src)
                     rename_dict[src] = dst
-            
             df_final_top = df_top[final_cols].rename(columns=rename_dict)
+            df_final_top['Rank'] = df_final_top['Rank'].astype(object)
             
             # Apply link formatting manually to the final DF to ensure correct column names
             for idx, row in df_final_top.iterrows():
@@ -1704,13 +1718,19 @@ class ReportGenerator:
                      link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
                      df_final_top.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
 
+                if 'rca_analysis' in df_top.columns:
+                    rca_text = str(df_top.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('nan'):
+                        rank_val = row.get('Rank')
+                        df_final_top.at[idx, 'Rank'] = f"[{rank_val}](#rca-agent-{rank_val})"
+
             df_final_top.columns = [f"**{c}**" for c in df_final_top.columns]
             
-            # Use generic bolding for Name columns and Root Agent
             df_final_top = self._bold_columns_by_pattern(df_final_top, "Name")
             df_final_top = self._bold_columns_by_pattern(df_final_top, "Root Agent")
             self.report_content.append(self._bold_first_column(df_final_top).to_markdown(index=False))
             self.report_content.append("\n<br>\n")
+            append_inline_rca_list(df_top, "agent")
         else:
             self.report_content.append("No data available for top bottlenecks.\n")
         
@@ -1759,6 +1779,7 @@ class ReportGenerator:
                  df_llm['Impact %'] = "N/A"
 
              df_llm['RCA'] = df_llm.get('rca_analysis', "N/A")
+             df_llm = self._extract_rcas(df_llm)
              
              # Ensure columns exist before operations
              for col in ['prompt_token_count', 'candidates_token_count', 'thoughts_token_count']:
@@ -1820,8 +1841,7 @@ class ReportGenerator:
                 'content_text_summary': 'User Message',
                 'session_id': 'Session ID',
                 'trace_id': 'Trace ID',
-                'span_id': 'Span ID',
-                'RCA': 'RCA'
+                'span_id': 'Span ID'
             }
              
              # Fill missing columns with N/A to match user request
@@ -1841,8 +1861,8 @@ class ReportGenerator:
                       df_llm[src] = df_llm[src].astype(object).fillna("N/A")
                  final_cols_llm.append(src)
                  rename_dict_llm[src] = dst
-             
              df_final_llm = df_llm[final_cols_llm].rename(columns=rename_dict_llm)
+             df_final_llm['Rank'] = df_final_llm['Rank'].astype(object)
              
              # Format Links
              for idx, row in df_final_llm.iterrows():
@@ -1858,13 +1878,19 @@ class ReportGenerator:
                      link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
                      df_final_llm.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
 
+                if 'rca_analysis' in df_llm.columns:
+                    rca_text = str(df_llm.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('nan'):
+                        rank_val = row.get('Rank')
+                        df_final_llm.at[idx, 'Rank'] = f"[{rank_val}](#rca-llm-{rank_val})"
+
              df_final_llm.columns = [f"**{c}**" for c in df_final_llm.columns]
              
-             # Generic Bolding
              df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Name")
              df_final_llm = self._bold_columns_by_pattern(df_final_llm, "Root Agent")
              self.report_content.append(self._bold_first_column(df_final_llm).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
+             append_inline_rca_list(df_llm, "llm")
 
         # Slowest Tools Queries
         self.add_subsection("Slowest Tools Queries")
@@ -1969,10 +1995,12 @@ class ReportGenerator:
              final_cols = []
              rename_map = {}
              for src, dst in cols_map.items():
-                 final_cols.append(src)
-                 rename_map[src] = dst
+                 if src in df_tool.columns:
+                     final_cols.append(src)
+                     rename_map[src] = dst
                  
              df_final = df_tool[final_cols].rename(columns=rename_map)
+             df_final['Rank'] = df_final['Rank'].astype(object)
              
              # Links
              for idx, row in df_final.iterrows():
@@ -1988,24 +2016,35 @@ class ReportGenerator:
                      link = f"https://console.cloud.google.com/traces/explorer;traceId={t_id};spanId={s_id}?project={p_id}"
                      df_final.at[idx, 'Span ID'] = f"[`{s_id}`]({link})"
 
+                if 'rca_analysis' in df_tool.columns:
+                    rca_text = str(df_tool.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('nan'):
+                        rank_val = row.get('Rank')
+                        df_final.at[idx, 'Rank'] = f"[{rank_val}](#rca-tool-{rank_val})"
+
              df_final.columns = [f"**{c}**" for c in df_final.columns]
              
-             # Generic Bolding
              df_final = self._bold_columns_by_pattern(df_final, "Name")
              self.report_content.append(self._bold_first_column(df_final).to_markdown(index=False))
              self.report_content.append("\n<br>\n")
+             append_inline_rca_list(df_tool, "tool")
 
         # --- Error Analysis ---
         self.add_section("Error Analysis")
+        self.report_content.append("\n(AI_SUMMARY: Error Analysis)\n")
         
-        # Helper for Error Tables
-        def format_error_table(df, cols_mapping):
-            if df.empty: return None
+        def format_error_table(df, cols_mapping, prefix):
+            if df.empty: return None, None
             df_err = self._standardize_formatting(df.copy())
             df_err['Rank'] = range(1, len(df_err) + 1)
             
             # Formats
             # Timestamp handled by _standardize_formatting
+            
+            if 'category' in df_err.columns:
+                df_err['Category'] = df_err['category'].fillna("Not Analyzed")
+            else:
+                df_err['Category'] = "Not Analyzed"
             
             # Fill missing
             for k, v in cols_mapping.items():
@@ -2017,10 +2056,15 @@ class ReportGenerator:
             ren_m = {}
             for src, dst in cols_mapping.items():
                 if src in df_err.columns or src == 'Rank':
-                    final_c.append(src)
-                    ren_m[src] = dst
+                    if src != 'rca_analysis':
+                        final_c.append(src)
+                        ren_m[src] = dst
             
             df_final = df_err[final_c].rename(columns=ren_m)
+            df_final['Rank'] = df_final['Rank'].astype(object)
+            
+            # Now truncate all fields to max_column_width so tables don't explode
+            df_final = self._truncate_df(df_final)
             
             # Links
             for idx, row in df_final.iterrows():
@@ -2041,29 +2085,40 @@ class ReportGenerator:
                 if inv_id and not str(inv_id).startswith('`'):
                     df_final.at[idx, 'Invocation ID'] = f"`{inv_id}`"
 
+                # Link Rank to RCA anchor
+                if 'rca_analysis' in df_err.columns:
+                    rca_text = str(df_err.at[idx, 'rca_analysis']).replace('&nbsp;', '').strip()
+                    if rca_text and rca_text != 'N/A' and not rca_text.startswith('Not Analyzed') and not rca_text.startswith('nan') and not rca_text.startswith('['):
+                        rank_val = row.get('Rank')
+                        df_final.at[idx, 'Rank'] = f"[{rank_val}](#rca-err-{prefix}-{rank_val})"
+
             df_final.columns = [f"**{c}**" for c in df_final.columns]
             
             # Generic Bolding
             df_final = self._bold_columns_by_pattern(df_final, "Name")
             df_final = self._bold_columns_by_pattern(df_final, "Root Agent")
-            return self._bold_first_column(df_final).to_markdown(index=False)
+            return self._bold_first_column(df_final).to_markdown(index=False), df_err
 
         # 1. Root Agent Errors
         self.add_subsection("Root Errors")
-        # Rank | Timestamp | Root Agent | Error Message | User Message | Trace ID | Invocation ID
+        # Rank | Timestamp | Category | Root Agent | Error Message | User Message | Trace ID | Invocation ID
         root_map = {
             'Rank': 'Rank',
             'timestamp': 'Timestamp',
+            'Category': 'Category',
             'root_agent_name': 'Root Agent',
             'error_message': 'Error Message',
             'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
-            'invocation_id': 'Invocation ID'
+            'invocation_id': 'Invocation ID',
+            'rca_analysis': 'RCA'
+
         }
         if not self.root_errors.empty:
-            tbl = format_error_table(self._truncate_df(self.root_errors.head(self.num_error_queries)), root_map)
+            tbl, processed_df = format_error_table(self.root_errors.head(self.num_error_queries), root_map, "root")
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
+            append_inline_rca_list(processed_df, "err-root")
         else:
             self.report_content.append("No Root Agent errors found.\n")
 
@@ -2072,34 +2127,38 @@ class ReportGenerator:
 
         # 2. Agent Errors
         self.add_subsection("Agent Errors")
-        # Rank | Timestamp | Agent Name | Error Message | Root Agent | Root Status | User Message | Trace ID | Span ID
+        # Rank | Timestamp | Category | Agent Name | Error Message | Root Agent | Root Status | User Message | Trace ID | Span ID
         agent_map = {
             'Rank': 'Rank',
             'timestamp': 'Timestamp',
+            'Category': 'Category',
             'agent_name': 'Agent Name',
             'error_message': 'Error Message',
             'root_agent_name': 'Root Agent',
             'root_status': 'Root Status',
             'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
+            'rca_analysis': 'RCA',
             'span_id': 'Span ID'
         }
         if not self.agent_errors.empty:
             if 'root_status' in self.agent_errors.columns:
                 self.agent_errors['root_status'] = self.agent_errors['root_status'].apply(self._status_emoji)
 
-            tbl = format_error_table(self._truncate_df(self.agent_errors.head(self.num_error_queries)), agent_map)
+            tbl, processed_df = format_error_table(self.agent_errors.head(self.num_error_queries), agent_map, "agent")
             self.report_content.append(tbl)
             self.report_content.append("\n<br>\n")
+            append_inline_rca_list(processed_df, "err-agent")
         else:
             self.report_content.append("No Agent errors found.\n")
 
         # 3. Tool Errors
         self.add_subsection("Tool Errors")
-        # Rank | Timestamp | Tool Name | Tool Args | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID
+        # Rank | Timestamp | Category | Tool Name | Tool Args | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID
         tool_map = {
             'Rank': 'Rank',
             'timestamp': 'Timestamp',
+            'Category': 'Category',
             'tool_name': 'Tool Name',
             'tool_args': 'Tool Args',
             'error_message': 'Error Message',
@@ -2109,6 +2168,7 @@ class ReportGenerator:
             'root_status': 'Root Status',
             'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
+            'rca_analysis': 'RCA',
             'span_id': 'Span ID' 
         }
         if not self.tool_errors.empty:
@@ -2121,18 +2181,20 @@ class ReportGenerator:
              if 'tool_args' in self.tool_errors.columns:
                  self.tool_errors['tool_args'] = self.tool_errors['tool_args'].apply(self._format_as_code)
 
-             tbl = format_error_table(self._truncate_df(self.tool_errors.head(self.num_error_queries)), tool_map)
+             tbl, processed_df = format_error_table(self.tool_errors.head(self.num_error_queries), tool_map, "tool")
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
+             append_inline_rca_list(processed_df, "err-tool")
         else:
              self.report_content.append("No Tool errors found.\n")
 
         # 4. LLM Errors
         self.add_subsection("LLM Errors")
-        # Rank | Timestamp | Model Name | LLM Config | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID
+        # Rank | Timestamp | Category | Model Name | LLM Config | Error Message | Parent Agent | Agent Status | Root Agent | Root Status | User Message | Trace ID | Span ID
         llm_map = {
             'Rank': 'Rank',
             'timestamp': 'Timestamp',
+            'Category': 'Category',
             'model_name': 'Model Name',
             'llm_config': 'LLM Config',
             'error_message': 'Error Message',
@@ -2143,6 +2205,7 @@ class ReportGenerator:
             'root_status': 'Root Status',
             'content_text_summary': 'User Message',
             'trace_id': 'Trace ID',
+            'rca_analysis': 'RCA',
             'span_id': 'Span ID' 
         }
         if not self.llm_errors.empty:
@@ -2161,12 +2224,12 @@ class ReportGenerator:
              else:
                  self.llm_errors['duration_s'] = 0.0
 
-             tbl = format_error_table(self._truncate_df(self.llm_errors.head(self.num_error_queries)), llm_map)
+             tbl, processed_df = format_error_table(self.llm_errors.head(self.num_error_queries), llm_map, "llm")
              self.report_content.append(tbl)
              self.report_content.append("\n<br>\n")
+             append_inline_rca_list(processed_df, "err-llm")
         else:
              self.report_content.append("No LLM errors found.\n")
-
 
 
 
@@ -2299,7 +2362,7 @@ class ReportGenerator:
         self.report_content.append("(Recommendations will be generated by AI Agent)\n")
 
         # --- Configuration ---
-        self.add_section("Configuration")
+        self.add_section("Report Parameters")
         # Load Raw Config File for accuracy
         try:
              config_path = os.path.join(dir_path, "../agents/observability_agent/config.json")
@@ -2310,6 +2373,98 @@ class ReportGenerator:
              # Fallback
              self.report_content.append(f"```json\n{json.dumps(self.config, indent=2)}\n```")
 
+        # --- Appendix ---
+        self._render_appendix()
+
+        
+        # 3. Hypothesis Testing: Agent/Model Latency vs Tokens
+        if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
+            self.add_subsection("Hypothesis Testing: Latency & Tokens")
+            self.report_content.append("These scatter plots illustrate the relationship between generated token count and LLM latency on a granular, per-agent and per-model basis, utilizing the raw underlying llm_events tracking data.\n\nThis granularity helps isolate correlation behaviors where an Agent's complex prompt might cause a specific model to degrade more linearly with output size.\n\n")
+            
+            df_llm = self.df_raw_llm.copy()
+            df_llm['latency_seconds'] = df_llm['duration_ms'] / 1000.0
+            if 'prompt_token_count' in df_llm.columns:
+                df_llm['input_tokens'] = df_llm['prompt_token_count'].fillna(0)
+            else:
+                df_llm['input_tokens'] = 0
+                
+            if 'candidates_token_count' in df_llm.columns:
+                df_llm['output_tokens'] = df_llm['candidates_token_count'].fillna(0)
+            else:
+                df_llm['output_tokens'] = 0
+                
+            if 'thoughts_token_count' in df_llm.columns:
+                df_llm['thought_tokens'] = df_llm['thoughts_token_count'].fillna(0)
+            else:
+                df_llm['thought_tokens'] = 0
+                
+            # Filter out pure errors with no tokens map
+            if 'output_tokens' in df_llm.columns:
+                df_llm = df_llm[df_llm['output_tokens'] > 0]
+                
+            agents = sorted(df_llm['agent_name'].unique())
+            for agent in agents:
+                agent_df = df_llm[df_llm['agent_name'] == agent]
+                models = sorted(agent_df['model_name'].unique())
+                
+                has_plots = False
+                for model in models:
+                    if len(agent_df[agent_df['model_name'] == model]) >= 5:
+                        has_plots = True
+                        break
+                
+                if not has_plots:
+                    continue
+                    
+                self.report_content.append(f"#### {agent}\n\n")
+                
+                for model in models:
+                    am_df = agent_df[agent_df['model_name'] == model].copy()
+                    if len(am_df) < 5: continue # Skip if not enough points for trend line
+                    
+                    if am_df['thought_tokens'].sum() > 0:
+                        am_df['total_generated_tokens'] = am_df['output_tokens'] + am_df['thought_tokens']
+                        x_col = 'total_generated_tokens'
+                    else:
+                        am_df['total_generated_tokens'] = am_df['output_tokens']
+                        x_col = 'output_tokens'
+                        
+                    safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
+                    safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
+                    title = f"Latency vs Tokens ({agent} via {model})"
+                    filename = f"latency_scatter_{safe_a}_{safe_m}.png"
+                    
+                    try:
+                        corr_val = "N/A"
+                        corr_desc = "Unknown"
+                        n_reqs = len(am_df)
+                        
+                        if am_df['latency_seconds'].std() > 0 and am_df[x_col].std() > 0:
+                            corr = am_df['latency_seconds'].corr(am_df[x_col])
+                            corr_val = f"{corr:.3f}"
+                            
+                            abs_corr = abs(corr)
+                            if abs_corr >= 0.8: corr_desc = "Very Strong"
+                            elif abs_corr >= 0.6: corr_desc = "Strong"
+                            elif abs_corr >= 0.4: corr_desc = "Moderate"
+                            elif abs_corr >= 0.2: corr_desc = "Weak"
+                            else: corr_desc = "Very Weak / None"
+                            
+                        self.report_content.append(f"**{model}**\n")
+                        self.report_content.append(f"- **Number of Requests**: {n_reqs}\n\n")
+                        self.report_content.append(f"- **Correlation**: {corr_val} ({corr_desc})\n\n")
+
+                        self.chart_gen.generate_scatter_with_trend(
+                            am_df, x_col, 'latency_seconds', 'input_tokens',
+                            title,
+                            filename,
+                            scale='linear',
+                            figsize=(6, 4)
+                        )
+                        self.add_image(title, os.path.join(self.assets_dir, filename))
+                    except Exception as e:
+                        logger.error(f"Failed to generate explicit scatter plot: {e}")
     def save(self) -> str:
         filename = f"observability_{self.playbook}_report_{self.timestamp}.md"
         filepath = os.path.join(self.report_dir, filename)
@@ -2437,19 +2592,21 @@ def load_config() -> Dict[str, Any]:
         logger.warning(f"Failed to load config.json: {e}")
         return {}
 
-async def generate_report_content(save_file: bool = True, config: Dict[str, Any] = None) -> str:
-    # Ensure views exist before querying
-    try:
-        ensure_all_views()
-    except Exception as e:
-        logger.warning(f"Failed to ensure views: {e}")
+async def generate_report_content(save_file: bool = True, config: Dict[str, Any] = None, data: Dict[str, Any] = None) -> str:
+    # Ensure views exist before querying only if we are taking the data-pulling path
+    if data is None:
+        try:
+            ensure_all_views()
+        except Exception as e:
+            logger.warning(f"Failed to ensure views: {e}")
 
     if config is None:
         config = load_config()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
-    data_manager = ReportDataManager(config)
-    data = await data_manager.fetch_all_data()
+    if data is None:
+        data_manager = ReportDataManager(config)
+        data = await data_manager.fetch_all_data()
     
     generator = ReportGenerator(data, config, base_dir=base_dir)
     # await generator.fetch_data() # Removed as data is passed in
