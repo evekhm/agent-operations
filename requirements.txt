@@ -16,7 +16,7 @@ google-cloud-logging
 pandas
 scipy
 python-dotenv
-google-adk>=1.24.0
+google-adk>=1.26.0
 numpy
 python-dateutil
 opentelemetry-instrumentation-google-genai>=0.6b0
@@ -29,4 +29,4 @@ opentelemetry-instrumentation-google-genai>=0.6b0
 # opentelemetry-sdk
 pydantic-ai
 seaborn
-
+md2pdf

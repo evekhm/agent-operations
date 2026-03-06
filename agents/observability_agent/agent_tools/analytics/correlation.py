@@ -17,10 +17,12 @@ from .queries import FETCH_CORRELATION_DATA_QUERY
 
 logger = logging.getLogger(__name__)
 
+from ...config import MAX_RAW_RECORDS_LIMIT
+
 @cached_tool(session_scope=True)
 async def fetch_correlation_data(
     time_range: str = "24h",
-    limit: int = 2000,
+    limit: int = MAX_RAW_RECORDS_LIMIT,
     tool_context: ToolContext = None
 ) -> str:
     """

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 def _ensure_view_exists(view_id, sql_file_name):
     """Generic function to create or update a BigQuery view from a SQL file."""
+
     client = bigquery.Client(project=PROJECT_ID)
     view_ref = f"{PROJECT_ID}.{DATASET_ID}.{view_id}"
     

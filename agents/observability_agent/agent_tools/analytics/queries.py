@@ -29,7 +29,7 @@ SELECT
 FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
   AND duration_ms > 0
-ORDER BY timestamp DESC
+ORDER BY timestamp DESC, duration_ms DESC, agent_name ASC
 LIMIT {{limit}}
 """
 
@@ -48,7 +48,7 @@ LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS L
   ON A.trace_id = L.trace_id AND A.span_id = L.parent_span_id
 WHERE A.duration_ms > 0
   AND A.agent_name != A.root_agent_name
-ORDER BY A.timestamp DESC
+ORDER BY A.timestamp DESC, A.span_id ASC
 LIMIT {{limit}}
 """
 
@@ -102,7 +102,7 @@ FROM
 WHERE
     {{where_clause}}
 GROUP BY {{group_clause_final}}
-ORDER BY avg_ms DESC
+ORDER BY avg_ms DESC, total_count DESC
 """
 
 GET_ACTIVE_METADATA_QUERY = f"""
@@ -145,7 +145,7 @@ SELECT
     APPROX_QUANTILES(latency_ms, 100)[OFFSET(95)] as target_p95_ms
 FROM FilteredBaseline
 GROUP BY group_key
-ORDER BY target_mean_ms ASC
+ORDER BY target_mean_ms ASC, group_key ASC
 """
 
 ANALYZE_LATENCY_TREND_QUERY = f"""
@@ -171,6 +171,7 @@ WITH LLM_Aggregated AS (
     SELECT 
         parent_span_id, 
         model_name,
+        SUM(prompt_token_count) as prompt_token_count,
         SUM(candidates_token_count) as candidates_token_count,
         SUM(thoughts_token_count) as thoughts_token_count,
         SUM(total_token_count) as total_token_count
@@ -196,10 +197,17 @@ SELECT
   APPROX_QUANTILES(A.{{latency_col}}, 1000)[OFFSET(CAST({{percentile}} * 10 AS INT64))] as p_custom_ms,
   MAX(A.{{latency_col}}) as max_ms,
   -- Token Metrics
+  AVG(L.prompt_token_count) as avg_input_tokens,
+  APPROX_QUANTILES(L.prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
   AVG(L.candidates_token_count) as avg_output_tokens,
+  APPROX_QUANTILES(L.candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
   APPROX_QUANTILES(L.candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
   MIN(L.candidates_token_count) as min_output_tokens,
   MAX(L.candidates_token_count) as max_output_tokens,
+  AVG(L.thoughts_token_count) as avg_thought_tokens,
+  APPROX_QUANTILES(L.thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
+  AVG(L.total_token_count) as avg_total_tokens,
+  APPROX_QUANTILES(L.total_token_count, 100)[OFFSET(95)] as p95_total_tokens,
   -- Correlation Metrics
   CORR(A.{{latency_col}}, L.candidates_token_count - IFNULL(L.thoughts_token_count, 0)) as corr_latency_pure_output,
   CORR(A.{{latency_col}}, L.candidates_token_count) as corr_latency_output_plus_thoughts,
@@ -209,7 +217,7 @@ JOIN LLM_Aggregated AS L
 ON A.span_id = L.parent_span_id
 WHERE {{where_clause_joined}}
 GROUP BY {{group_by_sql}}
-ORDER BY avg_ms DESC
+ORDER BY avg_ms DESC, total_count DESC
 """
 
 GET_LATENCY_GROUPED_BASE_QUERY = f"""
@@ -237,7 +245,7 @@ FROM
 WHERE
   {{where_clause}}
 GROUP BY {{group_by_clause}}
-ORDER BY avg_ms DESC
+ORDER BY avg_ms DESC, total_count DESC
 """
 
 GET_LATENCY_GROUPED_TOKEN_QUERY = f"""
@@ -272,7 +280,7 @@ SELECT
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
 GROUP BY root_agent_name, agent_name, model_name
-ORDER BY count DESC
+ORDER BY count DESC, avg_latency_ms DESC, agent_name ASC, model_name ASC
 LIMIT {{limit}}
 """
 
@@ -325,7 +333,7 @@ FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
 GROUP BY {{group_by_str}}
 HAVING request_count > 5
-ORDER BY avg_latency DESC
+ORDER BY avg_latency DESC, request_count DESC, agent_name ASC, model_name ASC
 LIMIT {{limit}}
 """
 
@@ -355,7 +363,7 @@ SELECT
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
 GROUP BY model_name, agent_name
-ORDER BY empty_response_count DESC
+ORDER BY empty_response_count DESC, agent_name ASC, model_name ASC
 """
 
 ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY = f"""
@@ -371,7 +379,7 @@ SELECT
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
 WHERE {{where_clause}}
-ORDER BY timestamp DESC
+ORDER BY timestamp DESC, T.trace_id ASC, T.span_id ASC
 LIMIT {{limit}}
 """
 
@@ -391,7 +399,7 @@ FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
   AND total_token_count > 0
   AND duration_ms > 0
-ORDER BY timestamp DESC
+ORDER BY timestamp DESC, root_agent_name ASC, agent_name ASC
 LIMIT {{limit}}
 """
 
@@ -415,6 +423,6 @@ FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
 WHERE {{where_clause}} 
 AND T.parent_span_id IS NULL
 AND T.{{metric}} >= {{threshold_val}}
-ORDER BY T.{{metric}} DESC
+ORDER BY T.{{metric}} DESC, T.trace_id ASC
 LIMIT {{limit}}
 """

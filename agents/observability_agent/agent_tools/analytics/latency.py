@@ -1203,8 +1203,10 @@ async def analyze_latency_trend(
         return json.dumps({"error": str(e)})
 
 
+from ...config import MAX_RAW_RECORDS_LIMIT
+
 @cached_tool()
-async def get_raw_invocation_events(time_range: str = "24h", limit: int = 2000) -> str:
+async def get_raw_invocation_events(time_range: str = "24h", limit: int = MAX_RAW_RECORDS_LIMIT) -> str:
     """Fetches raw E2E invocation event data from BigQuery."""
     logger.info(f"[TOOL CALL-get_raw_invocation_events] time_range='{time_range}', limit={limit}")
     where_clause = build_standard_where_clause(time_range=time_range)
@@ -1218,7 +1220,7 @@ async def get_raw_invocation_events(time_range: str = "24h", limit: int = 2000) 
         return json.dumps({"error": str(e)})
 
 @cached_tool()
-async def get_raw_agent_events(time_range: str = "24h", limit: int = 5000) -> str:
+async def get_raw_agent_events(time_range: str = "24h", limit: int = MAX_RAW_RECORDS_LIMIT) -> str:
     """Fetches raw Agent execution event data from BigQuery."""
     logger.info(f"[TOOL CALL-get_raw_agent_events] time_range='{time_range}', limit={limit}")
     where_clause = build_standard_where_clause(time_range=time_range)
