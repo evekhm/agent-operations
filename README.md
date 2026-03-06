@@ -51,13 +51,6 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-* Specify where data produced by the BigQuery Analytics Plugin is stored:
-```shell
-export PROJECT_ID="<YOUR_PROJECT_ID>"
-export DATASET_ID="<YOUR_DATASET_ID>"
-export TABLE_ID="<YOUR_TABLE_ID>"
-export DATASET_LOCATION="us-central1"
-```
 * Authenticate
 ```shell
 gcloud config set project $PROJECT_ID
@@ -69,6 +62,15 @@ gcloud auth login
 gcloud auth application-default login    
 ```
 
+## Quickstart
+
+* Specify location of the [BigQuery Agent Analytics plugin](https://google.github.io/adk-docs/integrations/bigquery-agent-analytics/) output data. This is the data being analyzed by the Agent when generating the report.
+```shell
+export PROJECT_ID="<YOUR_PROJECT_ID>"
+export DATASET_ID="<YOUR_DATASET_ID>"              # e.g. logging
+export TABLE_ID="<YOUR_TABLE_ID>"                  # e.g. agent_events_demo
+export DATASET_LOCATION="<YOUR_DATASET_LOCATION>"  # e.g. "us-central1"
+```
 
 * Generate `.env` configuration file:
   This command will create a `.env` file using the variables you exported earlier.
@@ -76,34 +78,38 @@ gcloud auth application-default login
   sed -e "s/<YOUR_PROJECT_ID>/$PROJECT_ID/g" \
       -e "s/<YOUR_DATASET_ID>/$DATASET_ID/g" \
       -e "s/<YOUR_TABLE_ID>/$TABLE_ID/g" \
+      -e "s/<YOUR_DATASET_LOCATION>/$DATASET_LOCATION/g" \
       .env.sample > .env
   ```
   
-* When integrating with existing environment and agent using [BigQuery Agent Analytics plugin](https://google.github.io/adk-docs/integrations/bigquery-agent-analytics/), make sure to point to the corresponding resources and update `.env` file accordingly:
 
-```text
-# BigQuery Analytics Plugin
-DATASET_ID="logging"
-DATASET_LOCATION="us-central1"
-TABLE_ID="agent_events_v2"
-```
-
-* Alternatively, if you do not have an existing environment and want to quickly create resources and use a sample agent to generate some load, follow the steps below: 
-  * Create required GCP resources, such as BigQuery, DATASET, Datastore for Vertex AI search (sample Agent)
-
-      ```shell
-      ./setup.sh
-      ```
+* Optional: If you do not have an existing environment and want to quickly create resources and use a sample agent to generate some data load, follow the steps below: 
+  * Create required GCP resources, such as BigQuery, Dataset, Datastore for Vertex AI search (sample Agent):
+       ```shell
+       ./setup.sh
+       ```
   * Data Generation using `my_test_app` agent (~ 15 minutes, ~114 invocations):
 
     ```bash
     ./agents/my_test_app/generate_data.sh
     ```
 
->  Uses [`test_scenarios.txt`](agents/my_test_app/test_scenarios.txt) file to simulate use cases
->  The file was generated using `agents/my_test_app/generate_test_scenarios.py`
+* Generate `overview` report for the last 7 days:
 
-## Generate Observability Reports
+  ```shell
+  tools/generate_report.sh --time_period 7d
+  ```
+
+  > Uses configuration, such as KPI metrics defined in [config.json](agents/observability_agent/config.json) 
+~~~~
+
+* Sample output (generated using `generate_data` and  [test_scenarios.txt](agents/my_test_app/test_scenarios.txt) )
+
+  * [overview_v0.0.1](samples/observability_overview_report_20260305_193939_v001.md)
+
+
+
+## Observability Reports
 
 You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks.
 
@@ -117,39 +123,39 @@ The report generation pipeline encompasses an array of visual and AI-augmented f
 > **Tip**
 > To view generated reports it is recommended to use the [Markdown Viewer](https://chromewebstore.google.com/detail/markdown-viewer/ckkdlimhmcjmikdlpkmbgfkaikojcbjk?hl=en-US&utm_source=ext_sidebar) Chrome Extension.
 > Use **Github Wide** as Theme and make sure to enable **'mermaid'** and **'emoji'** as Content.
+> In Advanced Options make sure to grant `file://` File Access 
 
 ### Command Line Arguments
 You can provide CLI arguments when running the analyst script to dynamically overwrite the configurations:
 
-| Argument | Description | Example |
-| :--- | :--- | :--- |
-| `--playbook` | Force explicitly route to Playbook `overview`, `health`, `incident`, `trend`, or `latest` | `--playbook health` |
-| `--time_period` | Time range for Current Reality | `--time_period 24h` |
-| `--baseline_period` | Time range for Historical Baseline | `--baseline_period 7d` |
-| `--bucket_size` | Bucket size for Playbook C (trend) | `--bucket_size 1d` |
+| Argument | Description                                                                                                                             | Example |
+| :--- |:----------------------------------------------------------------------------------------------------------------------------------------| :--- |
+| `--playbook` | Playbook selection for the report `overview`, `health`, `incident`, `trend`, or `latest`. Currently only `overview` is implemented      | `--playbook health` |
+| `--time_period` | Time range for Current Reality. E.g. `all`, `7d`, `24h`                                                                                 | `--time_period 24h` |
+| `--baseline_period` | Time range for Historical Baseline                                                                                                      | `--baseline_period 7d` |
+| `--bucket_size` | Bucket size for Playbook C (trend)                                                                                                      | `--bucket_size 1d` |
 
-You can also check default configuration settings setup in [config.json](agents/observability_agent/config.json).
 
 ### Playbook: overview (Default System Overview)
 By default, the agent executes the `overview` playbook, which provides a straightforward aggregation of latency and
 error metrics for the specified time period and KPIs as provided in [config.json](agents/observability_agent/config.json).
 
 ```shell
-tools/run_observability_analyst.sh
+tools/generate_report.sh --time_period all
 ```
 
 ### Playbook: health (Healthcheck)
 By default, the agent evaluates the **last 24 hours (Current Reality)** against a sturdy **7-day Historical Baseline**.
 *(Note: You can explicitly force the agent into any Playbook using `--playbook overview`, `--playbook health`, `--playbook incident`, `--playbook trend`, or `--playbook latest`)*
 ```shell
-tools/run_observability_analyst.sh --playbook health
+tools/generate_report.sh --playbook health
 ```
 
 ### Playbook: incident (Incident Review)
 The `incident` playbook is designed for investigating isolated events, sudden latency spikes, or validating recent hotfixes within a tight, custom time window.
 
 ```shell
-tools/run_observability_analyst.sh --playbook incident --time_period 6h --baseline_period 6h
+tools/generate_report.sh --playbook incident --time_period 6h --baseline_period 6h
 ```
 **How it works**:
 1. **Time-Shifted Baselines**: By specifying identical `time_period` and `baseline_period` (e.g. 6h), the LLM will automatically perform a "Time Shift." It will explicitly calculate non-overlapping bounds to evaluate the current 6-hour incident window against the 6 hours *immediately preceding* the incident.
@@ -159,14 +165,14 @@ tools/run_observability_analyst.sh --playbook incident --time_period 6h --baseli
 ### Playbook: latest (Single Trace Deep Dive)
 The `latest` playbook acts as a microscope, giving you an end-to-end "X-Ray" of the single most recent root agent execution trace. It extracts exact tool sequential timing, concurrency proof, backwards compatibility with baselines, and root cause analysis.
 ```shell
-tools/run_observability_analyst.sh --playbook latest
+tools/generate_report.sh --playbook latest
 ```
 
 ### Playbook: trend (Trend Analysis)
 To evaluate long term structural degradation or improvement, you can pass a large timeframe and split it into chronological buckets. The agent will calculate slopes and trends over time:
 ```shell
 # Analyzes the last 30 days of data, grouped into daily buckets
-tools/run_observability_analyst.sh --playbook trend --time_period 30d --bucket_size 1d
+tools/generate_report.sh --playbook trend --time_period 30d --bucket_size 1d
 ```
 **How it works**: The `trend` playbook explicitly uses the `--time_period` (e.g. `30d`) to establish the overall boundary of the time-series array, and `--bucket_size` (e.g. `1d`) to chop that boundary into discrete chronological steps. The LLM iterates over those 30 distinct daily buckets to mathematically calculate if the p95 slope is rising (degrading) or falling (improving) over the course of the month.
 *(Note: Unlike the `incident` playbook, `trend` does **not** perform any time-shifting. It evaluates the exact historical block of data as specified by the `--time_period`).*
