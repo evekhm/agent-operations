@@ -149,7 +149,45 @@ async def save_report(report_content: str, playbook_name: str = "overview", time
         
         rel_report_path = os.path.normpath(os.path.relpath(report_path))
         abs_report_path = os.path.abspath(report_path)
-        return f"\nReport successfully generated and saved to: `{rel_report_path}`\n   (Absolute Path: {abs_report_path}){pdf_status}"
+        
+        # Create a ZIP archive for easier sharing
+        import zipfile
+        zip_path = report_path.replace(".md", ".zip")
+        assets_dir = os.path.join(os.path.dirname(report_path), f"report_assets_{timestamp}")
+        zip_status = ""
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Add the Markdown report
+                zipf.write(report_path, arcname=os.path.basename(report_path))
+                
+                # Add the PDF if it exists, since some users still want it in the bundle
+                if os.path.exists(pdf_path):
+                    zipf.write(pdf_path, arcname=os.path.basename(pdf_path))
+                    
+                # Add the assets folder contents
+                if os.path.exists(assets_dir):
+                    for root_dir, _, files in os.walk(assets_dir):
+                        for file in files:
+                            file_path = os.path.join(root_dir, file)
+                            # Keep the report_assets directory structure intact within the zip
+                            arcname = os.path.relpath(file_path, os.path.dirname(assets_dir))
+                            zipf.write(file_path, arcname=arcname)
+                            
+            rel_zip_path = os.path.normpath(os.path.relpath(zip_path))
+            abs_zip_path = os.path.abspath(zip_path)
+            zip_status = f"\n**Zipped Archive:**\n*   Relative Path: `{rel_zip_path}`\n*   Absolute Path: `{abs_zip_path}`\n"
+        except Exception as zip_e:
+            zip_status = f"\nFailed to generate ZIP archive: {str(zip_e)}"
+            logger.error(f"Failed to generate ZIP archive: {zip_e}")
+
+        # Explicitly print the paths to standard out to bypass non-deterministic AI generation
+        print("\n\nReport successfully generated.\n", flush=True)
+        if zip_status:
+            print(zip_status, flush=True)
+        print("**Markdown Report:**", flush=True)
+        print(f"*   Relative Path: `{rel_report_path}`\n*   Absolute Path: `{abs_report_path}`\n", flush=True)
+
+        return "Success: The report has been generated and saved. The file paths have been printed directly to the terminal for the user."
     except Exception as e:
         return f"Failed to save report: {str(e)}"
 

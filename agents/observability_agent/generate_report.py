@@ -26,7 +26,8 @@ load_dotenv(os.path.join(dir_path, "../../.env"), override=True)
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
 logging.basicConfig(
     level=getattr(logging, log_level, logging.ERROR),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True
 )
 logger = logging.getLogger(__name__)
 

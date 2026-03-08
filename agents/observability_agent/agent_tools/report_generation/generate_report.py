@@ -2438,6 +2438,15 @@ async def generate_report_content(save_file: bool = True, config: Dict[str, Any]
     generator = ReportGenerator(data, config, base_dir=base_dir)
     generator.build_report()
     
+    data["chart_summaries"] = {
+        "EXPLANATION": "This payload contains the aggregated metrics that map directly to the visual charts (Pie and Trends) displayed in the Markdown report.",
+        "end_to_end_performance_chart_data": generator.df_roots.to_dict(orient="records") if not generator.df_roots.empty else [],
+        "agent_performance_chart_data": generator.df_agents.to_dict(orient="records") if not generator.df_agents.empty else [],
+        "tool_performance_chart_data": generator.df_tools.to_dict(orient="records") if not generator.df_tools.empty else [],
+        "model_performance_chart_data": generator.df_models.to_dict(orient="records") if not generator.df_models.empty else [],
+        "agent_model_traffic_composition": generator.df_agent_models.to_dict(orient="records") if not generator.df_agent_models.empty else [],
+    }
+    
     if save_file:
         return generator.save()
     return "\n".join(generator.report_content)

@@ -237,7 +237,7 @@ finalizer_agent = Agent(
     Pass the JSON string exactly as you received it as the `insights_json_str` parameter.
     Pass the holistic markdown analysis as the `holistic_analysis` parameter.
     If you are provided a playbook name in the initial prompt, pass it as well.
-    CRITICAL: After the tool returns the success message with the paths, you MUST reply to the user with BOTH the relative path AND the exactly provided Absolute Path. Do not omit the absolute path!
+    After the tool returns success, simply state that the report has been generated.
     """,
     tools=[inject_and_save_report]
 )
