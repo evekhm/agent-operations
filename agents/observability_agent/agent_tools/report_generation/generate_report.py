@@ -226,6 +226,42 @@ class ReportGenerator:
         final_df = df_disp[final_cols_valid].copy()
         return self.md_builder.bold_first_column(final_df)
 
+    def _render_summary_cards(self, df: pd.DataFrame, target_lat: float, target_err: float, name_col: str, include_tokens: bool = False):
+        if df.empty: return
+        
+        # We reuse _build_standard_table to get formatted values
+        formatted_df = self._build_standard_table(df, target_lat, target_err, name_col, include_tokens)
+        
+        # Iterate and build markdown
+        for idx, row in formatted_df.iterrows():
+            name = str(row.get('Name', 'Unknown')).replace('**', '')
+            reqs = row.get('Requests', 0)
+            pct = row.get('%', '0%')
+            mean_s = str(row.get('Mean (s)', '-'))
+            disp_p_col = f"P{self.percentile} (s)"
+            p95_s = str(row.get(disp_p_col, '-'))
+            overall = row.get('Overall', '⚪')
+            lat_stat = row.get('Status', '⚪')
+            err_stat = row.get('Err Status', '⚪')
+            err_pct = row.get('Err %', 0)
+            
+            card = [f"**`{name}`**"]
+            card.append(f"- **Requests:** {reqs} ({pct})")
+            card.append(f"- **Status:** {overall} Overall (Lat: {lat_stat}, Err: {err_stat})")
+            card.append(f"- **Latency (Mean / P{self.percentile}):** {mean_s}s / {p95_s}s")
+            card.append(f"- **Errors:** {err_pct}%")
+            
+            if include_tokens:
+                 tok_con = row.get('Tokens Consumed (Avg/P95)', 'N/A')
+                 tok_in = row.get('Input Tok (Avg/P95)', 'N/A')
+                 tok_out = row.get('Output Tok (Avg/P95)', 'N/A')
+                 tok_think = row.get('Thought Tok (Avg/P95)', 'N/A')
+                 
+                 card.append(f"- **Total Tokens (Avg/P{self.percentile}):** {tok_con}")
+                 card.append(f"- **Input:** {tok_in} | **Output:** {tok_out} | **Thought:** {tok_think}")
+            
+            self.report_content.append("\n".join(card) + "\n\n")
+
     def _format_links(self, df: pd.DataFrame) -> pd.DataFrame:
         """Formats trace_id and span_id as Markdown links."""
         if df.empty: return df
@@ -776,6 +812,24 @@ class ReportGenerator:
         self.add_section("Agent Details")
         self.report_content.append("\n(AI_SUMMARY: Agent Composition)\n")
         
+        target_lat = self.config.get("kpis", {}).get("agents", {}).get("latency_target", 8.0)
+        target_err = self.config.get("kpis", {}).get("agents", {}).get("error_target", 5.0)
+
+        if isinstance(self.df_roots, pd.DataFrame) and not self.df_roots.empty:
+            self.add_subsection("Root Agents Summary")
+            self.report_content.append("A high-level cross-report summary for each root workflow.\n\n")
+            self._render_summary_cards(self.df_roots, target_lat, target_err, 'root_agent_name', include_tokens=True)
+
+        if isinstance(self.df_agents, pd.DataFrame) and not self.df_agents.empty:
+            self.add_subsection("Sub-Agents Summary")
+            self.report_content.append("A high-level cross-report summary for each sub-agent.\n\n")
+            df_sub = self.df_agents.copy()
+            if isinstance(self.df_roots, pd.DataFrame) and not self.df_roots.empty and 'root_agent_name' in self.df_roots.columns:
+                 root_names = self.df_roots['root_agent_name'].unique()
+                 df_sub = df_sub[~df_sub['agent_name'].isin(root_names)]
+            if not df_sub.empty:
+                 self._render_summary_cards(df_sub, target_lat, target_err, 'agent_name', include_tokens=True)
+
         self.add_subsection("Distribution")
         if isinstance(self.df_agents, pd.DataFrame) and not self.df_agents.empty:
              dist_table = self.df_agents[['agent_name', 'total_count']].copy()
@@ -1060,10 +1114,41 @@ class ReportGenerator:
         self.report_content.append("<br>")
         self.report_content.append("\n---\n")
 
+    def _render_tool_details(self):
+        self.add_section("Tool Details")
+        self.report_content.append("\n(AI_SUMMARY: Tool Details)\n")
+        
+        target_lat = self.config.get("kpis", {}).get("tool", {}).get("latency_target", 3.0)
+        target_err = self.config.get("kpis", {}).get("tool", {}).get("error_target", 5.0)
+
+        if isinstance(self.df_tools, pd.DataFrame) and not self.df_tools.empty:
+            self.add_subsection("Tool Summaries")
+            self.report_content.append("A high-level cross-report summary for each tool.\n\n")
+            self._render_summary_cards(self.df_tools, target_lat, target_err, 'tool_name', include_tokens=False)
+            
+            self.add_subsection("Distribution")
+            dist_table = self.df_tools[['tool_name', 'total_count']].copy()
+            total = dist_table['total_count'].sum()
+            dist_table['%'] = (dist_table['total_count'] / total * 100).round(2)
+            dist_table.columns = ['**Name**', '**Requests**', '**%**']
+            self.report_content.append(f"**Total Requests:** {total}\n")
+            self.report_content.append(self.md_builder.bold_first_column(dist_table).to_markdown(index=False))
+            self.report_content.append("\n<br>\n")
+            
+        self.report_content.append("\n---\n")
+
     def _render_model_details(self):
         self.add_section("Model Details")
         self.report_content.append("\n(AI_SUMMARY: Model Composition)\n")
         
+        target_lat = self.config.get("kpis", {}).get("models", {}).get("latency_target", 5.0)
+        target_err = self.config.get("kpis", {}).get("models", {}).get("error_target", 5.0)
+
+        if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
+            self.add_subsection("Model Summaries")
+            self.report_content.append("A high-level cross-report summary for each model.\n\n")
+            self._render_summary_cards(self.df_models, target_lat, target_err, 'model_name', include_tokens=True)
+
         self.add_subsection("Distribution")
         if isinstance(self.df_models, pd.DataFrame) and not self.df_models.empty:
              dist_table = self.df_models[['model_name', 'total_count']].copy()
@@ -2277,6 +2362,7 @@ class ReportGenerator:
         self._render_executive_summary()
         self._render_performance()
         self._render_agent_details()
+        self._render_tool_details()
         self._render_model_details()
         self._render_system_bottlenecks()
         self._render_error_analysis()

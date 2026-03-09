@@ -13,7 +13,7 @@ from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from google.adk.tools import ToolContext
-from google.genai.types import HttpRetryOptions
+from google.genai.types import HttpRetryOptions, GenerateContentConfig
 
 # Define robust exponential backoff strategy for 429 RESOURCE_EXHAUSTED errors
 # Max 5 attempts, starting at 2s, max 60s, base 2 multiplier.
@@ -167,26 +167,6 @@ def aggregate_parallel_results(agent: Agent = None, context: ToolContext = None,
 # Attach the callback
 playbook_swarm.after_agent_callback = aggregate_parallel_results
 
-# Create the Report Creator Agent that takes findings and structures them into markdown
-report_creator_agent = Agent(
-    name="report_creator_agent",
-    model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
-    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>",
-                                                      datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).
-    format(agent_version=AGENT_VERSION, datastore_id=DATASET_ID, table_id=TABLE_ID), # Automatically injects {playbook_findings} and {agent_version}
-    description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
-    tools=[],
-    output_key="final_report",
-    disallow_transfer_to_peers=True
-)
-
-# Group the investigator swarm and report creator into a strict sequential pipeline
-investigate_and_report_pipeline = SequentialAgent(
-    name="investigation_workflow",
-    sub_agents=[playbook_swarm, report_creator_agent],
-    description="Pipeline that first investigates the system constraints concurrently, ensures data integrity, and then generates a merged report."
-)
-
 from .agent_tools.report_generation.tools import generate_base_report, inject_and_save_report
 
 base_report_agent = Agent(
@@ -204,9 +184,11 @@ base_report_agent = Agent(
 augmentor_agent = Agent(
     name="augmentor_agent",
     model=Gemini(model=MODEL_ID, retry_options=api_retry_options), # stream=True would interleave
+    generate_content_config=GenerateContentConfig(response_mime_type="application/json"),
     instruction=AUGMENTATION_PROMPT + """
     
     The base report and raw telemetry data is provided in the conversation history from the previous agent.
+    If there is a deep architectural 'Holistic' analysis provided in the previous turn by another agent, YOU MUST incorporate its findings into your Executive Summary and Recommendations.
     """,
     tools=[],
     output_key="insights_json_str",
@@ -219,13 +201,14 @@ holistic_agent = Agent(
     instruction=HOLISTIC_ASSESSMENT_PROMPT + "\n\nThe deterministic base report is provided in the conversation history from the previous agent.",
     description="A specialized observability analyst equipped with BQ tools to review the entire observability report.",
     tools=[get_llm_requests, get_agent_requests, get_tool_requests, get_invocation_requests],
+    output_key="holistic_analysis",
     disallow_transfer_to_peers=True
 )
 
-augmentor_and_holistic_swarm = ParallelAgent(
+augmentor_and_holistic_swarm = SequentialAgent(
     name="augmentor_and_holistic_swarm",
-    sub_agents=[augmentor_agent, holistic_agent],
-    description="Analyzes the base report concurrently. One agent generates JSON insights, the other generates holistic cross-section markup."
+    sub_agents=[holistic_agent, augmentor_agent],
+    description="Analyzes the base report sequentially. First, it generates holistic architecture markup, then uses that to generate JSON insights for the executive summary."
 )
 
 finalizer_agent = Agent(
@@ -233,9 +216,8 @@ finalizer_agent = Agent(
     model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
     instruction="""You are the Report Finalizer.
     Call the `inject_and_save_report` tool. 
-    You will receive a combined message containing BOTH a JSON insights object AND a holistic markdown analysis.
+    You will receive a message containing the JSON insights object.
     Pass the JSON string exactly as you received it as the `insights_json_str` parameter.
-    Pass the holistic markdown analysis as the `holistic_analysis` parameter.
     If you are provided a playbook name in the initial prompt, pass it as well.
     After the tool returns success, simply state that the report has been generated.
     """,
@@ -366,21 +348,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     # Format config for display
     config_str = json.dumps(config, indent=2, default=str)
     
-    current_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    hydrated_report_prompt = REPORT_CREATOR_PROMPT.replace("<timestamp>", current_timestamp).replace("<time_range>", time_period_fixed).format(
-        playbook_findings="{invocation_findings}\\n\\n{agent_findings}\\n\\n{llm_findings}\\n\\n{tool_findings}",
-        kpis_string=kpis_string,
-        config_dump=config_str,
-        time_period=time_period_fixed,
-        agent_version=AGENT_VERSION,
-        project_id=PROJECT_ID,
-        datastore_id=DATASET_ID,
-        table_id=TABLE_ID,
-        Level=str(kpi_percentile),
-        error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
-    )
-    report_creator_agent.instruction = hydrated_report_prompt
 
 # Create the Orchestrating Root Agent
 root_agent = Agent(
@@ -394,10 +362,10 @@ root_agent = Agent(
     you MUST delegate directly to the `report_generation_workflow`.
     
     If the user asks for a specific playbook investigation without generating a full report, 
-    delegate to the `investigation_workflow`.
+    delegate to the `playbook_swarm` (not yet built into a separate workflow, so prefer reports).
     """,
     description="Entry point for the Observability Agent application. Understands user intent and delegates analysis to specialized subagents.",
-    sub_agents=[investigate_and_report_pipeline, report_generation_workflow],
+    sub_agents=[report_generation_workflow],
 )
 
 # Configure the BigQuery plugin for `adk run` and `adk web`
