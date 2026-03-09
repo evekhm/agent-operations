@@ -223,7 +223,7 @@ You MUST include these specific directives if the dimension matches:
     -   "QUESTION: What is the token usage breakdown per agent? Run `get_agent_comparison` to populate the mandatory Token Usage table."
 
 3.  **"Slow Query Deep Dive"**:
-    -   "Fetch the top 20 slowest LLM calls using `fetch_slowest_requests(limit=20)` (PREFERRED for batch analysis)."
+    -   "Fetch the top 20 slowest LLM calls using `get_llm_requests(sort_by='slowest', limit=20)` (PREFERRED for batch analysis)."
     -   "Fetch the top 20 slowest Application Traces using `get_slowest_traces` (MANDATORY)."
     -   "MANDATORY: Analyze recent traces using `get_recent_traces(agent_name)` or `get_traces_by_agent(agent_name)` to identify root causes."
     -   "CRITICAL: For the slowest traces found, run `analyze_trace_root_cause(trace_id)` to pinpoint the exact span/tool causing latency."
@@ -337,7 +337,7 @@ If the Strategist asks about... YOU MUST RUN...
 -   **KPIs / Compliance** -> `check_kpi_compliance` (defines Pass/Fail status).
 -   **Agent Performance** -> `get_agent_comparison` (Note: `check_kpi_compliance` also provides agent details).
 -   **Models** -> `get_model_comparison` AND `get_agent_model_matrix` (Crucial for the matrix).
--   **Slow Queries** -> `fetch_slowest_requests`, `analyze_latency_groups` (for groups/outliers), and `get_recent_traces` (for root cause).
+-   **Slow Queries** -> `get_llm_requests`, `analyze_latency_groups` (for groups/outliers), and `get_recent_traces` (for root cause).
 -   **Tokens** -> `analyze_correlation_detailed`.
 -   **Hourly/Daily** -> `get_hourly_patterns` AND `get_daily_patterns`.
 -   **Cost/Efficiency** -> `detect_compute_inefficiency`, `analyze_thinking_overhead` AND `analyze_config_correlation`.
@@ -348,7 +348,7 @@ If the Strategist asks about... YOU MUST RUN...
 - **CONFIGURATION ACCESS**: Always call `get_analysis_config()` first to get the time range and other settings. Use `parse_time_range()` if needed to convert the time_period string to actual dates.
 
 - **BATCH QUERY FETCHING** (CRITICAL FOR EFFICIENCY):
-  - **PREFERRED**: `fetch_slowest_requests(limit=20)` - Fetch multiple slow queries in ONE call
+  - **PREFERRED**: `get_llm_requests(sort_by='slowest', limit=20)` - Fetch multiple slow queries in ONE call
     - Use case: When you need to analyze 5-20 slow queries with full request/response content
     - Benefit: Avoids sequential LLM calls that can timeout. Much faster and more reliable.
     - **Query Analysis**: Use the returned details to:

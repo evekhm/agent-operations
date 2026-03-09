@@ -11,7 +11,24 @@
  * - TOOL_COMPLETED: The successful return of a tool execution.
  * - TOOL_ERROR: The failure/exception from a tool execution.
  */
-CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.tool_events_view` AS
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.tool_events_view` (
+    timestamp OPTIONS(description="The timestamp of the TOOL_STARTING event. Used as the primary time-series anchor."),
+    root_agent_name OPTIONS(description="The name of the root agent that initiated the invocation."),
+    agent_name OPTIONS(description="The name of the agent executing the tool."),
+    tool_name OPTIONS(description="The name of the executed tool."),
+    tool_args OPTIONS(description="JSON representation of the arguments passed to the tool."),
+    tool_result OPTIONS(description="JSON representation of the tool's result on success."),
+    duration_ms OPTIONS(description="The total time in milliseconds for the tool execution."),
+    error_message OPTIONS(description="The exception message if the tool call failed."),
+    status OPTIONS(description="The execution status. 'OK' on success, 'ERROR' on failure, or 'PENDING' if the tool is still running or crashed."),
+    span_id OPTIONS(description="The OpenTelemetry span_id identifying this specific tool execution."),
+    trace_id OPTIONS(description="The OpenTelemetry trace_id tying this execution back to the root invocation."),
+    parent_span_id OPTIONS(description="The span_id of the operation that called the tool."),
+    user_id OPTIONS(description="The ID of the user who initiated the run."),
+    session_id OPTIONS(description="The ID of the multi-turn session."),
+    start_timestamp OPTIONS(description="The exact timestamp of the TOOL_STARTING event."),
+    end_timestamp OPTIONS(description="The exact timestamp of the TOOL_COMPLETED or TOOL_ERROR event.")
+) AS
 WITH ToolStarts AS (
   SELECT
     trace_id,

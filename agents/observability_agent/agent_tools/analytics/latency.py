@@ -17,12 +17,28 @@ from typing import Optional
 
 import pandas as pd
 
+from .llm_diagnostics import logger
+from .queries import (
+    GET_LATENCY_DISTRIBUTION_QUERY,
+    GET_LATENCY_PERFORMANCE_QUERY,
+    GET_PAGINATED_EVENTS_QUERY,
+    GET_ACTIVE_METADATA_QUERY,
+    ANALYZE_ROOT_CAUSE_QUERY,
+    GET_BASELINE_PERFORMANCE_QUERY,
+    ANALYZE_LATENCY_TREND_QUERY,
+    GET_LATENCY_GROUPED_JOINED_QUERY,
+    GET_LATENCY_GROUPED_BASE_QUERY,
+    GET_LATENCY_GROUPED_TOKEN_QUERY,
+    GET_RAW_INVOCATIONS_QUERY,
+    GET_RAW_AGENTS_QUERY
+)
 from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION,
-                       INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID)
-
-from ...utils.bq import execute_bigquery
+                       INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID, TOOLS_TO_EXCLUDE_STR,
+                       LLM_SPECIFIC_COLUMNS, TOOL_SPECIFIC_COLUMNS, AGENT_SPECIFIC_COLUMNS, INVOCATION_SPECIFIC_COLUMNS,
+                       COMMON_COLUMNS)
+from ...utils.bq import execute_bigquery, format_dataframe_to_requests
 from ...utils.caching import cached_tool
-from ...utils.common import AnalysisEncoder, build_standard_where_clause, sanitize_for_markdown
+from ...utils.common import AnalysisEncoder, build_standard_where_clause, get_sort_clause
 
 logger = logging.getLogger(__name__)
 
@@ -76,46 +92,11 @@ async def analyze_latency_distribution(
             }
         )
         
-        query = f"""
-        WITH latency_data AS (
-          SELECT
-            {latency_col} as latency_ms
-          FROM
-            `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-          WHERE
-            {where_clause}
+        query = GET_LATENCY_DISTRIBUTION_QUERY.format(
+            latency_col=latency_col,
+            target_table=target_table,
+            where_clause=where_clause
         )
-        SELECT
-          CASE
-            WHEN latency_ms < 1000 THEN '<1s'
-            WHEN latency_ms >= 1000 AND latency_ms < 2000 THEN '1-2s'
-            WHEN latency_ms >= 2000 AND latency_ms < 3000 THEN '2-3s'
-            WHEN latency_ms >= 3000 AND latency_ms < 5000 THEN '3-5s'
-            WHEN latency_ms >= 5000 AND latency_ms < 15000 THEN '5-15s'
-            WHEN latency_ms >= 15000 AND latency_ms < 30000 THEN '15-30s'
-            WHEN latency_ms >= 30000 AND latency_ms < 60000 THEN '30s-1m'
-            WHEN latency_ms >= 60000 AND latency_ms < 300000 THEN '1m-5m'
-            ELSE '5m+'
-          END AS category,
-          COUNT(*) as count,
-          AVG(latency_ms) as avg_latency_ms,
-          MIN(latency_ms) as min_latency_ms,
-          MAX(latency_ms) as max_latency_ms
-        FROM latency_data
-        GROUP BY category
-        ORDER BY 
-          CASE category
-            WHEN '<1s' THEN 1
-            WHEN '1-2s' THEN 2
-            WHEN '2-3s' THEN 3
-            WHEN '3-5s' THEN 4
-            WHEN '5-15s' THEN 5
-            WHEN '15-30s' THEN 6
-            WHEN '30s-1m' THEN 7
-            WHEN '1m-5m' THEN 8
-            WHEN '5m+' THEN 9
-          END
-        """
         
         df = await execute_bigquery(query)
         
@@ -191,7 +172,8 @@ async def analyze_latency_performance(
     """
     target_table = view_id or LLM_EVENTS_VIEW_ID
     logger.info(f"[TOOL CALL-analyze_latency_performance] time_range='{time_range}', "
-                f"group_by='{group_by}', filters=(agent='{agent_name}', root='{root_agent_name}', model='{model_name}')")
+                f"group_by='{group_by}', filters=(agent='{agent_name}', root='{root_agent_name}', model='{model_name}'), "
+                f"view_id='{target_table}', latency_col='{latency_col}'")
 
     try:
         where_clause = build_standard_where_clause(
@@ -212,60 +194,15 @@ async def analyze_latency_performance(
         group_clause_final = f"GROUP BY R.{group_by}" if group_by else ""
         join_clause = f"ON R.{group_by} = S.{group_by}" if group_by else "ON 1=1"
         
-        query = f"""
-        WITH RawData AS (
-          SELECT
-            {group_select}
-            {latency_col} as latency_ms,
-            candidates_token_count as output_tokens,
-            thoughts_token_count as thinking_tokens,
-            (IFNULL(candidates_token_count, 0) + IFNULL(thoughts_token_count, 0)) as total_output_tokens
-          FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-          WHERE {where_clause}
-        ),
-        Stats AS (
-          SELECT
-            {group_select}
-            AVG(latency_ms) as mean_ms,
-            STDDEV(latency_ms) as std_ms
-          FROM RawData
-          {group_clause}
+        query = GET_LATENCY_PERFORMANCE_QUERY.format(
+            group_select=group_select,
+            latency_col=latency_col,            target_table=target_table,
+            where_clause=where_clause,
+            group_clause=group_clause,
+            group_select_final=group_select_final,
+            join_clause=join_clause,
+            group_clause_final=group_clause_final
         )
-        SELECT
-          {group_select_final}
-          COUNT(*) as total_count,
-          COUNTIF(R.latency_ms IS NULL) as pending_count,
-          ANY_VALUE(S.mean_ms) as mean_ms,
-          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(50)] as p50_ms,
-          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(50)] as median_ms,
-          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(90)] as p90_ms,
-          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(95)] as p95_ms,
-          APPROX_QUANTILES(R.latency_ms, 100)[OFFSET(99)] as p99_ms,
-          APPROX_QUANTILES(R.latency_ms, 1000)[OFFSET(999)] as p999_ms,
-          MIN(R.latency_ms) as min_ms,
-          MAX(R.latency_ms) as max_ms,
-          ANY_VALUE(S.std_ms) as std_ms,
-          COUNTIF(R.latency_ms > (S.mean_ms + 2 * S.std_ms)) as count_2std,
-          COUNTIF(R.latency_ms > (S.mean_ms + 3 * S.std_ms)) as count_3std,
-          -- Token Stats
-          AVG(R.output_tokens) as mean_tokens,
-          APPROX_QUANTILES(R.output_tokens, 100)[OFFSET(50)] as median_tokens,
-          MIN(R.output_tokens) as min_tokens,
-          MAX(R.output_tokens) as max_tokens,
-          CORR(R.latency_ms, R.output_tokens) as corr_latency_output,
-          CORR(R.latency_ms, R.total_output_tokens) as corr_latency_output_thinking,
-          -- Latency Buckets
-          COUNTIF(R.latency_ms < 1000) as bucket_under_1s,
-          COUNTIF(R.latency_ms >= 1000 AND R.latency_ms < 2000) as bucket_1_2s,
-          COUNTIF(R.latency_ms >= 2000 AND R.latency_ms < 3000) as bucket_2_3s,
-          COUNTIF(R.latency_ms >= 3000 AND R.latency_ms < 5000) as bucket_3_5s,
-          COUNTIF(R.latency_ms >= 5000 AND R.latency_ms < 8000) as bucket_5_8s,
-          COUNTIF(R.latency_ms >= 8000) as bucket_over_8s
-        FROM
-          RawData R
-        JOIN Stats S {join_clause}
-        {group_clause_final}
-        """
 
         df = await execute_bigquery(query)
         
@@ -348,128 +285,373 @@ async def analyze_latency_performance(
 
 
 @cached_tool()
-async def get_slowest_queries(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 5,
+async def get_llm_requests(
+    time_range: str = "24h",
+    limit: int = 10,
     min_latency_ms: float = 0,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
     model_name: Optional[str] = None,
-    view_id: Optional[str] = None,
-    latency_col: str = "duration_ms"
+    sort_by: str = "latest",
+    failed_only: bool = False,
+    exclude_zero_duration: bool = False,
+    truncate: bool = False,
 ) -> str:
     """
-    Fetch the slowest successful queries.
-    
+    Fetch LLM requests with filtering and sorting options.
+
     Args:
-        time_range (str): Time range to analyze (e.g., "24h", "7d", "all").
-        limit (int): Number of requests to return.
-        min_latency_ms (float): Optional minimum latency filter.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-        view_id (str): Optional. BigQuery table/view ID to query. Defaults to LLM_EVENTS_VIEW_ID.
-        latency_col (str): Column name for latency/duration (default: "duration_ms").
+        time_range (str): Time range to analyze (e.g. "24h", "7d", "all").
+        limit (int): Maximum number of requests to return.
+        min_latency_ms (float): Filter for requests slower than this threshold.
+        model_name (str): Optional. Filter by specific model name.
+        sort_by (str): Sorting criteria: "slowest", "fastest", "latest".
+        failed_only (bool): If True, only return requests with status='ERROR'.
+        exclude_zero_duration (bool): If True, exclude requests with 0ms duration.
+        truncate (bool): Whether to truncate large payloads in the response.
 
     Returns:
-        str: JSON string containing a list of slowest requests with details.
+        str: JSON string containing metadata and specific LLM request details.
     """
-    target_table = view_id or LLM_EVENTS_VIEW_ID
-    logger.info(f"[TOOL CALL-get_slowest_queries] time_range='{time_range}', limit={limit}, "
-                f"min_latency_ms={min_latency_ms}, agent_name='{agent_name}', "
-                f"root_agent_name='{root_agent_name}', model_name='{model_name}', "
-                f"view_id='{target_table}', latency_col='{latency_col}'")
+    logger.info(f"[TOOL CALL-get_llm_requests] "
+                f"time_range='{time_range}', limit={limit}, sort_by='{sort_by}', "
+                f"model_name='{model_name}', min_latency_ms={min_latency_ms}, "
+                f"failed_only={failed_only}, exclude_zero_duration={exclude_zero_duration}, "
+                f"truncate={truncate}")
     try:
         filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
             "model_name": (model_name, "=")
         }
+        if failed_only:
+            filter_config["status"] = ("ERROR", "=")
+
         if min_latency_ms > 0:
-            filter_config[latency_col] = (min_latency_ms, ">")
+            filter_config["duration_ms"] = (str(min_latency_ms), ">")
+        elif exclude_zero_duration:
+            filter_config["duration_ms"] = (str(0), ">")
 
         where_clause = build_standard_where_clause(
             time_range=time_range,
             filter_config=filter_config
         )
 
-        target_table = view_id.strip()
+        # Sorting Logic
+        order_clause = get_sort_clause(sort_by, table_alias="T")
 
-        if target_table == TOOL_EVENTS_VIEW_ID:
-            where_clause += " AND tool_name != 'transfer_to_agent'"
-
-        # Dynamic column selection based on view_id
-        if target_table == LLM_EVENTS_VIEW_ID:
-            select_col_model = "model_name"
-            select_col_tokens = "prompt_token_count, candidates_token_count, total_token_count, thoughts_token_count, time_to_first_token_ms"
-            select_col_extra = ", full_request, full_response, llm_config"
-        elif target_table == TOOL_EVENTS_VIEW_ID:
-            select_col_model = "NULL as model_name"
-            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
-            select_col_extra = ", tool_name, tool_args, tool_result"
-        elif target_table == INVOCATION_EVENTS_VIEW_ID:
-            select_col_model = "NULL as model_name"
-            # Invocations don't have standard token counts or instructions in the same way, but have content
-            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
-            select_col_extra = ", content_text as instruction" # Using content_text as loose equivalent for instruction/input
-        else: # AGENT_EVENTS_VIEW_ID (default fallthrough or explicit)
-            select_col_model = "NULL as model_name"
-            select_col_tokens = "NULL as prompt_token_count, NULL as candidates_token_count, NULL as total_token_count, NULL as thoughts_token_count, NULL as time_to_first_token_ms"
-            select_col_extra = ", instruction"
-
-        if target_table == INVOCATION_EVENTS_VIEW_ID:
-             # Invocations have invocation_id, not span_id/parent_span_id
-             # We map invocation_id to span_id for consistency in the SELECT, or use NULL
-             select_ids = "invocation_id as span_id, trace_id, session_id, NULL as parent_span_id"
-        else:
-             select_ids = "span_id, trace_id, session_id, parent_span_id"
-
-        # Select key columns + metrics
-        query = f"""
-        SELECT 
-            {select_ids},
-            {latency_col},
-            agent_name,
-            root_agent_name,
-            {select_col_model},
-            {select_col_tokens},
-            status,
-            timestamp{select_col_extra}
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE {where_clause}
-        ORDER BY {latency_col} DESC
-        LIMIT {limit}
-        """
+        llm_specific_columns_str = ",\n    ".join(f"T.{col}" for col in LLM_SPECIFIC_COLUMNS)
+        common_columns_str = ",\n    ".join(f"T.{col}" for col in COMMON_COLUMNS)
+        extra_selects = (
+            "A.status AS agent_status,\n    "
+            "A.duration_ms as agent_duration_ms,\n    "    
+            "I.status AS root_status,\n    "
+            "I.duration_ms as root_duration_ms,\n    "
+            "I.content_text_summary"
+        )
+        joins = (
+            f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id\n        "
+            f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A ON T.parent_span_id = A.span_id"
+        )
+        query = GET_PAGINATED_EVENTS_QUERY.format(
+            specific_columns=f"{llm_specific_columns_str},\n    {extra_selects}",
+            common_columns=common_columns_str,            view_id=LLM_EVENTS_VIEW_ID,
+            joins=joins,
+            where_clause=where_clause,
+            order_clause=order_clause,
+            limit=limit
+        )
 
         df = await execute_bigquery(query)
+        requests = format_dataframe_to_requests(df, truncate=truncate)
 
-        # Truncate massive columns with descriptive pointers so the agent relies on analyze_root_cause for full data inspection
-        for col in ['tool_args', 'response_content', 'prompt_content', 'full_request', 'full_response', 'instruction', 'content_text', 'user_message', 'error_message']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).apply(
-                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
-                )
-
-        
-        if df.empty:
-            return json.dumps({
-                "message": "No data found for slowest requests.", 
-                "metadata": {"view_id": target_table}
-            })
-            
-        requests = df.to_dict(orient="records")
             
         result = {
-            "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name, "view_id": target_table},
+            "metadata": {"time_range": time_range,
+                         "limit": limit,
+                         "min_latency_ms": min_latency_ms,
+                         "failed_only": failed_only
+                         },
             "requests": requests
         }
         
         return json.dumps(result, cls=AnalysisEncoder)
         
     except Exception as e:
-        logger.error(f"Error in get_slowest_queries: {str(e)}")
+        logger.error(f"Error in get_llm_requests: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+@cached_tool()
+async def get_tool_requests(
+    time_range: str = "24h",
+    limit: int = 10,
+    min_latency_ms: float = 0,
+    agent_name: Optional[str] = None,
+    sort_by: str = "slowest",
+    failed_only: bool = False,
+    truncate: bool = False,
+) -> str:
+    """
+    Fetch Tool executions with filtering and sorting options.
+
+    Args:
+        time_range (str): Time range to analyze (e.g. "24h", "7d", "all").
+        limit (int): Maximum number of requests to return.
+        min_latency_ms (float): Filter for requests slower than this threshold.
+        agent_name (str): Optional. Filter by specific agent name.
+        sort_by (str): Sorting criteria: "slowest", "fastest", "latest".
+        failed_only (bool): If True, only return requests with status='ERROR'.
+        truncate (bool): Whether to truncate large payloads in the response.
+
+    Returns:
+        str: JSON string containing metadata and specific Tool execution details.
+    """
+    logger.info(f"[TOOL CALL-get_tool_requests] time_range='{time_range}', limit={limit}, "
+                f"min_latency_ms={min_latency_ms}, agent_name='{agent_name}', sort_by='{sort_by}', "
+                f"failed_only={failed_only}, truncate={truncate}")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "=")
+        }
+        if min_latency_ms > 0:
+            filter_config["duration_ms"] = (str(min_latency_ms), ">")
+
+        if failed_only:
+            filter_config["status"] = ("ERROR", "=")
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+        if TOOLS_TO_EXCLUDE_STR:
+            where_clause += f" AND tool_name NOT IN ({TOOLS_TO_EXCLUDE_STR})"
+
+        # Sorting Logic
+        order_clause = get_sort_clause(sort_by, table_alias="T")
+
+        tool_specific_columns_str = ",\n    ".join(f"T.{col}" for col in TOOL_SPECIFIC_COLUMNS)
+        common_columns_str = ",\n    ".join(f"T.{col}" for col in COMMON_COLUMNS)
+
+        extra_selects = (
+            "A.status AS agent_status,\n    "
+            "A.duration_ms as agent_duration_ms,\n    "
+            "I.status AS root_status,\n    "
+            "I.duration_ms as root_duration_ms,\n    "
+            "I.content_text_summary"
+        )
+        joins = (
+            f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id\n        "
+            f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A ON T.parent_span_id = A.span_id"
+        )
+        query = GET_PAGINATED_EVENTS_QUERY.format(
+            specific_columns=f"{tool_specific_columns_str},\n    {extra_selects}",
+            common_columns=common_columns_str,            view_id=TOOL_EVENTS_VIEW_ID,
+            joins=joins,
+            where_clause=where_clause,
+            order_clause=order_clause,
+            limit=limit
+        )
+
+        df = await execute_bigquery(query)
+        requests = format_dataframe_to_requests(df, truncate=truncate)
+            
+        result = {
+            "metadata": {"time_range": time_range,
+                         "limit": limit,
+                         "agent_name": agent_name,
+                         "min_latency_ms": min_latency_ms
+                         },
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_tool_requests: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+
+@cached_tool()
+async def get_agent_requests(
+    time_range: str = "24h",
+    limit: int = 10,
+    min_latency_ms: float = 0,
+    agent_name: Optional[str] = None,
+    order_type: Optional[str] = "DESC",
+    sort_by: str = "slowest",
+    failed_only: bool = False,
+    exclude_zero_duration: bool = False,
+    exclude_root_agent: bool = False,
+    truncate: bool = False,
+) -> str:
+    """
+    Fetch Agent executions with filtering and sorting options.
+
+    Args:
+        time_range (str): Time range to analyze.
+        limit (int): Max number of requests.
+        min_latency_ms (float): Min latency filter.
+        agent_name (str): Filter by agent name.
+        order_type (str): DEPRECATED. Sort order for duration.
+        sort_by (str): Sorting criteria: "slowest", "fastest", "latest".
+        failed_only (bool): If True, only return requests with status='ERROR'.
+        exclude_zero_duration (bool): If True, exclude requests with 0ms duration.
+        exclude_root_agent (bool): If True, excludes requests where agent_name matches root_agent_name.
+        truncate (bool): Truncate large fields.
+        
+    Returns:
+        str: JSON string containing metadata and specific Agent execution details.
+    """
+    logger.info(f"[TOOL CALL-get_agent_requests] "
+                f"time_range='{time_range}', limit={limit}, sort_by='{sort_by}', "
+                f"agent_name='{agent_name}', order_type='{order_type}', exclude_root_agent={exclude_root_agent}"
+                f"min_latency_ms={min_latency_ms}, failed_only={failed_only}, "
+                f"exclude_zero_duration={exclude_zero_duration}, truncate={truncate}")
+    try:
+        filter_config = {
+            "agent_name": (agent_name, "=")
+        }
+        if failed_only:
+            filter_config["status"] = ("ERROR", "=")
+
+        if min_latency_ms > 0:
+            filter_config["duration_ms"] = (str(min_latency_ms), ">")
+        if exclude_zero_duration:
+            filter_config["duration_ms"] = (str(0), ">")
+
+        extra_filters = []
+        if exclude_root_agent:
+            extra_filters.append("T.agent_name != T.root_agent_name")
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config,
+            extra_filters=extra_filters
+        )
+
+        # Sorting Logic
+        order_clause = get_sort_clause(sort_by, order_type, table_alias="T")
+
+        agent_specific_columns_str = ",\n    ".join(f"T.{col}" for col in AGENT_SPECIFIC_COLUMNS)
+        common_columns_str = ",\n    ".join(f"T.{col}" for col in COMMON_COLUMNS)
+
+        extra_selects = (
+            "I.status AS root_status,\n    "
+            "I.duration_ms as root_duration_ms,\n    "
+            "I.content_text_summary"
+        )
+        joins = f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id"
+        
+        query = GET_PAGINATED_EVENTS_QUERY.format(
+            specific_columns=f"{agent_specific_columns_str},\n    {extra_selects}",
+            common_columns=common_columns_str,            view_id=AGENT_EVENTS_VIEW_ID,
+            joins=joins,
+            where_clause=where_clause,
+            order_clause=order_clause,
+            limit=limit
+        )
+
+        df = await execute_bigquery(query)
+
+        # Added safety check for empty dataframes
+        if df.empty:
+            return json.dumps({
+                "message": "No data found for Agents."
+            })
+
+        requests = format_dataframe_to_requests(df, truncate=truncate)
+
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
+                         "agent_name": agent_name, "failed_only": failed_only},
+            "requests": requests
+        }
+
+        return json.dumps(result, cls=AnalysisEncoder)
+
+    except Exception as e:
+        logger.error(f"Error in get_agent_requests: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+@cached_tool()
+async def get_invocation_requests(
+    time_range: str = "24h",
+    limit: int = 10,
+    min_latency_ms: float = 0,
+    root_agent_name: Optional[str] = None,
+    order_type: Optional[str] = "DESC",
+    sort_by: str = "slowest",
+    failed_only: bool = False,
+    exclude_zero_duration: bool = False,
+    truncate: bool = False,
+) -> str:
+    """
+    Fetch Invocation (Root Agent) requests with filtering and sorting options.
+    
+    Args:
+        time_range (str): Time range to analyze.
+        limit (int): Max number of requests.
+        min_latency_ms (float): Min latency filter.
+        root_agent_name (str): Filter by root agent name.
+        order_type (str): DEPRECATED. Sort order for duration.
+        sort_by (str): Sorting criteria: "slowest", "fastest", "latest".
+        failed_only (bool): If True, only return requests with status='ERROR'.
+        exclude_zero_duration (bool): If True, exclude requests with 0ms duration.
+        truncate (bool): Truncate large fields.
+        
+    Returns:
+        str: JSON string containing metadata and specific Invocation details.
+    """
+    logger.info(f"[TOOL CALL-get_invocation_requests] "
+                f"time_range='{time_range}', limit={limit}, sort_by='{sort_by}', "
+                f"root_agent_name='{root_agent_name}', order_type='{order_type}', "
+                f"min_latency_ms={min_latency_ms}, failed_only={failed_only}, "
+                f"exclude_zero_duration={exclude_zero_duration}, truncate={truncate}")
+    try:
+        filter_config = {
+            "root_agent_name": (root_agent_name, "=")
+        }
+        if min_latency_ms > 0:
+            filter_config["duration_ms"] = (str(min_latency_ms), ">")
+        elif exclude_zero_duration:
+            filter_config["duration_ms"] = (str(0), ">")
+
+        if failed_only:
+            filter_config["status"] = ("ERROR", "=")
+
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config=filter_config
+        )
+
+        # Sorting Logic
+        order_clause = get_sort_clause(sort_by, order_type, table_alias="T")
+
+        invocation_specific_columns_str = ",\n    ".join(f"T.{col}" for col in INVOCATION_SPECIFIC_COLUMNS)
+        
+        # INVOCATION view does not have parent_span_id (it is a root event)
+        invocation_common_cols = [col for col in COMMON_COLUMNS if col != 'parent_span_id']
+        common_columns_str = ",\n    ".join(f"T.{col}" for col in invocation_common_cols)
+
+        query = GET_PAGINATED_EVENTS_QUERY.format(
+            specific_columns=invocation_specific_columns_str,
+            common_columns=common_columns_str,            view_id=INVOCATION_EVENTS_VIEW_ID,
+            joins="",
+            where_clause=where_clause,
+            order_clause=order_clause,
+            limit=limit
+        )
+
+        df = await execute_bigquery(query)
+        requests = format_dataframe_to_requests(df, truncate=truncate)
+            
+        result = {
+            "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
+                         "root_agent_name": root_agent_name},
+            "requests": requests
+        }
+        
+        return json.dumps(result, cls=AnalysisEncoder)
+        
+    except Exception as e:
+        logger.error(f"Error in get_invocation_requests: {str(e)}")
         return json.dumps({"error": str(e)})
 
 
@@ -494,6 +676,7 @@ async def analyze_latency_grouped(
         exclude_root (bool): Optional. If True, excludes rows where agent_name matches root_agent_name.
         view_id (str): Optional.
         latency_col (str): Duration column.
+        percentile (float): The percentile value to calculate (e.g., 95.0 for p95).
 
     Returns:
         str: JSON string containing grouped latency metrics.
@@ -520,8 +703,7 @@ async def analyze_latency_grouped(
         
         if exclude_root:
             where_clause += " AND agent_name != root_agent_name"
-            # Explicitly exclude root agents which typically have no parent span in the trace structure
-            where_clause += " AND parent_span_id IS NOT NULL"
+
             
         if target_table == TOOL_EVENTS_VIEW_ID:
             where_clause += " AND tool_name != 'transfer_to_agent'"
@@ -535,109 +717,51 @@ async def analyze_latency_grouped(
         # So we MUST join if target_table is AGENT_EVENTS_VIEW_ID and 'model_name' is in group_by.
 
         if str(target_table) == str(AGENT_EVENTS_VIEW_ID) and "model_name" in group_columns:
-             # Construct the JOIN query
-             # We need to map group columns to A or L aliases
-             # agent_name -> A.agent_name
-             # model_name -> L.model_name
-             
-             select_clauses = []
-             group_indices = []
-             
-             for idx, col in enumerate(group_columns):
-                 if col == "agent_name":
-                     select_clauses.append("A.agent_name")
-                 elif col == "model_name":
-                     select_clauses.append("L.model_name")
-                 elif col == "root_agent_name":
-                     select_clauses.append("A.root_agent_name")
-                 else:
-                     select_clauses.append(f"A.{col}") # Default to Agent table
-                 group_indices.append(str(idx + 1))
-                 
-             select_group_sql = ", ".join(select_clauses)
-             group_by_sql = ", ".join(group_indices)
-             
-             # Re-build where clause with Alias 'A'
-             where_clause_joined = build_standard_where_clause(
+            # Construct the JOIN query
+            # We need to map group columns to A or L aliases
+            # agent_name -> A.agent_name
+            # model_name -> L.model_name
+            
+            select_clauses = []
+            group_indices = []
+            
+            for idx, col in enumerate(group_columns):
+                if col == "agent_name":
+                    select_clauses.append("A.agent_name")
+                elif col == "model_name":
+                    select_clauses.append("L.model_name")
+                elif col == "root_agent_name":
+                    select_clauses.append("A.root_agent_name")
+                else:
+                    select_clauses.append(f"A.{col}") # Default to Agent table
+                group_indices.append(str(idx + 1))
+                
+            select_group_sql = ", ".join(select_clauses)
+            group_by_sql = ", ".join(group_indices)
+            
+            # Re-build where clause with Alias 'A'
+            where_clause_joined = build_standard_where_clause(
                 time_range=time_range,
                 filter_config={"model_name": (model_name, "=")},
                 table_alias="A"
-             )
-             
-             if exclude_root:
+            )
+            
+            if exclude_root:
                 where_clause_joined += " AND A.agent_name != A.root_agent_name"
 
-             query = f"""
-                WITH LLM_Aggregated AS (
-                    SELECT 
-                        parent_span_id, 
-                        model_name,
-                        SUM(candidates_token_count) as candidates_token_count,
-                        SUM(thoughts_token_count) as thoughts_token_count,
-                        SUM(total_token_count) as total_token_count
-                    FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}`
-                    GROUP BY 1, 2
-                )
-                SELECT
-                  {select_group_sql},
-                  COUNT(DISTINCT A.span_id) as total_count,
-                  COUNT(DISTINCT CASE WHEN A.status = 'ERROR' THEN A.span_id END) as error_count,
-                  COUNT(DISTINCT CASE WHEN A.status != 'ERROR' AND A.status != 'PENDING' THEN A.span_id END) as success_count,
-                  ROUND(COUNT(DISTINCT CASE WHEN A.status = 'ERROR' THEN A.span_id END) / NULLIF(COUNT(DISTINCT A.span_id), 0) * 100, 2) as error_rate_pct,
-                  AVG(A.{latency_col}) as avg_ms,
-                  STDDEV(A.{latency_col}) as std_latency_ms,
-                  0.0 as cv_pct, -- approximation
-                  MIN(A.{latency_col}) as min_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(500)] as p50_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(750)] as p75_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(900)] as p90_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(950)] as p95_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(990)] as p99_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(999)] as p999_ms,
-                  APPROX_QUANTILES(A.{latency_col}, 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
-                  MAX(A.{latency_col}) as max_ms,
-                  -- Token Metrics
-                  AVG(L.candidates_token_count) as avg_output_tokens,
-                  APPROX_QUANTILES(L.candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
-                  MIN(L.candidates_token_count) as min_output_tokens,
-                  MAX(L.candidates_token_count) as max_output_tokens,
-                  -- Correlation Metrics
-                  CORR(A.{latency_col}, L.candidates_token_count - IFNULL(L.thoughts_token_count, 0)) as corr_latency_pure_output,
-                  CORR(A.{latency_col}, L.candidates_token_count) as corr_latency_output_plus_thoughts,
-                  CORR(A.{latency_col}, L.total_token_count) as corr_latency_total
-                FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A
-                JOIN LLM_Aggregated AS L
-                ON A.span_id = L.parent_span_id
-                WHERE {where_clause_joined}
-                GROUP BY {group_by_sql}
-                ORDER BY avg_ms DESC
-             """
+            query = GET_LATENCY_GROUPED_JOINED_QUERY.format(
+                select_group_sql=select_group_sql,
+                latency_col=latency_col,
+                percentile=percentile,
+                where_clause_joined=where_clause_joined,
+                group_by_sql=group_by_sql
+            )
         
         else:
             # ORIGINAL LOGIC for single table
-            query = f"""
-            SELECT
-              {select_group_cols},
-              COUNT(*) as total_count,
-              COUNTIF(status = 'ERROR') as error_count,
-              COUNTIF(status != 'ERROR' AND status != 'PENDING') as success_count,
-              ROUND(COUNTIF(status = 'ERROR') / NULLIF(COUNTIF(status != 'PENDING'), 0) * 100, 2) as error_rate_pct,
-              AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as avg_ms,
-              STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as std_latency_ms,
-              ROUND((STDDEV(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) / NULLIF(AVG(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)), 0)) * 100, 2) as cv_pct,
-              MIN(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as min_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(500)] as p50_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(750)] as p75_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(900)] as p90_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(950)] as p95_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(990)] as p99_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(999)] as p999_ms,
-              APPROX_QUANTILES(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL), 1000)[OFFSET(CAST({percentile} * 10 AS INT64))] as p_custom_ms,
-              MAX(IF(status != 'ERROR' AND status != 'PENDING', {latency_col}, NULL)) as max_ms"""
-            
-            # Conditionally add token metrics if querying LLM events
+            token_metrics_sql = ""
             if str(target_table) == str(LLM_EVENTS_VIEW_ID):
-                 query += f""",
+                 token_metrics_sql = f""",
               AVG(prompt_token_count) as avg_input_tokens,
               APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
               AVG(candidates_token_count) as avg_output_tokens,
@@ -653,43 +777,31 @@ async def analyze_latency_grouped(
               CORR({latency_col}, candidates_token_count) as corr_latency_output,
               CORR({latency_col}, total_token_count) as corr_latency_total
                  """
-                 
-            query += f"""
-            FROM
-              `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-            WHERE
-              {where_clause}
-            GROUP BY {group_by_clause}
-            ORDER BY avg_ms DESC
-            """
+
+            query = GET_LATENCY_GROUPED_BASE_QUERY.format(
+                select_group_cols=select_group_cols,
+                latency_col=latency_col,
+                percentile=percentile,
+                optional_token_metrics=token_metrics_sql,
+                target_table=target_table,
+                where_clause=where_clause,
+                group_by_clause=group_by_clause
+            )
         
         df = await execute_bigquery(query)
         
         token_df = pd.DataFrame()
         if str(target_table) != str(LLM_EVENTS_VIEW_ID) and any(g in ["agent_name", "root_agent_name"] for g in group_columns):
-            token_query = f"""
-            SELECT
-              {select_group_cols},
-              AVG(prompt_token_count) as avg_input_tokens,
-              APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,
-              AVG(candidates_token_count) as avg_output_tokens,
-              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,
-              APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,
-              MIN(candidates_token_count) as min_output_tokens,
-              MAX(candidates_token_count) as max_output_tokens,
-              AVG(thoughts_token_count) as avg_thought_tokens,
-              APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,
-              AVG(total_token_count) as avg_total_tokens,
-              APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens
-            FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-            WHERE {where_clause}
-            GROUP BY {group_by_clause}
-            """
+            token_query = GET_LATENCY_GROUPED_TOKEN_QUERY.format(
+                select_group_cols=select_group_cols,
+                where_clause=where_clause,
+                group_by_clause=group_by_clause
+            )
             token_df = await execute_bigquery(token_query)
         
         if df.empty:
             return json.dumps({
-                "message": "No data found.",
+                "message": "No data found for metrics.",
                 "metadata": {"view_id": target_table, "group_by": group_by}
             })
             
@@ -741,6 +853,7 @@ async def analyze_latency_grouped(
         logger.error(f"Error in analyze_latency_grouped: {str(e)}")
         return json.dumps({"error": str(e)})
 
+
 @cached_tool()
 async def get_active_metadata(
     time_range: str = "7d",
@@ -764,12 +877,11 @@ async def get_active_metadata(
 
         async def fetch_distinct(column_name: str, limit: int = 50) -> list[str]:
             """Fetch distinct values for a given column from the events view."""
-            query = f"""
-            SELECT DISTINCT {column_name}
-            FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-            WHERE {where_clause} AND {column_name} IS NOT NULL
-            LIMIT {limit}
-            """
+            query = GET_ACTIVE_METADATA_QUERY.format(
+                column_name=column_name,                target_table=target_table,
+                where_clause=where_clause,
+                limit=limit
+            )
             
             try:
                 df = await execute_bigquery(query)
@@ -846,17 +958,12 @@ async def analyze_root_cause(
         
         id_column = "invocation_id" if target_table == INVOCATION_EVENTS_VIEW_ID else "span_id"
         
-        query = f"""
-        SELECT
-            {id_column} AS span_id,
-            AI.GENERATE(
-                ('Analyze this request log and explain the root cause of the latency or error. Be concise. Focus ONLY on factors visible in the log (e.g. LLM prompt size, external API delays). NEVER use the words "sequential" or "parallel", as the agent architecture is fixed and already concurrent. Describe only what is in the data. Log: ', TO_JSON_STRING(T)),
-                connection_id => '{connection_id}',
-                endpoint => '{model_endpoint}'
-            ).result AS analysis
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE {id_column} = '{span_id}'
-        """
+        query = ANALYZE_ROOT_CAUSE_QUERY.format(
+            id_column=id_column,
+            connection_id=connection_id,
+            model_endpoint=model_endpoint,            target_table=target_table,
+            span_id=span_id
+        )
         
         # print(f"DEBUG: Executing AI.GENERATE for span {span_id}...", flush=True)
         try:
@@ -945,80 +1052,6 @@ async def batch_analyze_root_cause(
 
 
 @cached_tool()
-async def get_fastest_queries(
-    time_range: str = "7d",
-    limit: int = 10,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None,
-    view_id: Optional[str] = None,
-    latency_col: str = "duration_ms"
-) -> str:
-    """
-    Fetch the fastest successful queries.
-    
-    Args:
-        time_range (str): Time range to analyze (e.g., "24h", "7d", "all").
-        limit (int): Number of requests to return.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-        view_id (str): Optional. BigQuery table/view ID to query. Defaults to LLM_EVENTS_VIEW_ID.
-        latency_col (str): Column name for latency/duration (default: "duration_ms").
-
-    Returns:
-        str: JSON string containing a list of fastest requests with details.
-    """
-    target_table = view_id or LLM_EVENTS_VIEW_ID
-    logger.info(f"[TOOL CALL-get_fastest_queries] time_range='{time_range}', limit={limit}, "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
-                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "=")
-        }
-
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-        
-        # Filter out 0ms or negative latencies as they might be errors/artifacts
-        query = f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE {where_clause} AND {latency_col} > 0
-        ORDER BY {latency_col} ASC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({
-                "message": "No data found for fastest requests.", 
-                "metadata": {"view_id": target_table}
-            })
-            
-        requests = df.to_dict(orient="records")
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name, "view_id": target_table},
-            "requests": requests
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in get_fastest_queries: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@cached_tool()
 async def get_baseline_performance_metrics(
     group_by: str = "agent_name",
     time_range: str = "7d",
@@ -1062,29 +1095,12 @@ async def get_baseline_performance_metrics(
             filter_config={"model_name": (model_name, "=")}
         )
         
-        query = f"""
-        WITH RankedData AS (
-            SELECT
-                {group_by} as group_key,
-                {latency_col} as latency_ms,
-                PERCENT_RANK() OVER (PARTITION BY {group_by} ORDER BY {latency_col} ASC) as percentile_rank
-            FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-            WHERE {where_clause} AND {latency_col} > 50
-        ),
-        FilteredBaseline AS (
-            SELECT group_key, latency_ms
-            FROM RankedData
-            WHERE percentile_rank <= {limit_percentile}
+        query = GET_BASELINE_PERFORMANCE_QUERY.format(
+            group_by=group_by,
+            latency_col=latency_col,            target_table=target_table,
+            where_clause=where_clause,
+            limit_percentile=limit_percentile
         )
-        SELECT
-            group_key,
-            COUNT(*) as baseline_sample_size,
-            AVG(latency_ms) as target_mean_ms,
-            APPROX_QUANTILES(latency_ms, 100)[OFFSET(95)] as target_p95_ms
-        FROM FilteredBaseline
-        GROUP BY group_key
-        ORDER BY target_mean_ms ASC
-        """
         
         df = await execute_bigquery(query)
         
@@ -1114,161 +1130,6 @@ async def get_baseline_performance_metrics(
         return json.dumps({"error": str(e)})
 
 
-
-@cached_tool()
-async def get_latest_queries(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 10,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None,
-    view_id: Optional[str] = None,
-    latency_col: str = "duration_ms"
-) -> str:
-    """
-    Fetch the most recent queries to check for recent performance improvements.
-    
-    Args:
-        time_range (str): Time range to analyze (default is '24h' to keep it recent).
-        limit (int): Number of most recent requests to return.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-        view_id (str): Optional. BigQuery table/view ID to query. Defaults to agent_events_view.
-        latency_col (str): Column name for latency/duration (default: "duration_ms").
-
-    Returns:
-        str: JSON string containing a list of the most recent requests with details.
-    """
-    target_table = view_id or "agent_events_view"
-    logger.info(f"[TOOL CALL-get_latest_queries] time_range='{time_range}', limit={limit}, "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
-                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "=")
-        }
-
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-        
-        query = f"""
-        SELECT *
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE {where_clause} AND {latency_col} IS NOT NULL
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({
-                "message": "No recent data found for latest requests verification.", 
-                "metadata": {"view_id": target_table}
-            })
-            
-        requests = df.to_dict(orient="records")
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name, "view_id": target_table},
-            "requests": requests
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in get_latest_queries: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-async def get_failed_queries(
-    time_range: str = "24h",
-    limit: int = 10,
-    agent_name: str = None,
-    root_agent_name: str = None,
-    model_name: str = None,
-    view_id: str = None,
-    latency_col: str = "duration_ms"
-) -> str:
-    """
-    Retrieves the most recent failed requests (status = 'ERROR') with their details.
-    Use this after analyze_latency_grouped shows a high error_rate_pct for a specific component.
-    Always specify the problematic component (e.g., model_name="gemini-3.0-pro") to narrow down the search.
-    
-    Args:
-        time_range (str): Time filter (e.g., "1h", "24h", "7d", "all").
-        limit (int): Max number of failed requests to return.
-        agent_name (str, optional): Filter by agent name.
-        root_agent_name (str, optional): Filter by root agent name.
-        model_name (str, optional): Filter by model name.
-        view_id (str, optional): The target BigQuery view (e.g., "agent_events_view", "llm_events_view"). Defaults to llm_events_view.
-        latency_col (str): Column name for latency/duration (default: "duration_ms").
-        
-    Returns:
-        str: JSON string containing a list of failed requests with details.
-    """
-    target_table = view_id or LLM_EVENTS_VIEW_ID
-    logger.info(f"[TOOL CALL-get_failed_queries] time_range='{time_range}', limit={limit}, "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', "
-                f"model_name='{model_name}', view_id='{target_table}', latency_col='{latency_col}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "="),
-            "status": ("ERROR", "=")
-        }
-        
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-
-        query = f"""
-        SELECT * 
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` AS T
-        WHERE {where_clause}
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        # Truncate massive columns with descriptive pointers so the agent relies on analyze_root_cause for full data inspection
-        for col in ['tool_args', 'response_content', 'prompt_content', 'full_request', 'full_response', 'instruction', 'content_text', 'user_message', 'error_message']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).apply(
-                    lambda x: x if len(x) <= 800 else f"[LARGE PAYLOAD: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to analyze full content instead of fetching it here.]"
-                )
-        
-        if df.empty:
-            return json.dumps({
-                "message": "No failed queries found matching criteria.", 
-                "metadata": {"view_id": target_table}
-            })
-            
-        requests = df.to_dict(orient="records")
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name, "view_id": target_table},
-            "requests": requests
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in get_failed_queries: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
 @cached_tool()
 async def analyze_latency_trend(
     group_by: str,
@@ -1279,7 +1140,18 @@ async def analyze_latency_trend(
     """
     Analyzes the temporal trend of latency and errors by chopping the time array into distinct chronological buckets.
     Used exclusively by Playbook C to determine if slopes are degrading or improving over long periods of time.
+
+    Args:
+        group_by (str): Dimension to group by. One of: "agent_name", "model_name", "tool_name".
+        view_id (str): BigQuery table/view ID to query. Must be one of: "agent_events_view", "llm_events_view", "tool_events_view".
+        time_range (str): Time range to analyze (e.g. "30d", "24h"). Default is "30d".
+        bucket_size (str): Size of each time bucket (e.g. "1d", "1h", "7d"). Default is "1d".
+
+    Returns:
+        str: JSON string containing trend analysis data grouped by the specified dimension.
     """
+    logger.info(f"[TOOL CALL-analyze_latency_trend] group_by='{group_by}', view_id='{view_id}', "
+                f"time_range='{time_range}', bucket_size='{bucket_size}'")
     try:
         # Strip invisible characters from LLM injection
         view_id = str(view_id).strip()
@@ -1302,23 +1174,12 @@ async def analyze_latency_trend(
         
         clean_where_clause = where_clause.replace("T.", "")
         
-        query = f"""
-        SELECT
-            {group_by} AS name,
-            TIMESTAMP_TRUNC(timestamp, {bq_interval}) AS time_bucket,
-            COUNT(*) AS total_calls,
-            APPROX_QUANTILES(duration_ms, 100)[OFFSET(95)] AS p95_ms,
-            AVG(duration_ms) AS avg_ms,
-            COUNTIF(status = 'ERROR') / NULLIF(COUNT(*), 0) * 100 AS error_rate_pct
-        FROM
-            `{PROJECT_ID}.{DATASET_ID}.{view_id}`
-        WHERE
-            {clean_where_clause}
-        GROUP BY
-            name, time_bucket
-        ORDER BY
-            name, time_bucket ASC
-        """
+        query = ANALYZE_LATENCY_TREND_QUERY.format(
+            group_by=group_by,
+            bq_interval=bq_interval,
+            view_id=view_id,
+            clean_where_clause=clean_where_clause
+        )
         
         df = await execute_bigquery(query)
         
@@ -1341,359 +1202,34 @@ async def analyze_latency_trend(
         logger.error(f"Error in analyze_latency_trend: {e}")
         return json.dumps({"error": str(e)})
 
+
+from ...config import MAX_RAW_RECORDS_LIMIT
+
 @cached_tool()
-async def get_llm_impact_analysis(
-    time_range: str = "7d",
-    limit: int = 15,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None,
-    view_id: Optional[str] = None
-) -> str:
-    """
-    Analyze the impact of LLM calls on End-to-End latency.
-    
-    Joins LLM events with their parent Agent and Root Invocation to calculate:
-    - % Impact (LLM Duration / Total Duration)
-    - Token usage (Input/Output/Thought)
-    - User Message context
-    
-    Args:
-        time_range (str): Time range to analyze.
-        limit (int): Number of top bottlenecks to return.
-        agent_name (str): Filter by Agent.
-        root_agent_name (str): Filter by Root Agent.
-        model_name (str): Filter by Model.
-        view_id (str): Optional view override (defaults to LLM view).
-
-    Returns:
-        str: JSON string containing the impact analysis.
-    """
-    target_table = view_id or LLM_EVENTS_VIEW_ID
-    logger.info(f"[TOOL CALL-get_llm_impact_analysis] time_range='{time_range}', limit={limit}")
-
+async def get_raw_invocation_events(time_range: str = "24h", limit: int = MAX_RAW_RECORDS_LIMIT) -> str:
+    """Fetches raw E2E invocation event data from BigQuery."""
+    logger.info(f"[TOOL CALL-get_raw_invocation_events] time_range='{time_range}', limit={limit}")
+    where_clause = build_standard_where_clause(time_range=time_range)
+    query = GET_RAW_INVOCATIONS_QUERY.format(where_clause=where_clause, limit=limit)
     try:
-        # Build filter for the PRIMARY table (LLM_EVENTS_VIEW as 'L')
-        # We filter 'L' directly for efficiency.
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config={
-                "agent_name": (agent_name, "="),
-                "root_agent_name": (root_agent_name, "="), 
-                "model_name": (model_name, "=")
-            },
-            table_alias="L"
-        )
-        
-        query = f"""
-        SELECT
-            L.duration_ms as llm_duration,
-            L.time_to_first_token_ms,
-            L.model_name,
-            COALESCE(L.status, 'UNKNOWN') as llm_status,
-            L.prompt_token_count as input_tokens,
-            L.candidates_token_count as output_tokens,
-            L.thoughts_token_count as thought_tokens,
-            L.total_token_count,
-            A.agent_name,
-            A.duration_ms as agent_duration,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
-            I.root_agent_name,
-            I.duration_ms as root_duration,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            ROUND(SAFE_DIVIDE(L.duration_ms, I.duration_ms) * 100, 2) as impact_pct,
-            L.trace_id,
-            L.session_id,
-            L.span_id,
-            L.parent_span_id,
-            L.timestamp,
-            SUBSTR(I.content_text, 1, 250) as user_message_trunk
-        FROM `{PROJECT_ID}.{DATASET_ID}.{target_table}` L
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON L.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON L.trace_id = I.trace_id
-        WHERE
-            {where_clause}
-        ORDER BY L.duration_ms DESC
-        LIMIT {limit}
-        """
-
         df = await execute_bigquery(query)
-        
-        if df.empty:
-             return json.dumps({
-                "message": "No impact data found.",
-                "metadata": {"view_id": target_table}
-            })
-
-        records = []
-        for _, row in df.iterrows():
-            records.append({
-                "llm_duration": float(row['llm_duration']),
-                "time_to_first_token_ms": float(row['time_to_first_token_ms']) if pd.notna(row['time_to_first_token_ms']) else None,
-                "model_name": row['model_name'],
-                "llm_status": row['llm_status'],
-                "input_tokens": int(row['input_tokens']) if pd.notna(row['input_tokens']) else 0,
-                "output_tokens": int(row['output_tokens']) if pd.notna(row['output_tokens']) else 0,
-                "thought_tokens": int(row['thought_tokens']) if pd.notna(row['thought_tokens']) else 0,
-                "total_tokens": int(row['total_token_count']) if pd.notna(row['total_token_count']) else 0,
-                "agent_name": row['agent_name'],
-                "agent_duration": float(row['agent_duration']) if pd.notna(row['agent_duration']) else 0.0,
-                "agent_status": row['agent_status'],
-                "root_agent_name": row['root_agent_name'],
-                "root_duration": float(row['root_duration']) if pd.notna(row['root_duration']) else 0.0,
-                "root_status": row['root_status'],
-                "impact_pct": float(row['impact_pct']) if pd.notna(row['impact_pct']) else 0.0,
-                "trace_id": row['trace_id'],
-                "session_id": row['session_id'],
-                "span_id": row['span_id'],
-                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "user_message_trunk": row['user_message_trunk']
-            })
-
-        result = {
-            "metadata": {"time_range": time_range, "view_id": target_table},
-            "impact_analysis": records
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-
+        if df.empty: return "[]"
+        return df.to_json(orient="records", default_handler=str)
     except Exception as e:
-        error_str = str(e)
-        if "429" in error_str or "Resource exhausted" in error_str:
-            logger.warning(f"get_llm_impact_analysis hit quota: {error_str}")
-            return json.dumps({
-                "message": "LLM Impact Analysis skipped due to quota limits (429).",
-                "metadata": {"view_id": target_table},
-                "impact_analysis": []
-            })
-        logger.error(f"Error in get_llm_impact_analysis: {error_str}")
-        return json.dumps({"error": error_str})
-
-async def get_tool_impact_analysis(limit: int = 15, time_range: str = "24h") -> str:
-    """
-    Fetches the top slowest Tool executions with joined context (Agent & Root Invocation).
-    Used to populate the 'Top Tool Bottlenecks & Impact' table.
-    """
-    try:
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            table_alias="T"
-        )
-
-        query = f"""
-        SELECT
-            T.duration_ms as tool_duration,
-            T.tool_name,
-            TO_JSON_STRING(T.tool_args) as tool_args,
-            COALESCE(TO_JSON_STRING(T.tool_result), '') as tool_result_str,
-            COALESCE(T.status, 'UNKNOWN') as tool_status,
-            T.agent_name,
-            A.duration_ms as agent_duration,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
-            I.root_agent_name,
-            I.duration_ms as root_duration,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            SAFE_DIVIDE(T.duration_ms, I.duration_ms) * 100 as impact_pct,
-            T.trace_id,
-            T.session_id,
-            T.span_id,
-            T.parent_span_id,
-            T.timestamp,
-            SUBSTR(I.content_text, 1, 250) as user_message_trunk
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE
-            {where_clause}
-        ORDER BY T.duration_ms DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-             return json.dumps({
-                "message": "No tool impact data found.",
-                "metadata": {"view_id": TOOL_EVENTS_VIEW_ID}
-            })
-
-        for col in ['tool_args', 'response_content', 'tool_result']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).apply(
-                    lambda x: x if len(x) <= 800 else f"[TRUNCATED: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to see full content.]"
-                )
-
-        records = []
-        for _, row in df.iterrows():
-            records.append({
-                "tool_duration": float(row['tool_duration']),
-                "tool_name": row['tool_name'],
-                "tool_args": row['tool_args'],
-                "tool_status": row['tool_status'],
-                "agent_name": row['agent_name'],
-                "agent_duration": float(row['agent_duration']) if pd.notna(row['agent_duration']) else 0.0,
-                "agent_status": row['agent_status'],
-                "root_agent_name": row['root_agent_name'],
-                "root_duration": float(row['root_duration']) if pd.notna(row['root_duration']) else 0.0,
-                "root_status": row['root_status'],
-                "impact_pct": float(row['impact_pct']) if pd.notna(row['impact_pct']) else 0.0,
-                "trace_id": row['trace_id'],
-                "session_id": row['session_id'],
-                "span_id": row['span_id'],
-                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "user_message_trunk": row['user_message_trunk']
-            })
-
-        result = {
-            "metadata": {"time_range": time_range, "view_id": TOOL_EVENTS_VIEW_ID},
-            "impact_analysis": records
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-
-    except Exception as e:
-        logger.error(f"Error in get_tool_impact_analysis: {str(e)}")
+        logger.error(f"Failed to fetch raw invocation data: {e}")
         return json.dumps({"error": str(e)})
 
 @cached_tool()
-async def get_error_impact_analysis(
-    time_range: str = "7d",
-    limit: int = 10,
-    view_ids: str = None # Legacy/Generic param
-) -> str:
-    """
-    Aggregates error data from ALL four views with JOINED context to show true propagation.
-    
-    Args:
-        time_range (str): Time range to analyze.
-        limit (int): Max number of failed requests to return per category.
-        view_ids (str): Optional. unused.
-
-    Returns:
-        str: JSON string containing lists of errors for each component type with parent status.
-    """
-    logger.info(f"[TOOL CALL-get_error_impact_analysis] time_range='{time_range}', limit={limit}")
-    
+async def get_raw_agent_events(time_range: str = "24h", limit: int = MAX_RAW_RECORDS_LIMIT) -> str:
+    """Fetches raw Agent execution event data from BigQuery."""
+    logger.info(f"[TOOL CALL-get_raw_agent_events] time_range='{time_range}', limit={limit}")
+    where_clause = build_standard_where_clause(time_range=time_range)
+    query = GET_RAW_AGENTS_QUERY.format(where_clause=where_clause, limit=limit)
     try:
-        common_where = build_standard_where_clause(
-            time_range=time_range,
-            filter_config={"status": ("ERROR", "=")},
-            table_alias="T"
-        )
-        
-        # 1. Tool Errors (Joined with Agent and Root)
-        query_tools = f"""
-        SELECT 
-            T.tool_name, 
-            T.error_message, 
-            T.timestamp, 
-            T.tool_args,
-            T.agent_name,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
-            I.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
-            T.trace_id, 
-            T.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}` T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE {common_where}
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-
-        # 2. LLM Errors (Joined with Agent and Root)
-        query_llm = f"""
-        SELECT 
-            T.model_name, 
-            T.error_message, 
-            T.timestamp, 
-            T.llm_config,
-            T.agent_name,
-            COALESCE(A.status, 'UNKNOWN') as agent_status,
-            I.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
-            T.trace_id, 
-            T.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` A ON T.parent_span_id = A.span_id
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE {common_where}
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-
-        # 3. Agent Errors (Joined with Root)
-        query_agents = f"""
-        SELECT 
-            T.agent_name, 
-            T.error_message, 
-            T.timestamp, 
-            T.root_agent_name,
-            COALESCE(I.status, 'UNKNOWN') as root_status,
-            I.content_text as user_message,
-            T.trace_id, 
-            T.span_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE {common_where}
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-
-        # 4. Root Invocation Errors
-        query_root = f"""
-        SELECT 
-            T.root_agent_name, 
-            T.error_message, 
-            T.timestamp, 
-            T.content_text as user_message,
-            T.trace_id, 
-            T.invocation_id
-        FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` T
-        WHERE {common_where}
-        ORDER BY T.timestamp DESC
-        LIMIT {limit}
-        """
-
-        # Run all 4 queries in parallel
-        results = await asyncio.gather(
-            execute_bigquery(query_tools),
-            execute_bigquery(query_llm),
-            execute_bigquery(query_agents),
-            execute_bigquery(query_root)
-        )
-        
-        tool_df, llm_df, agent_df, root_df = results
-
-        def to_records(df):
-            if df.empty:
-                return []
-            if 'timestamp' in df.columns:
-                df['timestamp'] = df['timestamp'].astype(str)
-            
-            # Sanitize all string columns to prevent markdown table breakage and truncate massive payloads
-            for col in df.columns:
-                if df[col].dtype == object or df[col].dtype == str:
-                     df[col] = df[col].astype(str).apply(
-                         lambda x: x if len(x) <= 800 else f"[TRUNCATED: {len(x)} chars. Use batch_analyze_root_cause(span_ids='...') to see full content.]"
-                     ).apply(sanitize_for_markdown)
-            
-            return df.to_dict(orient="records")
-
-        final_result = {
-            "metadata": {"time_range": time_range, "limit": limit},
-            "tool_errors": to_records(tool_df),
-            "llm_errors": to_records(llm_df),
-            "agent_errors": to_records(agent_df),
-            "root_errors": to_records(root_df)
-        }
-        
-        return json.dumps(final_result, cls=AnalysisEncoder)
-
+        df = await execute_bigquery(query)
+        if df.empty: return "[]"
+        return df.to_json(orient="records", default_handler=str)
     except Exception as e:
-        logger.error(f"Error in get_error_impact_analysis: {str(e)}")
+        logger.error(f"Failed to fetch raw agent data: {e}")
         return json.dumps({"error": str(e)})
 

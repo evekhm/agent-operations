@@ -16,11 +16,22 @@ from typing import Optional
 import pandas as pd
 from google.cloud import bigquery
 
-from ...config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE
+from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID,
+                       DEFAULT_TIME_RANGE)
 from ...utils.bq import execute_bigquery, run_query_async
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause
 from ...utils.telemetry import trace_span
+
+from .queries import (
+    ANALYZE_LATENCY_GROUPS_QUERY,
+    GET_CONCURRENT_REQUEST_IMPACT_QUERY,
+    ANALYZE_REQUEST_QUEUING_QUERY,
+    GET_CONFIG_OUTLIERS_QUERY,
+    FETCH_SINGLE_QUERY,
+    ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY,
+    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,29 +75,17 @@ async def analyze_latency_groups(
             "root_agent_name": (root_agent_name, "="),
         }
         if threshold_ms > 0:
-            filter_config["latency_ms"] = (threshold_ms, ">")
+            filter_config["duration_ms"] = (threshold_ms, ">")
 
         where_clause = build_standard_where_clause(
             time_range=time_range,
             filter_config=filter_config
         )
         
-        query = f"""
-        SELECT
-          T.agent_name,
-          T.root_agent_name,
-          T.model_name,
-          COUNT(*) as count,
-          AVG(latency_ms) as avg_latency_ms,
-          MIN(latency_ms) as min_latency_ms,
-          MAX(latency_ms) as max_latency_ms,
-          STDDEV(latency_ms) as std_latency_ms
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY root_agent_name, agent_name, model_name
-        ORDER BY count DESC
-        LIMIT {limit}
-        """
+        query = ANALYZE_LATENCY_GROUPS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
 
         df = await execute_bigquery(query)
         
@@ -117,99 +116,6 @@ async def analyze_latency_groups(
         
     except Exception as e:
         logger.error(f"Error in analyze_latency_groups: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@trace_span()
-@cached_tool()
-async def fetch_slowest_requests(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 20,
-    min_latency_ms: float = 0,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None
-) -> str:
-    """
-    Fetch the slowest requests, optionally filtering by minimum latency.
-    
-    Unifies previous slow query tools into a single robust fetcher.
-
-    Args:
-        time_range (str): Time range to analyze (e.g., "24h", "7d", "all").
-        limit (int): Number of requests to return.
-        min_latency_ms (float): Optional minimum latency filter.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-
-    Returns:
-        str: JSON string containing a list of slowest requests with details.
-    """
-    logger.info(f"[TOOL CALL-fetch_slowest_requests] time_range='{time_range}', limit={limit}, "
-                f"min_latency_ms={min_latency_ms}, agent_name='{agent_name}', "
-                f"root_agent_name='{root_agent_name}', model_name='{model_name}'")
-    try:
-        filter_config = {
-            "agent_name": (agent_name, "="),
-            "root_agent_name": (root_agent_name, "="),
-            "model_name": (model_name, "=")
-        }
-        if min_latency_ms > 0:
-            filter_config["latency_ms"] = (min_latency_ms, ">")
-
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config=filter_config
-        )
-        
-        query = f"""
-        SELECT
-          CAST(T.span_id AS STRING) AS span_id, 
-          T.timestamp,
-          T.latency_ms,
-          T.agent_name,
-          T.root_agent_name,
-          T.model_name,
-          T.prompt_token_count,
-          T.candidates_token_count,
-          T.request_preview
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        ORDER BY latency_ms DESC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({"message": "No data found for slowest requests."})
-            
-        requests = []
-        for _, row in df.iterrows():
-            requests.append({
-                "span_id": row['span_id'],
-                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
-                "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0,
-                "agent_name": row['agent_name'],
-                "root_agent_name": row['root_agent_name'],
-                "model_name": row['model_name'],
-                "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
-                "response_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
-                "preview": row['request_preview']
-            })
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name,
-                         "model_name": model_name},
-            "requests": requests
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in fetch_slowest_requests: {str(e)}")
         return json.dumps({"error": str(e)})
 
 
@@ -246,24 +152,9 @@ async def get_concurrent_request_impact(
         )
         
         # Using TIMESTAMP_TRUNC to minute.
-        query = f"""
-        WITH ConcurrencyCounts AS (
-            SELECT
-                TIMESTAMP_TRUNC(timestamp, MINUTE) as time_bucket,
-                COUNT(*) as concurrent_requests,
-                AVG(latency_ms) as avg_latency_in_bucket
-            FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-            WHERE {where_clause}
-            GROUP BY time_bucket
+        query = GET_CONCURRENT_REQUEST_IMPACT_QUERY.format(
+            where_clause=where_clause
         )
-        SELECT
-            concurrent_requests,
-            AVG(avg_latency_in_bucket) as avg_latency_for_level,
-            COUNT(*) as occurrences
-        FROM ConcurrencyCounts
-        GROUP BY concurrent_requests
-        ORDER BY concurrent_requests ASC
-        """
         
         df = await execute_bigquery(query)
         
@@ -289,85 +180,6 @@ async def get_concurrent_request_impact(
 
     except Exception as e:
         logger.error(f"Error in get_concurrent_request_impact: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@trace_span()
-@cached_tool()
-async def fetch_fastest_queries(
-    time_range: str = DEFAULT_TIME_RANGE,
-    limit: int = 5,
-    agent_name: Optional[str] = None,
-    root_agent_name: Optional[str] = None,
-    model_name: Optional[str] = None
-) -> str:
-    """
-    Fetch the fastest successful queries.
-    
-    Args:
-        time_range (str): Time range to analyze.
-        limit (int): Maximum number of queries to return.
-        agent_name (str): Optional. Filter by specific agent name.
-        root_agent_name (str): Optional. Filter by root agent name.
-        model_name (str): Optional. Filter by model version.
-
-    Returns:
-        str: JSON string containing metadata and a list of fastest queries.
-    """
-    logger.info(f"[TOOL CALL-fetch_fastest_queries] limit={limit}, time_range='{time_range}', "
-                f"agent_name='{agent_name}', root_agent_name='{root_agent_name}', model_name='{model_name}'")
-    try:
-        where_clause = build_standard_where_clause(
-            time_range=time_range,
-            filter_config={
-                "agent_name": (agent_name, "="),
-                "root_agent_name": (root_agent_name, "="),
-                "model_name": (model_name, "=")
-            }
-        )
-
-        query = f"""
-        SELECT
-          CAST(T.span_id AS STRING) AS span_id, 
-          T.timestamp,
-          T.latency_ms,
-          T.agent_name,
-          T.root_agent_name,
-          T.model_name,
-          T.prompt_token_count,
-          T.candidates_token_count,
-          T.request_preview
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        ORDER BY latency_ms ASC
-        LIMIT {limit}
-        """
-
-        df = await execute_bigquery(query)
-        
-        if df.empty:
-            return json.dumps({"message": "No data found for fastest queries."})
-
-        fastest_queries = []
-        for _, row in df.iterrows():
-            fastest_queries.append({
-                "span_id": row['span_id'],
-                "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0,
-                "agent_name": row['agent_name'],
-                "root_agent_name": row['root_agent_name'],
-                "model_name": row['model_name']
-            })
-            
-        result = {
-            "metadata": {"time_range": time_range, "limit": limit,
-                         "agent_name": agent_name, "root_agent_name": root_agent_name, "model_name": model_name},
-            "fastest_queries": fastest_queries
-        }
-        
-        return json.dumps(result, cls=AnalysisEncoder)
-        
-    except Exception as e:
-        logger.error(f"Error in fetch_fastest_queries: {str(e)}")
         return json.dumps({"error": str(e)})
 
 
@@ -403,23 +215,9 @@ async def analyze_request_queuing(
             }
         )
         
-        query = f"""
-        WITH Bursts AS (
-             SELECT
-                TIMESTAMP_TRUNC(timestamp, SECOND) as second_bucket,
-                COUNT(*) as requests_per_second
-             FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-             WHERE {where_clause}
-             GROUP BY second_bucket
-             HAVING requests_per_second > 1
+        query = ANALYZE_REQUEST_QUEUING_QUERY.format(
+            where_clause=where_clause
         )
-        SELECT
-            requests_per_second,
-            COUNT(*) as burst_count
-        FROM Bursts
-        GROUP BY requests_per_second
-        ORDER BY requests_per_second DESC
-        """
         
         df = await execute_bigquery(query)
         bursts = []
@@ -496,21 +294,12 @@ async def get_config_outliers(
         config_select_str = ",\n            ".join(config_selects)
         group_by_str = ", ".join(group_by_cols)
         
-        query = f"""
-        SELECT
-            agent_name,
-            model_name,
-            {config_select_str},
-            AVG(latency_ms) as avg_latency,
-            STDDEV(latency_ms) as stddev_latency,
-            COUNT(*) as request_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY {group_by_str}
-        HAVING request_count > 5
-        ORDER BY avg_latency DESC
-        LIMIT {limit}
-        """
+        query = GET_CONFIG_OUTLIERS_QUERY.format(
+            config_select_str=config_select_str,
+            group_by_str=group_by_str,
+            limit=limit,
+            where_clause=where_clause
+        )
         
         df = await execute_bigquery(query)
         outliers = []
@@ -563,23 +352,7 @@ async def fetch_single_query(span_id: str) -> str:
     logger.info(f"[TOOL CALL-fetch_single_query] fetch_single_query(span_id='{span_id}')")
     try:
         # Query the view directly
-        query = f"""
-        SELECT
-          T.timestamp,
-          CAST(T.span_id AS STRING) AS span_id,
-          T.full_request,
-          T.full_response,
-          T.model_name,
-          T.agent_name,
-          T.latency_ms,
-          T.thoughts_token_count,
-          T.candidates_token_count AS output_token_count,
-          T.prompt_token_count,
-          T.total_token_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE CAST(T.span_id AS STRING) = @span_id
-        LIMIT 1
-        """
+        query = FETCH_SINGLE_QUERY.format()
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -616,7 +389,7 @@ async def fetch_single_query(span_id: str) -> str:
             "full_response": full_resp,
             "model_name": row['model_name'],
             "agent_name": row['agent_name'],
-            "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else None,
+            "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else None,
             "thoughts_token_count": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else None,
             "output_token_count": int(row['output_token_count']) if pd.notna(row['output_token_count']) else None,
             "prompt_token_count": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else None,
@@ -629,6 +402,8 @@ async def fetch_single_query(span_id: str) -> str:
         error_msg = f"Error fetching query {span_id}: {str(e)}"
         logger.error(f"[PROGRESS] Failed to fetch query {span_id}: {str(e)}")
         return json.dumps({"error": error_msg})
+
+
 
 @trace_span()
 @cached_tool()
@@ -661,25 +436,17 @@ async def analyze_empty_llm_responses(
                 "agent_name": (agent_name, "="),
                 "root_agent_name": (root_agent_name, "="),
                 "model_name": (model_name, "=")
-            },
-            table_alias="T"
+            }
         )
         
         # We only care about explicit empty responses that are not just pending
         # IFNULL handles cases where it might be explicitly null but completed.
-        where_clause += " AND T.status != 'PENDING' AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
+        where_clause += " AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
 
         # 1. Get summary stats
-        summary_query = f"""
-        SELECT
-            model_name,
-            agent_name,
-            COUNT(*) as empty_response_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        WHERE {where_clause}
-        GROUP BY model_name, agent_name
-        ORDER BY empty_response_count DESC
-        """
+        summary_query = ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY.format(
+            where_clause=where_clause
+        )
         
         summary_df = await execute_bigquery(summary_query)
         stats = []
@@ -692,22 +459,10 @@ async def analyze_empty_llm_responses(
                 })
 
         # 2. Get detailed records
-        records_query = f"""
-        SELECT
-            CAST(T.span_id AS STRING) AS span_id,
-            T.trace_id,
-            T.timestamp,
-            T.model_name,
-            T.agent_name,
-            T.prompt_token_count,
-            T.duration_ms as latency_ms,
-            SUBSTR(I.content_text, 1, 250) as user_message_trunk
-        FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
-        WHERE {where_clause}
-        ORDER BY timestamp DESC
-        LIMIT {limit}
-        """
+        records_query = ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
         
         records_df = await execute_bigquery(records_query)
         records = []
@@ -720,8 +475,8 @@ async def analyze_empty_llm_responses(
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
                     "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
-                    "latency_ms": float(row['latency_ms']) if pd.notna(row['latency_ms']) else 0.0,
-                    "user_message": row['user_message_trunk'] if pd.notna(row['user_message_trunk']) else None
+                    "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0.0,
+                    "content_text_summary": row['content_text_summary'] if pd.notna(row['content_text_summary']) else None
                 })
 
         result = {

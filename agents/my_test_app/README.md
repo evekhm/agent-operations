@@ -6,13 +6,13 @@ This directory contains `my_test_app`, an ADK (Agent Development Kit) based appl
 ### Stress Testing
 The application includes a `test_suit.py` script to simulate concurrent user load. This is highly useful for testing the throughput of the BigQuery logging plugin and the LLM API quota limits. 
 
-The stress test script is orchestrated using `run_test_suite.sh`, which parses pipe-delimited scenarios (like `test_scenarios.txt`) and dynamically handles payload generation. 
+The stress test script is orchestrated using `generate_data.sh`, which passes pipe-delimited scenarios (like `test_scenarios.txt`) to the multi-process Python script. 
 
 **To run the stress test (e.g., executing the default scenarios):**
 ```bash
 ./agents/my_test_app/generate_data.sh
 ```
-This script bypasses the standard API server and instantiates the `Runner` and plugins per-process to ensure thread safety during high-concurrency testing.
+The underlying `generate_data.py` natively parses these scenarios and assigns them to an isolated `ProcessPoolExecutor` worker pool to properly test scenarios in parallel.
     
 ### Testing Alternate Configurations
 
@@ -21,7 +21,7 @@ The `my_test_app` agent supports dynamic configuration testing, which is orchest
 For example, a scenario targeting `WRONG_CONFIG1` against the `gemini-2.5-pro` model in the `us-east1` region would be formatted as:
 `VALID_ALL|gemini-2.5-pro|WRONG_CONFIG1|us-east1|What is Agent Observability?`
 
-`run_test_suite.sh` parses these fields and seamlessly injects them as environments variables (`AGENT_CONFIG`, `MODEL_ID`, `GCP_LOCATION`) before running the tests.
+`generate_data.py` parses these fields directly and seamlessly injects them into isolated environment variables (`AGENT_CONFIG`, `MODEL_ID`, `GCP_LOCATION`) for each specific worker process before running the tests in parallel.
 Available pre-defined configurations for `AGENT_CONFIG` include:
 - `NORMAL` (default)
 - `OVER_PROVISIONED`
@@ -41,7 +41,7 @@ To run the suite with the default configurations :
 - `-n`: Number of active users for load test (default: `1`).
 - `-f`: Output file, an optional text file containing pipe-separated configurations/questions (default: `test_scenarios.txt`).
 
-This script will iterate through the models and `AGENT_CONFIG` variants, invoking the `generate_data.py` script automatically.
+This script will pass the scenario file to `generate_data.py`, which natively processes all distinct scenarios in parallel using isolated multiprocessing workers.
 
 ### Unreliable Tool Simulation
 The root agent includes an `unreliable_tool_agent` designed to simulate system failures, timeouts, and flaky behavior. By explicitly requesting actions like "simulate a flaky action", "timeout", or test a failure using an "unreliable tool" in the prompt, the root agent will accurately route to this specialized test case scenario.
