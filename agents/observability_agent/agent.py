@@ -9,12 +9,11 @@ except ImportError:
     pass # OpenTelemetry is optional
 
 from google.adk.agents import Agent, SequentialAgent, ParallelAgent
-from google.adk.sessions.session import Session
 from google.adk.apps import App
 from google.adk.plugins import LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from google.adk.tools import ToolContext
-from google.genai.types import HttpRetryOptions
+from google.genai.types import HttpRetryOptions, GenerateContentConfig
 
 # Define robust exponential backoff strategy for 429 RESOURCE_EXHAUSTED errors
 # Max 5 attempts, starting at 2s, max 60s, base 2 multiplier.
@@ -31,28 +30,25 @@ from google.adk.models.google_llm import Gemini
 from .agent_tools.analytics.llm_diagnostics import analyze_empty_llm_responses
 from .agent_tools.analytics.concurrency import (
     analyze_trace_concurrency,
-    detect_sequential_bottlenecks
+    # detect_sequential_bottlenecks
 )
 from .agent_tools.analytics.latency import (
     get_active_metadata,
     analyze_latency_grouped,
-    get_slowest_queries,
-    get_fastest_queries,
-    get_failed_queries,
-    get_latest_queries,
+    get_llm_requests,
+    get_agent_requests,
+    get_tool_requests,
+    get_invocation_requests,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_latency_trend,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
-    AGENT_TABLE_ID, AGENT_VERSION, DATASET_ID, TABLE_ID
+    AGENT_TABLE_ID, AGENT_VERSION, DATASET_ID, TABLE_ID, OBSERVABILITY_APP_NAME, AGENT_DATASET_LOCATION
 from .prompts import (INVOCATION_ANALYST_PROMPT, AGENT_ANALYST_PROMPT, LLM_ANALYST_PROMPT, TOOL_ANALYST_PROMPT,
-                      REPORT_CREATOR_PROMPT)
+                      REPORT_CREATOR_PROMPT, AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT)
 from .utils.telemetry import setup_telemetry
 from .utils.time import set_reference_time, parse_time_range
 import json
@@ -68,19 +64,16 @@ setup_telemetry()
 analyst_tools = [
     get_active_metadata,
     analyze_latency_grouped,
-    get_slowest_queries,
-    get_failed_queries,
-    get_fastest_queries,
-    get_latest_queries,
+    get_llm_requests,
+    get_agent_requests,
+    get_tool_requests,
+    get_invocation_requests,
     analyze_root_cause,
     batch_analyze_root_cause,
     analyze_trace_concurrency,
     analyze_latency_trend,
-    detect_sequential_bottlenecks,
+    # detect_sequential_bottlenecks,
     run_sql_query,
-    get_llm_impact_analysis,
-    get_tool_impact_analysis,
-    get_error_impact_analysis,
     analyze_latency_performance,
     analyze_empty_llm_responses
 ]
@@ -133,49 +126,108 @@ playbook_swarm = ParallelAgent(
     description="Concurrent swarm of specialists executing deep-dive observability playbooks."
 )
 
-# Callback removed as it caused signature mismatch errors and incorrectly aggregated findings into 'agent_findings'.
-# Sub-agents write to their respective output keys (invocation_findings, agent_findings, llm_findings, tool_findings) directly.
+def aggregate_parallel_results(agent: Agent = None, context: ToolContext = None, *args, **kwargs):
+    """
+    Callback to aggregate the results of the parallel swarm into a single string
+    that the Report Creator can consume.
+    """
+    if not agent or not context:
+        # Fallback for different call signatures
+        if len(args) >= 2:
+            agent, context = args[0], args[1]
+        else:
+             print(f"DEBUG: aggregate_parallel_results called with args={args} kwargs={kwargs}")
+             return
+             
+    session = context.session
+    # ParallelAgent results are typically stored in the session state under the agent's name
+    # The structure is usually a list of results from sub-agents.
 
-def ensure_analyst_findings(context: ToolContext) -> str:
-    """Ensures that all analyst findings keys exist in session state to prevent Report Creator crash."""
+    # Check if we have results in the standard location
+    swarm_results = session.state.get(agent.name, {}).get("result", [])
+
+    if not swarm_results:
+        # Fallback: check if they are in individual keys (less likely for ParallelAgent but good safety)
+        pass
+
+    # Merge them into a single string
+    merged_findings = "\n\n".join([str(res) for res in swarm_results if res])
+
+    # Store in the key expected by the prompt
+    session.state["playbook_findings"] = merged_findings
+    print(f"DEBUG: Aggregated {len(swarm_results)} findings into 'playbook_findings' ({len(merged_findings)} chars).")
+
+    # Ensure all required keys exist to prevent Report Creator crash
     required_keys = ["invocation_findings", "playbook_findings", "llm_findings", "tool_findings"]
-    missing_keys = []
-
-    # Check and fill missing keys
     for key in required_keys:
-        if key not in context.session.state:
-            context.session.state[key] = f"**[MISSING DATA]** {key} was not generated due to an analyst failure."
-            missing_keys.append(key)
+        if key not in session.state:
+            session.state[key] = f"**[MISSING DATA]** {key} was not generated due to an analyst failure."
+            print(f"DEBUG: Filled missing key '{key}' with fallback message.")
 
-    if missing_keys:
-        return f"Repaired missing keys: {', '.join(missing_keys)}"
-    return "All findings keys present."
+# Attach the callback
+playbook_swarm.after_agent_callback = aggregate_parallel_results
 
-context_ensurer = Agent(
-    name="context_ensurer",
-    model=MODEL_ID,
-    instruction="Call the `ensure_analyst_findings` tool to repair any missing session state keys before report generation.",
-    description="Ensures all required data is present in the session before report generation.",
-    tools=[ensure_analyst_findings],
-    include_contents='none' # Stateless, just fixing context
+from .agent_tools.report_generation.tools import generate_base_report, inject_and_save_report
+
+base_report_agent = Agent(
+    name="base_report_agent",
+    model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
+    instruction="""You are the Data Fetching and Base Report compilation agent.
+    Your only job is to call the `generate_base_report` tool with the parameters provided by the user (like time_period and playbook).
+    Once called, you will receive the generated baseline report and telemetry data.
+    Do NOT summarize it. Output it verbatim or simply say "Data fetched, passing to the next agent."
+    """,
+    tools=[generate_base_report],
+    output_key="raw_report_data"
 )
 
-# Create the Report Creator Agent that takes findings and structures them into markdown
-report_creator_agent = Agent(
-    name="report_creator_agent",
-    model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
-    instruction=lambda: REPORT_CREATOR_PROMPT.replace("<timestamp>", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')).format(agent_version=AGENT_VERSION, datastore_id=DATASET_ID, table_id=TABLE_ID), # Automatically injects {playbook_findings} and {agent_version}
-    description="Reads the raw analytical data collected by the playbook agent and formats it into a highly detailed, professional Markdown report.",
+augmentor_agent = Agent(
+    name="augmentor_agent",
+    model=Gemini(model=MODEL_ID, retry_options=api_retry_options), # stream=True would interleave
+    generate_content_config=GenerateContentConfig(response_mime_type="application/json"),
+    instruction=AUGMENTATION_PROMPT + """
+    
+    The base report and raw telemetry data is provided in the conversation history from the previous agent.
+    If there is a deep architectural 'Holistic' analysis provided in the previous turn by another agent, YOU MUST incorporate its findings into your Executive Summary and Recommendations.
+    """,
     tools=[],
-    output_key="final_report",
+    output_key="insights_json_str",
     disallow_transfer_to_peers=True
 )
 
-# Group the investigator swarm and report creator into a strict sequential pipeline
-investigate_and_report_pipeline = SequentialAgent(
-    name="investigation_workflow",
-    sub_agents=[playbook_swarm, context_ensurer, report_creator_agent],
-    description="Pipeline that first investigates the system constraints concurrently, ensures data integrity, and then generates a merged report."
+holistic_agent = Agent(
+    name="holistic_report_analyst",
+    model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
+    instruction=HOLISTIC_ASSESSMENT_PROMPT + "\n\nThe deterministic base report is provided in the conversation history from the previous agent.",
+    description="A specialized observability analyst equipped with BQ tools to review the entire observability report.",
+    tools=[get_llm_requests, get_agent_requests, get_tool_requests, get_invocation_requests],
+    output_key="holistic_analysis",
+    disallow_transfer_to_peers=True
+)
+
+augmentor_and_holistic_swarm = SequentialAgent(
+    name="augmentor_and_holistic_swarm",
+    sub_agents=[holistic_agent, augmentor_agent],
+    description="Analyzes the base report sequentially. First, it generates holistic architecture markup, then uses that to generate JSON insights for the executive summary."
+)
+
+finalizer_agent = Agent(
+    name="finalizer_agent",
+    model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
+    instruction="""You are the Report Finalizer.
+    Call the `inject_and_save_report` tool. 
+    You will receive a message containing the JSON insights object.
+    Pass the JSON string exactly as you received it as the `insights_json_str` parameter.
+    If you are provided a playbook name in the initial prompt, pass it as well.
+    After the tool returns success, simply state that the report has been generated.
+    """,
+    tools=[inject_and_save_report]
+)
+
+report_generation_workflow = SequentialAgent(
+    name="report_generation_workflow",
+    sub_agents=[base_report_agent, augmentor_and_holistic_swarm, finalizer_agent],
+    description="Full workflow that compiles baseline telemetry data, generates charts, analyzes it concurrently with AI, and saves the final markdown report."
 )
 
 def _format_kpis_for_prompt(kpis: dict) -> str:
@@ -213,10 +265,8 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
                         num_slowest_queries: int = 20, num_error_records: int = 10,
                         num_queries_to_analyze_rca: int = 5, config: dict = None):
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
-    if kpis is None:
-        from .config import DEFAULT_KPIS
-        kpis = DEFAULT_KPIS
-    
+    assert kpis, "kpis are not set, config.json is corrupt"
+
     if config is None:
         config = {}
         
@@ -298,22 +348,7 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     # Format config for display
     config_str = json.dumps(config, indent=2, default=str)
     
-    current_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    hydrated_report_prompt = REPORT_CREATOR_PROMPT.replace("<timestamp>", current_timestamp).replace("<time_range>", time_period_fixed).format(
-        playbook_findings="{invocation_findings}\\n\\n{agent_findings}\\n\\n{llm_findings}\\n\\n{tool_findings}",
-        kpis_string=kpis_string,
-        config_dump=config_str,
-        time_period=time_period_fixed,
-        agent_version=AGENT_VERSION,
-        project_id=PROJECT_ID,
-        datastore_id=DATASET_ID,
-        table_id=TABLE_ID,
-        trace_id="N/A",
-        Level=str(kpi_percentile),
-        error_target=str(kpis.get("end_to_end", {}).get("error_target", 5.0))
-    )
-    report_creator_agent.instruction = hydrated_report_prompt
 
 # Create the Orchestrating Root Agent
 root_agent = Agent(
@@ -321,15 +356,16 @@ root_agent = Agent(
     model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
     instruction="""
     You are the Observability Root Agent. 
-    Your job is to understand the user's operational goal and delegate the analysis to your internal playbook subagent.
+    Your job is to understand the user's operational goal and delegate the analysis to your subagents.
     
-    If the user asks for a specific playbook (e.g., 'overview', 'health', 'incident', 'trend', or 'latest'), 
-    you MUST delegate directly to the `investigation_workflow` pipeline. Pass the user's intent to it so it knows which playbook to execute.
+    If the user asks to generate a report (e.g., 'Generate an observability report for the last 7d'),
+    you MUST delegate directly to the `report_generation_workflow`.
     
-    Do NOT attempt to analyze data or write reports yourself. You MUST ALWAYS delegate to your subordinate, the `investigation_workflow`.
+    If the user asks for a specific playbook investigation without generating a full report, 
+    delegate to the `playbook_swarm` (not yet built into a separate workflow, so prefer reports).
     """,
     description="Entry point for the Observability Agent application. Understands user intent and delegates analysis to specialized subagents.",
-    sub_agents=[investigate_and_report_pipeline],
+    sub_agents=[report_generation_workflow],
 )
 
 # Configure the BigQuery plugin for `adk run` and `adk web`
@@ -340,20 +376,32 @@ bq_config = BigQueryLoggerConfig(
     shutdown_timeout=10.0
 )
 
-print(f"AGENT_DATASET_ID={AGENT_DATASET_ID}")
-print(f"AGENT_TABLE_ID={AGENT_TABLE_ID}")
 
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
     dataset_id=AGENT_DATASET_ID,
     table_id=AGENT_TABLE_ID,
     config=bq_config,
-    location="us"
+    location=AGENT_DATASET_LOCATION
 )
 
 # Export an App instance that includes the root_agent and the required plugins
 observability_app = App(
-    name="observability_analyst_app",
+    name=OBSERVABILITY_APP_NAME,
     root_agent=root_agent,
     plugins=[LoggingPlugin(), bq_logging_plugin]
 )
+
+def create_augmentor_agent() -> Agent:
+    """Creates a specialized agent for augmenting deterministic reports."""
+    from .prompts import AUGMENTATION_PROMPT
+    
+    return Agent(
+        name="augmentor_agent",
+        model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
+        instruction=AUGMENTATION_PROMPT,
+        description="Augments existing reports with summaries and recommendations.",
+        tools=[],
+        output_key="augmentation_result",
+        disallow_transfer_to_peers=True
+    )

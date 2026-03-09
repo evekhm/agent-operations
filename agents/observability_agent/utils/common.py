@@ -60,6 +60,27 @@ def build_standard_where_clause(
     return _create_bq_where_clause(filters=filters, time_range=time_range, table_alias=table_alias)
 
 
+def get_sort_clause(sort_by: str, order_type: Optional[str] = None, table_alias: str = "T") -> str:
+    """
+    Returns a standard SQL ORDER BY clause based on sort criteria.
+
+    Args:
+        sort_by: Sorting criteria ("latest", "slowest", "fastest").
+        order_type: DEPRECATED. Optional legacy sort order ("ASC", "DESC").
+        table_alias: Table alias to prefix columns with (default: "T").
+
+    Returns:
+        str: SQL strings for ORDER BY clause (e.g. "T.duration_ms DESC, T.timestamp DESC").
+    """
+    if sort_by == "latest":
+        return f"{table_alias}.timestamp DESC"
+    elif sort_by == "fastest" or order_type == "ASC":
+        return f"{table_alias}.duration_ms ASC, {table_alias}.timestamp DESC"
+    else:
+        # Default to slowest
+        return f"{table_alias}.duration_ms DESC, {table_alias}.timestamp DESC"
+
+
 
 def sanitize_for_markdown(text: Any) -> str:
     """Sanitize text to be safe for inclusion in Markdown tables."""

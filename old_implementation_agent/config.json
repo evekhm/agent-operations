@@ -1,0 +1,33 @@
+{
+    "config": {
+        "time_period": "7d",
+        "playbook": "overview",
+        "kpis": {
+          "end_to_end": {
+            "latency_target": 10.0,
+            "percentile_target": 95.5,
+            "error_target": 5.0
+          },
+          "agent": {
+            "latency_target": 8.0,
+            "percentile_target": 95.5,
+            "error_target": 5.0
+          },
+          "llm": {
+            "latency_target": 5.0,
+            "percentile_target": 95.5,
+            "error_target": 5.0
+          },
+          "tool": {
+            "latency_target": 3.0,
+            "percentile_target": 95.5,
+            "error_target": 5.0
+          }
+        },
+        "num_slowest_queries": 20,
+        "num_error_queries": 20
+    },
+    "queries": [
+        "Some additional instructions to add to the prompt."
+    ]
+}

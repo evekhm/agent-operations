@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 def _ensure_view_exists(view_id, sql_file_name):
     """Generic function to create or update a BigQuery view from a SQL file."""
+
     client = bigquery.Client(project=PROJECT_ID)
     view_ref = f"{PROJECT_ID}.{DATASET_ID}.{view_id}"
     
@@ -57,3 +58,10 @@ def ensure_agent_events_view_exists():
 
 def ensure_invocation_events_view_exists():
     _ensure_view_exists(INVOCATION_EVENTS_VIEW_ID, 'create_invocation_events_view.sql')
+
+def ensure_all_views():
+    """Ensures all observability views exist."""
+    ensure_llm_events_view_exists()
+    ensure_tool_events_view_exists()
+    ensure_agent_events_view_exists()
+    ensure_invocation_events_view_exists()

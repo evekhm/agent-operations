@@ -3,6 +3,7 @@ Pillow
 tabulate
 matplotlib
 google-auth
+google-adk
 google-generativeai
 google-genai
 google-cloud-bigquery
@@ -15,7 +16,7 @@ google-cloud-logging
 pandas
 scipy
 python-dotenv
-google-adk>=1.24.0
+google-adk>=1.26.0
 numpy
 python-dateutil
 opentelemetry-instrumentation-google-genai>=0.6b0
@@ -27,4 +28,5 @@ opentelemetry-instrumentation-google-genai>=0.6b0
 # opentelemetry-exporter-gcp-trace
 # opentelemetry-sdk
 pydantic-ai
-
+seaborn
+md2pdf
