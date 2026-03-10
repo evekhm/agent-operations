@@ -16,6 +16,7 @@ import multiprocessing
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 # Add shared library path if needed (pattern from replay_queries.py)
@@ -179,7 +180,7 @@ def parse_scenarios(scenarios_file: str, valid_datastore: str, valid_web_datasto
             print(f"Skipping scenario, no replay file or questions: {line}")
             continue
             
-        user_id = f"{scenario_target}_{model}_{i}"
+        user_id = f"{scenario_target}_{model}_{i}_{uuid.uuid4().hex[:8]}"
         user_id = user_id.replace("-", "_").replace(".", "_") # Sanitize user_id
         work_items.append((user_id, env_vars, queries, state))
         
@@ -221,7 +222,7 @@ def main():
             "WEB_DATASTORE_ID": valid_web_datastore,
         }
         for i in range(max_workers):
-            work_items.append((f"load_test_user_{i}", env_vars, queries, state))
+            work_items.append((f"load_test_user_{i}_{uuid.uuid4().hex[:8]}", env_vars, queries, state))
     else:
         scenarios_file = Path(args.scenarios_file)
         if not scenarios_file.is_absolute():
