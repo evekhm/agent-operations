@@ -22,9 +22,11 @@ Currently, the Observability Agent operates at a diagnostic and early predictive
 
 Equipped with a comprehensive suite of BigQuery analytics tools, it can presently:
 - Isolate LLM reasoning latency from external tool execution bottlenecks.
-- ..
 - Produce highly structured, data-backed markdown reports outlining what is wrong and providing prioritized recommendations.
 
+### Sample Report
+
+[observability_overview_report_latest.md](samples/observability_overview_report_latest.md)
 
 ## Prerequisites
 
@@ -115,14 +117,28 @@ export DATASET_LOCATION="<YOUR_DATASET_LOCATION>"  # e.g. "us-central1"
 
 ## Observability Reports
 
-You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent using a number of Playbooks.
+You can generate comprehensive performance and latency intelligence reports using the Observability Analyst Agent across a number of Playbooks.
 
-### Reporting Features
-The report generation pipeline encompasses an array of visual and AI-augmented features to deliver executive-level diagnostics:
-1. **Advanced Sequencing & Overhead Analysis**: Decomposes multi-agent execution paths to isolate pure LLM latency from system "overhead" (tool calls, prompt processing).
-2. **Inline AI Root Cause Analysis (RCA)**: Automatically detects system bottlenecks and uses a Gemini-powered analyzer to inject dense categorization and technical RCAs directly into the performance tables.
-3. **Hypothesis Testing**: Generates granular Agent-vs-Model scatter plots mapping Latency to Token Count in the Appendix, allowing you to mathematically prove degradation patterns.
-4. **Holistic Cross-Section Agent**: Ingests raw JSON telemetry metrics along with the Markdown report body to synthesize a ReAct-powered executive summary outlining systemic issues and recommended architecture improvements.
+### Current Report Capabilities (Default Overview)
+When running the default `overview` playbook, the script orchestrates a pipeline of advanced analytical queries and AI-augmented insights to produce a single, densely packed Markdown report. It provides end-to-end visibility into your application across the **Root**, **Agent**, **Tool**, and **LLM** architectural layers.
+
+Key capabilities include:
+
+#### Executive Intelligence
+1. **Holistic AI Executive Summary:** Ingests the entire raw JSON telemetry context (latency metrics, error maps, token counts) and synthesizes a ReAct-powered executive summary outlining systemic issues, top bottlenecks, and prioritized architectural recommendations.
+2. **Global System KPIs:** High-level summary cards explicitly showing the total number of Root Invocations, executed Agents, external Tool calls, and LLM inferences within the time window.
+
+#### Root Cause Analysis & Error Telemetry
+3. **Hybrid Error Categorization:** Automatically maps every single crash, timeout, and failure to strict categorical buckets (e.g., `QUOTA_EXCEEDED`, `TIMEOUT`) using a highly tuned BigQuery SQL pattern. Edge-cases are dynamically captured and labeled by an LLM fallback (e.g. `ROUTING_LOOP`, `CONFIGURATION_ERROR`).
+4. **Distinct Error Sampling:** Provides tables populated with the most severe errors, deliberately deduplicating by error message and interleaving categories to ensure you view a diverse breadth of distinct failure modes without repetitive noise.
+5. **Inline AI Root Cause Analysis (RCA):** An LLM automatically analyzes the traces of the slowest bottlenecks and top errors, directly injecting technical root cause hypothesis sentences into the performance tables.
+
+#### Deep Performance Profiling
+6. **Execution Bottleneck Tracing:** Decomposes multi-agent execution paths to isolate pure LLM generation latency from system "overhead" (tool calls, prompt processing, Context Building). It mathematically flags which components are dragging down end-to-end (E2E) latency.
+7. **Token Utilization Analytics:** Tracks fine-grained statistics (Average, p95) for Prompt Tokens and Output Tokens per-model and per-agent, enabling precise cost-optimization.
+8. **Mathematical Correlation Analysis:** Proves or disproves latency degradation via a Pearson correlation matrix, evaluating if latency is strongly tied to Payload size or strictly structural/network overhead.
+9. **Latency Categorization:** Maps invocations to standardized buckets (`<5s`, `5s-15s`, `15s-30s`, `>30s`) to visually highlight the true user-experience timeline.
+10. **Trace Context Integration:** Every bottleneck and error sample is deeply linked to its canonical GCP Trace via Trace ID, enabling 1-click jumps from the markdown report directly into the native Google Cloud Trace Explorer.
 
 > **Tip**
 > To view generated reports it is recommended to use the [Markdown Viewer](https://chromewebstore.google.com/detail/markdown-viewer/ckkdlimhmcjmikdlpkmbgfkaikojcbjk?hl=en-US&utm_source=ext_sidebar) Chrome Extension.

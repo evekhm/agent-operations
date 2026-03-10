@@ -21,6 +21,25 @@ ORDER BY {{order_clause}}
 LIMIT {{limit}}
 """
 
+ANALYZE_ERROR_CATEGORIES_QUERY = f"""
+SELECT
+    CASE
+        WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
+        WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
+        WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'
+        WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'
+        WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'
+        ELSE 'OTHER_ERROR'
+    END as category,
+    COUNT(*) as total_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{{view_id}}` AS T
+WHERE {{where_clause}} AND status = 'ERROR'
+GROUP BY category
+ORDER BY total_count DESC
+"""
+
 GET_RAW_INVOCATIONS_QUERY = f"""
 SELECT
     root_agent_name as agent_name,

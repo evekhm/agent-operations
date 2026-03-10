@@ -30,7 +30,8 @@ from .queries import (
     GET_LATENCY_GROUPED_BASE_QUERY,
     GET_LATENCY_GROUPED_TOKEN_QUERY,
     GET_RAW_INVOCATIONS_QUERY,
-    GET_RAW_AGENTS_QUERY
+    GET_RAW_AGENTS_QUERY,
+    ANALYZE_ERROR_CATEGORIES_QUERY
 )
 from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_RANGE, CONNECTION_ID, DATASET_LOCATION,
                        INVOCATION_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID, TOOLS_TO_EXCLUDE_STR,
@@ -39,6 +40,7 @@ from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, DEFAULT_TIME_
 from ...utils.bq import execute_bigquery, format_dataframe_to_requests
 from ...utils.caching import cached_tool
 from ...utils.common import AnalysisEncoder, build_standard_where_clause, get_sort_clause
+from .error_rca_analyzer import _categorize_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -349,19 +351,38 @@ async def get_llm_requests(
             f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id\n        "
             f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A ON T.parent_span_id = A.span_id"
         )
+        query_limit = limit * 20 if failed_only else limit
         query = GET_PAGINATED_EVENTS_QUERY.format(
             specific_columns=f"{llm_specific_columns_str},\n    {extra_selects}",
             common_columns=common_columns_str,            view_id=LLM_EVENTS_VIEW_ID,
             joins=joins,
             where_clause=where_clause,
             order_clause=order_clause,
-            limit=limit
+            limit=query_limit
         )
 
         df = await execute_bigquery(query)
+        
+        if failed_only and not df.empty and 'error_message' in df.columns:
+            df = df.drop_duplicates(subset=['error_message']).copy()
+            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
+            df['temp_rank'] = df.groupby('temp_category').cumcount()
+            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
 
-            
+        error_summary = None
+        if failed_only:
+            cat_query = ANALYZE_ERROR_CATEGORIES_QUERY.format(
+                view_id=LLM_EVENTS_VIEW_ID,
+                where_clause=where_clause
+            )
+            cat_df = await execute_bigquery(cat_query)
+            if not cat_df.empty:
+                error_summary = {
+                    "total_errors": int(cat_df['total_count'].sum()),
+                    "categories": cat_df.to_dict(orient='records')
+                }
+
         result = {
             "metadata": {"time_range": time_range,
                          "limit": limit,
@@ -370,6 +391,8 @@ async def get_llm_requests(
                          },
             "requests": requests
         }
+        if error_summary:
+            result["error_summary"] = error_summary
         
         return json.dumps(result, cls=AnalysisEncoder)
         
@@ -440,18 +463,38 @@ async def get_tool_requests(
             f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id\n        "
             f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}` AS A ON T.parent_span_id = A.span_id"
         )
+        query_limit = limit * 20 if failed_only else limit
         query = GET_PAGINATED_EVENTS_QUERY.format(
             specific_columns=f"{tool_specific_columns_str},\n    {extra_selects}",
             common_columns=common_columns_str,            view_id=TOOL_EVENTS_VIEW_ID,
             joins=joins,
             where_clause=where_clause,
             order_clause=order_clause,
-            limit=limit
+            limit=query_limit
         )
 
         df = await execute_bigquery(query)
+        
+        if failed_only and not df.empty and 'error_message' in df.columns:
+            df = df.drop_duplicates(subset=['error_message']).copy()
+            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
+            df['temp_rank'] = df.groupby('temp_category').cumcount()
+            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
             
+        error_summary = None
+        if failed_only:
+            cat_query = ANALYZE_ERROR_CATEGORIES_QUERY.format(
+                view_id=TOOL_EVENTS_VIEW_ID,
+                where_clause=where_clause
+            )
+            cat_df = await execute_bigquery(cat_query)
+            if not cat_df.empty:
+                error_summary = {
+                    "total_errors": int(cat_df['total_count'].sum()),
+                    "categories": cat_df.to_dict(orient='records')
+                }
+
         result = {
             "metadata": {"time_range": time_range,
                          "limit": limit,
@@ -460,6 +503,8 @@ async def get_tool_requests(
                          },
             "requests": requests
         }
+        if error_summary:
+            result["error_summary"] = error_summary
         
         return json.dumps(result, cls=AnalysisEncoder)
         
@@ -539,16 +584,23 @@ async def get_agent_requests(
         )
         joins = f"LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` AS I ON T.trace_id = I.trace_id"
         
+        query_limit = limit * 20 if failed_only else limit
         query = GET_PAGINATED_EVENTS_QUERY.format(
             specific_columns=f"{agent_specific_columns_str},\n    {extra_selects}",
             common_columns=common_columns_str,            view_id=AGENT_EVENTS_VIEW_ID,
             joins=joins,
             where_clause=where_clause,
             order_clause=order_clause,
-            limit=limit
+            limit=query_limit
         )
 
         df = await execute_bigquery(query)
+        
+        if failed_only and not df.empty and 'error_message' in df.columns:
+            df = df.drop_duplicates(subset=['error_message']).copy()
+            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
+            df['temp_rank'] = df.groupby('temp_category').cumcount()
+            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
 
         # Added safety check for empty dataframes
         if df.empty:
@@ -558,11 +610,26 @@ async def get_agent_requests(
 
         requests = format_dataframe_to_requests(df, truncate=truncate)
 
+        error_summary = None
+        if failed_only:
+            cat_query = ANALYZE_ERROR_CATEGORIES_QUERY.format(
+                view_id=AGENT_EVENTS_VIEW_ID,
+                where_clause=where_clause
+            )
+            cat_df = await execute_bigquery(cat_query)
+            if not cat_df.empty:
+                error_summary = {
+                    "total_errors": int(cat_df['total_count'].sum()),
+                    "categories": cat_df.to_dict(orient='records')
+                }
+
         result = {
             "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
                          "agent_name": agent_name, "failed_only": failed_only},
             "requests": requests
         }
+        if error_summary:
+            result["error_summary"] = error_summary
 
         return json.dumps(result, cls=AnalysisEncoder)
 
@@ -630,23 +697,45 @@ async def get_invocation_requests(
         invocation_common_cols = [col for col in COMMON_COLUMNS if col != 'parent_span_id']
         common_columns_str = ",\n    ".join(f"T.{col}" for col in invocation_common_cols)
 
+        query_limit = limit * 20 if failed_only else limit
         query = GET_PAGINATED_EVENTS_QUERY.format(
             specific_columns=invocation_specific_columns_str,
             common_columns=common_columns_str,            view_id=INVOCATION_EVENTS_VIEW_ID,
             joins="",
             where_clause=where_clause,
             order_clause=order_clause,
-            limit=limit
+            limit=query_limit
         )
 
         df = await execute_bigquery(query)
+        
+        if failed_only and not df.empty and 'error_message' in df.columns:
+            df = df.drop_duplicates(subset=['error_message']).copy()
+            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
+            df['temp_rank'] = df.groupby('temp_category').cumcount()
+            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
             
+        error_summary = None
+        if failed_only:
+            cat_query = ANALYZE_ERROR_CATEGORIES_QUERY.format(
+                view_id=INVOCATION_EVENTS_VIEW_ID,
+                where_clause=where_clause
+            )
+            cat_df = await execute_bigquery(cat_query)
+            if not cat_df.empty:
+                error_summary = {
+                    "total_errors": int(cat_df['total_count'].sum()),
+                    "categories": cat_df.to_dict(orient='records')
+                }
+
         result = {
             "metadata": {"time_range": time_range, "limit": limit, "min_latency_ms": min_latency_ms,
                          "root_agent_name": root_agent_name},
             "requests": requests
         }
+        if error_summary:
+            result["error_summary"] = error_summary
         
         return json.dumps(result, cls=AnalysisEncoder)
         
