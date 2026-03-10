@@ -1980,14 +1980,26 @@ class ReportGenerator:
                     summary_md += "**Error Categorization Summary:**\n"
                     
                     cat_df = pd.DataFrame(categories)
-                    # Use formatted column names
-                    cat_df = cat_df.rename(columns={'category': 'Category', 'total_count': 'Count'})
-                    cat_df['%'] = (cat_df['Count'] / total_errors * 100).round(2).astype(str) + '%'
-                    
-                    cat_df = self.md_builder.bold_first_column(cat_df)
-                    cat_df.columns = [f"**{c}**" for c in cat_df.columns]
-                    summary_md += cat_df.to_markdown(index=False) + "\n\n"
-                    summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                    if not cat_df.empty:
+                        cat_df = cat_df.rename(columns={'category': 'Category', 'total_count': 'Count'})
+                        
+                        # Calculate percentages safely
+                        cat_df['Count'] = cat_df['Count'].astype(int)
+                        if total_errors > 0:
+                            cat_df['%'] = (cat_df['Count'] / total_errors * 100).round(2).astype(str) + '%'
+                        else:
+                            cat_df['%'] = '0.0%'
+                            
+                        # Sort cleanly
+                        cat_df = cat_df.sort_values(by=['Count', 'Category'], ascending=[False, True]).reset_index(drop=True)
+
+                        cat_df = self.md_builder.bold_first_column(cat_df)
+                        cat_df.columns = [f"**{c}**" for c in cat_df.columns]
+                        summary_md += cat_df.to_markdown(index=False) + "\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                    else:
+                        summary_md += "No exact categories matched.\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
 
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Name")
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Root Agent")

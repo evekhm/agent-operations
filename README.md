@@ -111,8 +111,11 @@ export DATASET_LOCATION="<YOUR_DATASET_LOCATION>"  # e.g. "us-central1"
 
 * Sample output (generated using `generate_data` and  [test_scenarios.txt](agents/my_test_app/test_scenarios.txt) )
 
-> Test Data generated using [test_scenarios_demo.txt](agents/my_test_app/test_scenarios_demo.txt)  and `google-adk==1.26.0`
+> Test Data generated using [test_scenarios_demo.txt](agents/my_test_app/test_scenarios_demo.txt),  `google-adk==1.26.0`
+> `./agents/my_test_app/generate_data.sh -n 10 -f agents/my_test_app/test_scenarios_demo.txt`
+
 * [overview_v0.0.2](samples/observability_overview_report_20260309_162639_v002.md)
+* [overview_v0.0.3](samples/observability_overview_report_20260309_162639_v002.md)
 
 
 ## Observability Reports

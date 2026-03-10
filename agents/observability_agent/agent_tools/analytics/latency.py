@@ -364,10 +364,19 @@ async def get_llm_requests(
         df = await execute_bigquery(query)
         
         if failed_only and not df.empty and 'error_message' in df.columns:
-            df = df.drop_duplicates(subset=['error_message']).copy()
-            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
-            df['temp_rank'] = df.groupby('temp_category').cumcount()
-            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
+            df_unique = df.drop_duplicates(subset=['error_message']).copy()
+            df_unique['temp_category'] = df_unique['error_message'].apply(_categorize_error_message)
+            df_unique['temp_rank'] = df_unique.groupby('temp_category').cumcount()
+            df_unique = df_unique.sort_values(by='temp_rank', kind='mergesort')
+            
+            if len(df_unique) < limit and len(df) > len(df_unique):
+                padding_needed = limit - len(df_unique)
+                df_remainder = df[~df.index.isin(df_unique.index)]
+                df_unique = pd.concat([df_unique, df_remainder.head(padding_needed)])
+                
+            df = df_unique.head(limit)
+            if 'temp_category' in df.columns:
+                df = df.drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
 
         error_summary = None
@@ -476,10 +485,19 @@ async def get_tool_requests(
         df = await execute_bigquery(query)
         
         if failed_only and not df.empty and 'error_message' in df.columns:
-            df = df.drop_duplicates(subset=['error_message']).copy()
-            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
-            df['temp_rank'] = df.groupby('temp_category').cumcount()
-            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
+            df_unique = df.drop_duplicates(subset=['error_message']).copy()
+            df_unique['temp_category'] = df_unique['error_message'].apply(_categorize_error_message)
+            df_unique['temp_rank'] = df_unique.groupby('temp_category').cumcount()
+            df_unique = df_unique.sort_values(by='temp_rank', kind='mergesort')
+            
+            if len(df_unique) < limit and len(df) > len(df_unique):
+                padding_needed = limit - len(df_unique)
+                df_remainder = df[~df.index.isin(df_unique.index)]
+                df_unique = pd.concat([df_unique, df_remainder.head(padding_needed)])
+                
+            df = df_unique.head(limit)
+            if 'temp_category' in df.columns:
+                df = df.drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
             
         error_summary = None
@@ -597,10 +615,19 @@ async def get_agent_requests(
         df = await execute_bigquery(query)
         
         if failed_only and not df.empty and 'error_message' in df.columns:
-            df = df.drop_duplicates(subset=['error_message']).copy()
-            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
-            df['temp_rank'] = df.groupby('temp_category').cumcount()
-            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
+            df_unique = df.drop_duplicates(subset=['error_message']).copy()
+            df_unique['temp_category'] = df_unique['error_message'].apply(_categorize_error_message)
+            df_unique['temp_rank'] = df_unique.groupby('temp_category').cumcount()
+            df_unique = df_unique.sort_values(by='temp_rank', kind='mergesort')
+            
+            if len(df_unique) < limit and len(df) > len(df_unique):
+                padding_needed = limit - len(df_unique)
+                df_remainder = df[~df.index.isin(df_unique.index)]
+                df_unique = pd.concat([df_unique, df_remainder.head(padding_needed)])
+                
+            df = df_unique.head(limit)
+            if 'temp_category' in df.columns:
+                df = df.drop(columns=['temp_category', 'temp_rank'])
 
         # Added safety check for empty dataframes
         if df.empty:
@@ -710,10 +737,19 @@ async def get_invocation_requests(
         df = await execute_bigquery(query)
         
         if failed_only and not df.empty and 'error_message' in df.columns:
-            df = df.drop_duplicates(subset=['error_message']).copy()
-            df['temp_category'] = df['error_message'].apply(_categorize_error_message)
-            df['temp_rank'] = df.groupby('temp_category').cumcount()
-            df = df.sort_values(by='temp_rank', kind='mergesort').head(limit).drop(columns=['temp_category', 'temp_rank'])
+            df_unique = df.drop_duplicates(subset=['error_message']).copy()
+            df_unique['temp_category'] = df_unique['error_message'].apply(_categorize_error_message)
+            df_unique['temp_rank'] = df_unique.groupby('temp_category').cumcount()
+            df_unique = df_unique.sort_values(by='temp_rank', kind='mergesort')
+            
+            if len(df_unique) < limit and len(df) > len(df_unique):
+                padding_needed = limit - len(df_unique)
+                df_remainder = df[~df.index.isin(df_unique.index)]
+                df_unique = pd.concat([df_unique, df_remainder.head(padding_needed)])
+                
+            df = df_unique.head(limit)
+            if 'temp_category' in df.columns:
+                df = df.drop(columns=['temp_category', 'temp_rank'])
         requests = format_dataframe_to_requests(df, truncate=truncate)
             
         error_summary = None

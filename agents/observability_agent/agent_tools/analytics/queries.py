@@ -25,7 +25,7 @@ ANALYZE_ERROR_CATEGORIES_QUERY = f"""
 SELECT
     CASE
         WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
-        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'
         WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
         WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
         WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'

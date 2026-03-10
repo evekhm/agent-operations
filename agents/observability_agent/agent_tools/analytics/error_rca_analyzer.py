@@ -56,7 +56,7 @@ def _categorize_error_message(error_message: str) -> str:
     msg_lower = error_message.lower()
     if 'quota' in msg_lower or 'rate limit' in msg_lower:
         return 'QUOTA_EXCEEDED'
-    elif 'timeout' in msg_lower or 'deadline' in msg_lower:
+    elif 'timeout' in msg_lower or 'timed out' in msg_lower or 'deadline' in msg_lower:
         return 'TIMEOUT'
     elif 'permission' in msg_lower or 'unauthorized' in msg_lower or '403' in msg_lower:
         return 'PERMISSION_DENIED'
