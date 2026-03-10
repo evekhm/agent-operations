@@ -62,11 +62,11 @@ SELECT
 
     E.duration_ms,
     CASE
-      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
+      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} THEN 'ERROR'
       ELSE COALESCE(E.status, 'PENDING')
     END as status,
     CASE
-      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'Agent span PENDING for > 5 minutes (Timed Out)'
+      WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} THEN 'Agent span PENDING for > {timeout_minutes} minutes (Timed Out)'
       ELSE E.error_message
     END as error_message,
 

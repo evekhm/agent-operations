@@ -181,7 +181,7 @@ class ReportDataManager:
                                                                                           percentile=self.percentile_llm))
 
         limit_slow = self.presentation_num_slowest
-        limit_error = self.presentation_num_errors
+        limit_error = self.num_errors
         
         task_e2e_slow = self.trace_task("E2ESlow", get_invocation_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
         task_agent_slow = self.trace_task("AgentSlow", get_agent_requests(limit=limit_slow, exclude_root_agent=True, time_range=self.time_range_desc, sort_by="slowest"))
@@ -245,8 +245,17 @@ class ReportDataManager:
                      if isinstance(parsed, dict):
                          if "error" in parsed or "message" in parsed:
                              return pd.DataFrame()
+                         
+                         df = pd.DataFrame()
                          if "requests" in parsed:
-                             return self.json_to_df(parsed["requests"])
+                             df = self.json_to_df(parsed["requests"])
+                         else:
+                             df = self.json_to_df(parsed)
+                             
+                         # Attach error summary if it exists
+                         if "error_summary" in parsed:
+                             df.attrs['error_summary'] = parsed['error_summary']
+                         return df
                      return self.json_to_df(parsed)
                  except json.JSONDecodeError:
                      return pd.DataFrame()

@@ -54,6 +54,11 @@ ToolEnds AS (
     trace_id,
     span_id,
     timestamp as end_timestamp,
+    agent as agent_name,
+    parent_span_id,
+    JSON_VALUE(attributes, '$.root_agent_name') as root_agent_name,
+    user_id,
+    session_id,
     event_type,
     SAFE_CAST(JSON_VALUE(latency_ms, '$.total_ms') AS INT64) as duration_ms,
     -- Extract result from End event
@@ -69,38 +74,38 @@ ToolEnds AS (
   WHERE event_type IN ('TOOL_COMPLETED', 'TOOL_ERROR')
 )
 SELECT
-    S.start_timestamp as timestamp,
-    S.root_agent_name,
-    S.agent_name,
+    COALESCE(S.start_timestamp, E.end_timestamp) as timestamp,
+    COALESCE(S.root_agent_name, E.root_agent_name) as root_agent_name,
+    COALESCE(S.agent_name, E.agent_name) as agent_name,
 
-    S.tool_name,
+    COALESCE(S.tool_name, E.tool_name) as tool_name,
     S.tool_args,
     E.tool_result,
 
     E.duration_ms,
     CASE
-        WHEN E.error_message IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 AND E.status IS NULL THEN 'Tool span PENDING for > 5 minutes (Timed Out)'
+        WHEN S.start_timestamp IS NOT NULL AND E.error_message IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} AND E.status IS NULL THEN 'Tool span PENDING for > {timeout_minutes} minutes (Timed Out)'
         ELSE E.error_message
     END as error_message,
       CASE
         WHEN E.event_type = 'TOOL_ERROR' THEN 'ERROR'
         WHEN E.status IS NOT NULL THEN E.status
-        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
+        WHEN S.start_timestamp IS NOT NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} THEN 'ERROR'
         ELSE 'PENDING'
     END as status,
 
-    S.span_id,
-    S.trace_id,
-    S.parent_span_id,
-    S.user_id,
-    S.session_id,
+    COALESCE(S.span_id, E.span_id) as span_id,
+    COALESCE(S.trace_id, E.trace_id) as trace_id,
+    COALESCE(S.parent_span_id, E.parent_span_id) as parent_span_id,
+    COALESCE(S.user_id, E.user_id) as user_id,
+    COALESCE(S.session_id, E.session_id) as session_id,
 
     S.start_timestamp,
-    E.end_timestamp,
+    E.end_timestamp
 
 
 FROM ToolStarts S
-    LEFT JOIN ToolEnds E
+    FULL OUTER JOIN ToolEnds E
 ON S.trace_id = E.trace_id
     AND (
     -- Normal case: spans match (Completed or correctly logged Error)

@@ -2,7 +2,7 @@ import os
 import logging
 from google.cloud import bigquery
 from ..config import PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, TOOL_EVENTS_VIEW_ID, TABLE_ID, \
-    AGENT_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID
+    AGENT_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, INVOCATION_TIMEOUT_MINUTES
 from .bq import check_table_exists
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,8 @@ def _ensure_view_exists(view_id, sql_file_name):
         project_id=PROJECT_ID,
         dataset_id=DATASET_ID,
         view_id=view_id,
-        table_id=primary_table
+        table_id=primary_table,
+        timeout_minutes=INVOCATION_TIMEOUT_MINUTES
     )
 
     logger.info(f"Creating view {view_ref}...")

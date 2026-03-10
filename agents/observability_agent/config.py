@@ -42,8 +42,10 @@ AGENT_DATASET_LOCATION = os.getenv('AGENT_DATASET_LOCATION', DATASET_LOCATION)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
 
 # Agent
+AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.3')
+
+
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
-AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.2')
 MODEL_ID=os.getenv('AGENT_MODEL_ID', 'gemini-2.5-pro')
 assert MODEL_ID, "AGENT_MODEL_ID is not set"
 
@@ -60,6 +62,7 @@ LLM_EVENTS_VIEW_ID = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
 TOOL_EVENTS_VIEW_ID = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 INVOCATION_EVENTS_VIEW_ID = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
 CONNECTION_ID = os.getenv('CONNECTION_ID', 'bqml_connection')
+INVOCATION_TIMEOUT_MINUTES = int(os.getenv('INVOCATION_TIMEOUT_MINUTES', '5'))
 
 TOOLS_TO_EXCLUDE = ["transfer_to_agent"]
 TOOLS_TO_EXCLUDE_STR = ", ".join(f"'{tool}'" for tool in TOOLS_TO_EXCLUDE) if TOOLS_TO_EXCLUDE else None

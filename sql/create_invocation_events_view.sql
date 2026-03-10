@@ -71,11 +71,11 @@ SELECT
 
   TIMESTAMP_DIFF(E.end_timestamp, S.start_timestamp, MILLISECOND) as duration_ms,
   CASE
-    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'ERROR'
+    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} THEN 'ERROR'
     ELSE COALESCE(E.status, 'PENDING')
   END as status,
   CASE
-    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > 5 THEN 'Invocation PENDING for > 5 minutes (Timed Out)'
+    WHEN E.status IS NULL AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), S.start_timestamp, MINUTE) > {timeout_minutes} THEN 'Invocation PENDING for > {timeout_minutes} minutes (Timed Out)'
     ELSE E.error_message
   END as error_message,
 
