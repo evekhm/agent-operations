@@ -145,7 +145,7 @@ Key capabilities include:
 
 > **Tip**
 > To view generated reports it is recommended to use the [Markdown Viewer](https://chromewebstore.google.com/detail/markdown-viewer/ckkdlimhmcjmikdlpkmbgfkaikojcbjk?hl=en-US&utm_source=ext_sidebar) Chrome Extension.
-> Use **Github Wide** as Theme and make sure to enable **'mermaid'** and **'emoji'** as Content.
+> Use **Github Wide** as Theme and make sure to enable **'toc'** and **'emoji'** as Content.
 > In Advanced Options make sure to grant `file://` File Access
 
 ### Command Line Arguments
