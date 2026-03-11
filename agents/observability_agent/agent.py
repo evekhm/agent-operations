@@ -345,6 +345,29 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     )
     tool_analyst.instruction = hydrated_tool_prompt
 
+    from .prompts import AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT
+    
+    hydrated_augmentation_prompt = AUGMENTATION_PROMPT.format(
+        time_period=time_period_fixed,
+        kpis_string=kpis_string,
+        project_id=PROJECT_ID,
+        base_report_markdown="{base_report_markdown}", # Keep placeholder for tools.py
+        raw_data_json="{raw_data_json}" # Keep placeholder for tools.py
+    )
+    augmentor_agent.instruction = hydrated_augmentation_prompt + """
+    
+    The base report and raw telemetry data is provided in the conversation history from the previous agent.
+    If there is a deep architectural 'Holistic' analysis provided in the previous turn by another agent, YOU MUST incorporate its findings into your Executive Summary and Recommendations.
+    """
+    
+    hydrated_holistic_prompt = HOLISTIC_ASSESSMENT_PROMPT.format(
+        time_period=time_period_fixed,
+        project_id=PROJECT_ID,
+        base_report_markdown="{base_report_markdown}", # Keep placeholder for tools.py
+        raw_data_json="{raw_data_json}" # Keep placeholder for tools.py
+    )
+    holistic_agent.instruction = hydrated_holistic_prompt + "\n\nThe deterministic base report is provided in the conversation history from the previous agent."
+
     # Format config for display
     config_str = json.dumps(config, indent=2, default=str)
     

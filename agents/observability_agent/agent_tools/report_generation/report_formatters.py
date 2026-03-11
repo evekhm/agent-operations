@@ -62,11 +62,17 @@ class ReportDataFormatter:
         """Truncates string columns to max_column_width and removes newlines."""
         if df.empty: return df
         df_trunc = df.loc[:, ~df.columns.duplicated()].copy()
+        
+        def safe_truncate(x):
+            if pd.isna(x): return x
+            s = str(x)
+            if len(s) > self.max_column_width:
+                s = s[:self.max_column_width] + "..."
+            return s.replace('\n', ' ').replace('\r', '')
+
         for col in df_trunc.columns:
-            if df_trunc[col].dtype == 'object':
-                df_trunc[col] = df_trunc[col].astype(str).apply(
-                    lambda x: (x[:self.max_column_width] + "..." if len(x) > self.max_column_width else x).replace('\n', ' ').replace('\r', '')
-                )
+            if df_trunc[col].dtype == 'object' or pd.api.types.is_string_dtype(df_trunc[col]):
+                df_trunc[col] = df_trunc[col].apply(safe_truncate)
         return df_trunc
 
     @staticmethod

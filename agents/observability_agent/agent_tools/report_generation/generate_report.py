@@ -1996,10 +1996,10 @@ class ReportGenerator:
                         cat_df = self.md_builder.bold_first_column(cat_df)
                         cat_df.columns = [f"**{c}**" for c in cat_df.columns]
                         summary_md += cat_df.to_markdown(index=False) + "\n\n"
-                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err) if isinstance(df_err, pd.DataFrame) else 0}):**\n\n"
                     else:
                         summary_md += "No exact categories matched.\n\n"
-                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err) if isinstance(df_err, pd.DataFrame) else 0}):**\n\n"
 
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Name")
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Root Agent")
