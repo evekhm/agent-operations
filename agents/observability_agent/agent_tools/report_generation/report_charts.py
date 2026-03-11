@@ -416,6 +416,7 @@ class ChartGenerator:
         
         # Sort by Total Height (Ascending so largest is at the top)
         pivot_df['total'] = pivot_df.sum(axis=1)
+        pivot_df = pivot_df[pivot_df['total'] > 0]
         pivot_df = pivot_df.sort_values('total', ascending=True)
         pivot_df = pivot_df.drop(columns=['total'])
         

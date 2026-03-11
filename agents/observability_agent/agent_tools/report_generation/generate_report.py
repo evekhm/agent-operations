@@ -860,7 +860,7 @@ class ReportGenerator:
                          self.df_raw_llm.copy(), 'agent_name', 'None', 'model_name',
                          'Total LLM Calls per Agent (Stacked by Model)',
                          'agent_calls_stacked.png',
-                         figsize=(10, 6)
+                         figsize=(16, 8)
                      )
                      self.add_image("Total LLM Calls per Agent", os.path.join(self.assets_dir, 'agent_calls_stacked.png'))
                  except Exception as e:

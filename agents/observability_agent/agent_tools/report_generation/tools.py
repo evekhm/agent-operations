@@ -224,6 +224,7 @@ async def inject_and_save_report(tool_context: ToolContext, insights_json_str: s
             final_report = final_report.replace("(AI_SUMMARY: End to End)", insights.get("end_to_end_summary", ""))
             final_report = final_report.replace("(AI_SUMMARY: Agent Level)", insights.get("agent_level_summary", ""))
             final_report = final_report.replace("(AI_SUMMARY: Tool Level)", insights.get("tool_level_summary", ""))
+            final_report = final_report.replace("(AI_SUMMARY: Tool Details)", insights.get("tool_level_summary", ""))
             final_report = final_report.replace("(AI_SUMMARY: Model Level)", insights.get("model_level_summary", ""))
             final_report = final_report.replace("(AI_SUMMARY: Agent Composition)", insights.get("agent_composition_summary", ""))
             final_report = final_report.replace("(AI_SUMMARY: Model Composition)", insights.get("model_composition_summary", ""))
