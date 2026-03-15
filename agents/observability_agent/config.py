@@ -42,7 +42,7 @@ AGENT_DATASET_LOCATION = os.getenv('AGENT_DATASET_LOCATION', DATASET_LOCATION)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
 
 # Agent
-AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.3')
+AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.4')
 
 
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
