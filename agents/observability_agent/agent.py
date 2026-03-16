@@ -46,9 +46,9 @@ from .agent_tools.analytics.latency import (
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
-    AGENT_TABLE_ID, AGENT_VERSION, DATASET_ID, TABLE_ID, OBSERVABILITY_APP_NAME, AGENT_DATASET_LOCATION
+    AGENT_TABLE_ID, OBSERVABILITY_APP_NAME, AGENT_DATASET_LOCATION
 from .prompts import (INVOCATION_ANALYST_PROMPT, AGENT_ANALYST_PROMPT, LLM_ANALYST_PROMPT, TOOL_ANALYST_PROMPT,
-                      REPORT_CREATOR_PROMPT, AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT)
+                      AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT)
 from .utils.telemetry import setup_telemetry
 from .utils.time import set_reference_time, parse_time_range
 import json
