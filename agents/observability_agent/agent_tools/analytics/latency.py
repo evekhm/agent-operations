@@ -319,6 +319,8 @@ async def get_llm_requests(
                 f"failed_only={failed_only}, exclude_zero_duration={exclude_zero_duration}, "
                 f"truncate={truncate}")
     try:
+        limit = int(limit)
+        min_latency_ms = float(min_latency_ms)
         filter_config = {
             "model_name": (model_name, "=")
         }
@@ -439,6 +441,8 @@ async def get_tool_requests(
                 f"min_latency_ms={min_latency_ms}, agent_name='{agent_name}', sort_by='{sort_by}', "
                 f"failed_only={failed_only}, truncate={truncate}")
     try:
+        limit = int(limit)
+        min_latency_ms = float(min_latency_ms)
         filter_config = {
             "agent_name": (agent_name, "=")
         }
@@ -568,6 +572,8 @@ async def get_agent_requests(
                 f"min_latency_ms={min_latency_ms}, failed_only={failed_only}, "
                 f"exclude_zero_duration={exclude_zero_duration}, truncate={truncate}")
     try:
+        limit = int(limit)
+        min_latency_ms = float(min_latency_ms)
         filter_config = {
             "agent_name": (agent_name, "=")
         }
@@ -699,6 +705,8 @@ async def get_invocation_requests(
                 f"min_latency_ms={min_latency_ms}, failed_only={failed_only}, "
                 f"exclude_zero_duration={exclude_zero_duration}, truncate={truncate}")
     try:
+        limit = int(limit)
+        min_latency_ms = float(min_latency_ms)
         filter_config = {
             "root_agent_name": (root_agent_name, "=")
         }
