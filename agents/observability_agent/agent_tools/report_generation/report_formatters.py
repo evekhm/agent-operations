@@ -71,6 +71,8 @@ class ReportDataFormatter:
             return s.replace('\n', ' ').replace('\r', '')
 
         for col in df_trunc.columns:
+            if col == 'rca_analysis':
+                continue
             if df_trunc[col].dtype == 'object' or pd.api.types.is_string_dtype(df_trunc[col]):
                 df_trunc[col] = df_trunc[col].apply(safe_truncate)
         return df_trunc
