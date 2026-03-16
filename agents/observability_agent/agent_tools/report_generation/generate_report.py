@@ -21,6 +21,7 @@ from agents.observability_agent.config import (
     PROJECT_ID,
     AGENT_VERSION,
     TABLE_ID,
+    MODEL_ID,
 )
 
 import sys
@@ -513,9 +514,6 @@ class ReportGenerator:
                     for model in sorted(agent_df['model_name'].unique()):
                         am_df = agent_df[agent_df['model_name'] == model]
                         if am_df.empty: continue
-                        
-                        self.report_content.append(f"**Total Requests:** {len(am_df)}\n\n")
-                        
                         safe_a = str(agent).replace(' ', '_').replace('/', '_').lower()
                         safe_m = str(model).replace(' ', '_').replace('/', '_').replace('.', '_').lower()
                         chart_filename = f'seq_agent_model_{safe_a}_{safe_m}.png'
@@ -581,8 +579,7 @@ class ReportGenerator:
                         figsize=(16, 6)
                     )
                     if path:
-                        self.report_content.append(f"**Total Requests:** {req_count}<br>\n")
-                        self.add_image(f"{agent} via {model} Token Sequence", path)
+                        self.add_image(f"{agent} via {model} Token Sequence", path, subtitle=f"**Total Requests:** {req_count}")
 
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str,
                                     kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False,
@@ -692,6 +689,7 @@ class ReportGenerator:
             ["**Table ID**", f"`{TABLE_ID}`"],
             ["**Generated**", f"`{self.generated_at}`"],
             ["**Agent Version**", f"`{AGENT_VERSION}`"],
+            ["**Agent Model ID**", f"`{MODEL_ID}`"],
         ]
         self.report_content.append(pd.DataFrame(header_data, columns=["Property", "Value"]).to_markdown(index=False, headers=["**Property**", "**Value**"]))
         self.report_content.append("\n---\n")
@@ -1535,9 +1533,10 @@ class ReportGenerator:
 
         self.add_subsection("Slowest Invocations")
         if isinstance(self.root_bottlenecks, pd.DataFrame) and not self.root_bottlenecks.empty:
-            df_root = fmt_ts_col(self.formatter.standardize_formatting(self.root_bottlenecks.copy()))
+            df_root = self.root_bottlenecks.copy()
             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                 df_root = df_root.head(self.num_slowest_queries)
+            df_root = fmt_ts_col(self.formatter.standardize_formatting(df_root))
             # Rank | Timestamp | Root Agent | Duration (s) | Error Message | User Message | Trace ID | Span ID
             df_root['Rank'] = range(1, len(df_root) + 1)
             
@@ -1592,9 +1591,10 @@ class ReportGenerator:
         
         # Helper to format Agent Bottlenecks
         if isinstance(self.agent_bottlenecks, pd.DataFrame) and not self.agent_bottlenecks.empty:
-            df_top = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(self.agent_bottlenecks.copy())))
+            df_top = self.agent_bottlenecks.copy()
             if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                 df_top = df_top.head(self.num_slowest_queries)
+            df_top = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(df_top)))
 
             # Ensure columns exist or create them
             if 'duration_ms' in df_top.columns:
@@ -1675,10 +1675,11 @@ class ReportGenerator:
         
         self.add_subsection("Slowest LLM queries")
         if isinstance(self.llm_bottlenecks, pd.DataFrame) and not self.llm_bottlenecks.empty:
-             df_llm = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(self.llm_bottlenecks.copy())))
+             df_llm = self.llm_bottlenecks.copy()
              if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                  df_llm = df_llm.head(self.num_slowest_queries)
-             
+             df_llm = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(df_llm)))
+
              # Calculate/Ensure Columns
              df_llm['Rank'] = range(1, len(df_llm) + 1)
              
@@ -1816,9 +1817,10 @@ class ReportGenerator:
         # Slowest Tools Queries
         self.add_subsection("Slowest Tools Queries")
         if isinstance(self.tool_bottlenecks, pd.DataFrame) and not self.tool_bottlenecks.empty:
-             df_tool = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(self.tool_bottlenecks.copy())))
+             df_tool = self.tool_bottlenecks.copy()
              if hasattr(self, 'num_slowest_queries') and self.num_slowest_queries:
                  df_tool = df_tool.head(self.num_slowest_queries)
+             df_tool = fmt_ts_col(self.formatter.standardize_formatting(self.formatter.truncate_df(df_tool)))
              # Rank | Timestamp | Tool (s) | Tool Name | Tool Status | Tool Args | Impact % | Agent | Agent (s) | Agent Status | Root Agent | E2E (s) | Root Status | User Message | Session ID | Trace ID | Span ID
              df_tool['Rank'] = range(1, len(df_tool) + 1)
              
