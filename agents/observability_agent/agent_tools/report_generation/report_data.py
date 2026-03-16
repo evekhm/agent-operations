@@ -180,7 +180,7 @@ class ReportDataManager:
                                                                                           view_id=LLM_EVENTS_VIEW_ID,
                                                                                           percentile=self.percentile_llm))
 
-        limit_slow = self.presentation_num_slowest
+        limit_slow = self.num_slowest
         limit_error = self.num_errors
         
         task_e2e_slow = self.trace_task("E2ESlow", get_invocation_requests(limit=limit_slow, time_range=self.time_range_desc, sort_by="slowest"))
