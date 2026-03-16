@@ -2,11 +2,11 @@
     "config": {
         "playbook": "overview",
         "data_retrieval": {
-          "time_period": "all",
-          "num_slowest_queries": 50,
-          "num_error_queries": 200,
-          "num_empty_llm_responses": 20,
-          "num_queries_to_analyze_rca": 5
+            "time_period": "all",
+            "num_slowest_queries": 50,
+            "num_error_queries": 50000,
+            "num_empty_llm_responses": 1000,
+            "num_queries_to_analyze_rca": 20
         },
         "data_presentation": {
             "chart_scale": 0.5,
@@ -15,26 +15,26 @@
             "num_slowest_queries": 5
         },
         "kpis": {
-          "end_to_end": {
-            "latency_target": 10.0,
-            "percentile_target": 95.5,
-            "error_target": 5.0
-          },
-          "agent": {
-            "latency_target": 8.0,
-            "percentile_target": 95.5,
-            "error_target": 5.0
-          },
-          "llm": {
-            "latency_target": 5.0,
-            "percentile_target": 95.5,
-            "error_target": 5.0
-          },
-          "tool": {
-            "latency_target": 3.0,
-            "percentile_target": 95.5,
-            "error_target": 5.0
-          }
+            "end_to_end": {
+                "latency_target": 30.0,
+                "percentile_target": 95.5,
+                "error_target": 5.0
+            },
+            "agent": {
+                "latency_target": 10.0,
+                "percentile_target": 95.5,
+                "error_target": 5.0
+            },
+            "llm": {
+                "latency_target": 8.0,
+                "percentile_target": 95.5,
+                "error_target": 5.0
+            },
+            "tool": {
+                "latency_target": 3.0,
+                "percentile_target": 95.5,
+                "error_target": 5.0
+            }
         }
     },
     "queries": [
