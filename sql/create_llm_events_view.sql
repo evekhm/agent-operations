@@ -53,6 +53,8 @@ LlmResponses AS (
     trace_id,
     span_id,
     parent_span_id,
+    user_id,
+    session_id,
     timestamp as end_timestamp,
     content as response_content,
     attributes as response_attributes,
@@ -75,7 +77,7 @@ LlmResponses AS (
   WHERE event_type IN ('LLM_RESPONSE', 'LLM_ERROR')
 )
 SELECT
-    Req.start_timestamp as timestamp,
+    COALESCE(Req.start_timestamp, R.end_timestamp) as timestamp,
     R.root_agent_name,
     R.agent_name,
 
@@ -111,11 +113,11 @@ SELECT
     R.span_id,
     R.trace_id,
     R.parent_span_id,
-    Req.user_id,
-    Req.session_id,
+    COALESCE(Req.user_id, R.user_id) AS user_id,
+    COALESCE(Req.session_id, R.session_id) AS session_id,
 
     Req.start_timestamp,
     R.end_timestamp,
 
 FROM LlmResponses R
-    LEFT JOIN LlmRequests Req ON R.span_id = Req.span_id AND R.trace_id = Req.trace_id;
+    LEFT JOIN LlmRequests Req ON (R.span_id = Req.span_id OR R.parent_span_id = Req.span_id) AND R.trace_id = Req.trace_id;
