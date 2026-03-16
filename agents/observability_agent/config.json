@@ -4,39 +4,49 @@
         "_desc_data_retrieval": "Settings for fetching bigquery and generating inline RCA prior to formatting",
         "data_retrieval": {
             "time_period": "all",
+            "_desc_time_period": "Valid formats: 'all', '24h', '7d', 'last 2 days', 'last 5 hours', 'YYYY-MM-DD', 'YYYY-MM-DD to YYYY-MM-DD', '2 september', 'now'. Defaults to 'all' if empty.",
             "num_slowest_queries": 10,
             "_desc_num_slowest_queries": "Retrieves enough data for distributions, but keeps SQL fast. Keep low since full table fetch is expensive.",
             "num_error_queries": 50000,
             "_desc_num_error_queries": "Keep high (e.g. 50k) to still catch the macro error distribution / stats for the summary at the top.",
             "num_empty_llm_responses": 1000,
+            "_desc_num_empty_llm_responses": "Identifies up to this many recent events where the LLM generated an empty response payload.",
             "num_queries_to_analyze_rca": 5,
             "_desc_num_queries_to_analyze_rca": "Only generate LLM RCA for what you actually display! Matches data_presentation limits to avoid wasted wait time and API costs."
         },
         "_desc_data_presentation": "Settings limiting the actual rows rendered in the final markdown report",
         "data_presentation": {
             "chart_scale": 0.5,
+            "_desc_chart_scale": "Scales the resolution and size of generated matplotlib charts. 1.0 is default size. Can be overridden via CHART_SCALE env var.",
             "max_column_width_chars": 250,
+            "_desc_max_column_width_chars": "Truncates long text strings (like LLM prompts, tool outputs, and SQL queries) in markdown report tables to this character limit to prevent unreadable sizing.",
             "num_error_queries": 5,
             "_desc_num_error_queries": "Displays the top 5 error queries in the markdown tables to keep report readable.",
             "num_slowest_queries": 5,
             "_desc_num_slowest_queries": "Displays the top 5 slowest queries in the markdown tables."
         },
+        "_desc_kpis": "Key Performance Indicators defining the health thresholds for different execution layers. Targets are compared against actual metrics to calculate Service Level Objectives (SLOs).",
+        "_desc_kpi_targets": "latency_target: The maximum acceptable time in seconds. percentile_target: Evaluates what % of requests meet the latency_target (e.g. 95.5%). error_target: The max acceptable error rate %.",
         "kpis": {
+            "_desc_end_to_end": "The full lifecycle of a root user request, from the moment it hits the architecture until the final response is returned.",
             "end_to_end": {
                 "latency_target": 30.0,
                 "percentile_target": 95.5,
                 "error_target": 5.0
             },
+            "_desc_agent": "A single agent invocation, encompassing its internal reasoning, tool calls, and LLM requests.",
             "agent": {
                 "latency_target": 10.0,
                 "percentile_target": 95.5,
                 "error_target": 5.0
             },
+            "_desc_llm": "A direct API call/generation run to the foundation model (e.g. Gemini).",
             "llm": {
                 "latency_target": 8.0,
                 "percentile_target": 95.5,
                 "error_target": 5.0
             },
+            "_desc_tool": "The execution length of a single python tool or function called by the agent.",
             "tool": {
                 "latency_target": 3.0,
                 "percentile_target": 95.5,
