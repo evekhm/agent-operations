@@ -228,6 +228,7 @@ SELECT
   AVG(L.total_token_count) as avg_total_tokens,
   APPROX_QUANTILES(L.total_token_count, 100)[OFFSET(95)] as p95_total_tokens,
   -- Correlation Metrics
+  CORR(A.{{latency_col}}, L.prompt_token_count) as corr_latency_input,
   CORR(A.{{latency_col}}, L.candidates_token_count - IFNULL(L.thoughts_token_count, 0)) as corr_latency_pure_output,
   CORR(A.{{latency_col}}, L.candidates_token_count) as corr_latency_output_plus_thoughts,
   CORR(A.{{latency_col}}, L.total_token_count) as corr_latency_total

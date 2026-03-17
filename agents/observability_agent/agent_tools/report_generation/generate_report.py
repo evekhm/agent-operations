@@ -209,6 +209,7 @@ class ReportGenerator:
             df_disp['Output Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_output_tokens', 'p95_output_tokens'), axis=1)
             df_disp['Thought Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_thought_tokens', 'p95_thought_tokens'), axis=1)
             df_disp['Tokens Consumed (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_total_tokens', 'p95_total_tokens'), axis=1)
+            df_disp['Lat vs Input Correl'] = df_disp.apply(lambda r: f"{r['corr_latency_input']:.2f}" if 'corr_latency_input' in r and pd.notna(r['corr_latency_input']) else "-", axis=1)
 
         df_disp = df_disp.rename(columns={name_col: 'Name'})
         
@@ -218,7 +219,7 @@ class ReportGenerator:
             'Err %', 'Target (%)', 'Err Status'
         ]
         if include_tokens:
-            final_cols_order.extend(['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)'])
+            final_cols_order.extend(['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)', 'Lat vs Input Correl'])
         final_cols_order.append('Overall')
         
         # Only select columns that exist to prevent KeyError if some token columns are missing

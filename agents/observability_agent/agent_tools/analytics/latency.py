@@ -969,6 +969,7 @@ async def analyze_latency_grouped(
 
             # Add correlation metrics if present
             if 'corr_latency_pure_output' in rec:
+                clean_rec['corr_latency_input'] = safe_float(rec.get('corr_latency_input'))
                 clean_rec['corr_latency_pure_output'] = safe_float(rec.get('corr_latency_pure_output'))
                 clean_rec['corr_latency_output_plus_thoughts'] = safe_float(rec.get('corr_latency_output_plus_thoughts'))
                 clean_rec['corr_latency_total'] = safe_float(rec.get('corr_latency_total'))
