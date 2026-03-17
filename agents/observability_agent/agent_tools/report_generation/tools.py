@@ -257,7 +257,11 @@ async def inject_and_save_report(tool_context: ToolContext, insights_json_str: s
                 final_report += orphaned_content
             
         if holistic_analysis.strip():
-            if "# Appendix" in final_report:
+            if "## Hypothesis Testing: Latency & Tokens" in final_report:
+                final_report = final_report.replace("## Hypothesis Testing: Latency & Tokens", f"{holistic_analysis.strip()}\n\n## Hypothesis Testing: Latency & Tokens")
+            elif "## Appendix" in final_report:
+                final_report = final_report.replace("## Appendix", f"{holistic_analysis.strip()}\n\n## Appendix")
+            elif "# Appendix" in final_report:
                 final_report = final_report.replace("# Appendix", f"{holistic_analysis.strip()}\n\n# Appendix")
             else:
                 final_report += f"\n\n{holistic_analysis.strip()}\n"

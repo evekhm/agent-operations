@@ -9,7 +9,7 @@
             "_desc_num_slowest_queries": "Retrieves enough data for distributions, but keeps SQL fast. Keep low since full table fetch is expensive.",
             "num_error_queries": 50000,
             "_desc_num_error_queries": "Keep high (e.g. 50k) to still catch the macro error distribution / stats for the summary at the top.",
-            "num_empty_llm_responses": 1000,
+            "num_empty_llm_responses": 100,
             "_desc_num_empty_llm_responses": "Identifies up to this many recent events where the LLM generated an empty response payload.",
             "num_queries_to_analyze_rca": 5,
             "_desc_num_queries_to_analyze_rca": "Only generate LLM RCA for what you actually display! Matches data_presentation limits to avoid wasted wait time and API costs."

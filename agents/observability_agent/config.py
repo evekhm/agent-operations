@@ -52,7 +52,7 @@ assert MODEL_ID, "AGENT_MODEL_ID is not set"
 
 # Agent Configurations
 RCA_MAX_CONCURRENT_REQUESTS = os.getenv('RCA_MAX_CONCURRENT_REQUESTS', '5')
-MAX_CHARS_PAYLOAD_SQL = os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000') # max chars for the returned SQL payload to be
+MAX_CHARS_PAYLOAD_SQL = int(os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000')) # max chars for the returned SQL payload to be
 # truncated (e.g when using LLM)
 
 
