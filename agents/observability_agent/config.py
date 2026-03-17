@@ -66,7 +66,6 @@ INVOCATION_TIMEOUT_MINUTES = int(os.getenv('INVOCATION_TIMEOUT_MINUTES', '5'))
 
 TOOLS_TO_EXCLUDE = ["transfer_to_agent"]
 TOOLS_TO_EXCLUDE_STR = ", ".join(f"'{tool}'" for tool in TOOLS_TO_EXCLUDE) if TOOLS_TO_EXCLUDE else None
-DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
 
 # BQ Views
 COMMON_COLUMNS = ["trace_id", "span_id", "session_id", "duration_ms", "agent_name", "root_agent_name",
@@ -153,7 +152,6 @@ print(
     f"  CONNECTION_ID: {CONNECTION_ID}\n"
     f"  AGENT_NAME: {AGENT_NAME}\n"
     f"  AGENT_VERSION: {AGENT_VERSION}\n"
-    f"  DEBUG: {DEBUG}\n"
     f"  AGENT_PROJECT_ID: {AGENT_PROJECT_ID}\n"
     f"  AGENT_DATASET_ID: {AGENT_DATASET_ID}\n"
     f"  AGENT_TABLE_ID: {AGENT_TABLE_ID}\n"
