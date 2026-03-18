@@ -379,11 +379,15 @@ ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY = f"""
 SELECT
     model_name,
     agent_name,
+    CASE 
+        WHEN T.response_text IS NULL OR TRIM(T.response_text) = '' THEN 'Response Text is NULL'
+        ELSE 'Response Text is POPULATED'
+    END as response_type,
     COUNT(*) as empty_response_count
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
-GROUP BY model_name, agent_name
-ORDER BY empty_response_count DESC, agent_name ASC, model_name ASC
+GROUP BY model_name, agent_name, response_type
+ORDER BY response_type ASC, empty_response_count DESC, agent_name ASC, model_name ASC
 """
 
 ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY = f"""
@@ -391,10 +395,15 @@ SELECT
     T.span_id,
     T.trace_id,
     T.timestamp,
+    T.status,
     T.model_name,
     T.agent_name,
     T.prompt_token_count,
+    T.thoughts_token_count,
+    T.candidates_token_count,
     T.duration_ms,
+    T.response_text,
+    T.full_response,
     I.content_text_summary
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id

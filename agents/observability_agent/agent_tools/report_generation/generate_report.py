@@ -114,6 +114,7 @@ class ReportGenerator:
         self.pres_config = self.config.get("data_presentation", {})
         self.num_slowest_queries = self.pres_config.get("num_slowest_queries", 5)
         self.num_error_queries = self.pres_config.get("num_error_queries", 5)
+        self.num_empty_llm_responses = self.pres_config.get("num_empty_llm_responses", 5)
         self.time_range_desc = self.data_config.get("time_period", "24h")
         self.playbook = self.config.get("playbook", "overview")
         
@@ -723,8 +724,9 @@ For engineers investigating specific traces, token usage, or resource exhaustion
     def _render_performance_end_to_end(self):
         # --- Performance ---
         self.add_section("Performance")
-        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("This section provides a high-level scorecard for End to End, Sub Agent, Tool, and LLM levels, assessing compliance against defined Service Level Objectives (SLOs).\n")
+        self.report_content.append("\n---\n")
+        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("\n---\n")
 
         # End to End (Roots)
@@ -2147,105 +2149,174 @@ For engineers investigating specific traces, token usage, or resource exhaustion
     def _render_empty_responses(self):
         # --- Empty LLM Responses ---
         self.add_section("Empty LLM Responses")
+        
+        # Hardcoded Explanation
+        self.report_content.append("This section surfaces LLM generation defects where the API successfully returned a 200 OK status, but forced an empty `candidates` list (0 tokens generated). This typically occurs due to backend telemetry anomalies or internal model safety filters blocking the response mid-generation.\n\n")
+
+        # Inject AI Summary if it exists
+        if hasattr(self, "chart_summaries") and "empty_responses_summary" in self.chart_summaries:
+            self.report_content.append(self.chart_summaries["empty_responses_summary"] + "\n\n")
+
         if self.empty_responses and isinstance(self.empty_responses, dict):
-            if "stats" in self.empty_responses:
-                self.add_subsection("Summary")
-                # Model Name | Agent Name | Empty Response Count
-                # existing stats might not map 1:1, check keys
-                # Assuming stats is a list of dicts with these keys
-                stat_df = pd.DataFrame(self.empty_responses["stats"])
-                # Rename if needed
-                if not stat_df.empty:
-                    # Rename columns to match fixed report
-                    stat_df.rename(columns={
-                        'model_name': 'Model Name',
-                        'agent_name': 'Agent Name',
-                        'count': 'Empty Response Count',
-                        'empty_response_count': 'Empty Response Count'
-                    }, inplace=True, errors='ignore')
+            stat_df = pd.DataFrame(self.empty_responses.get("stats", []))
+            rec_df_all = pd.DataFrame(self.empty_responses.get("records", []))
+            
+            if not stat_df.empty:
+                stat_df.rename(columns={
+                    'model_name': 'Model Name',
+                    'agent_name': 'Agent Name',
+                    'count': 'Empty Response Count',
+                    'empty_response_count': 'Empty Response Count'
+                }, inplace=True, errors='ignore')
+
+                total_empty = pd.to_numeric(stat_df['Empty Response Count'], errors='coerce').sum()
+                if pd.notna(total_empty):
+                    total_empty = int(total_empty)
+                else:
+                    total_empty = 0
                     
-                    # Reorder: Agent Name | Model Name | Count
+                self.report_content.append(f"**Total Empty LLM Responses for all in Analysis Window:** {total_empty}\n\n")
+
+            groups = []
+            has_split_data = False
+            
+            if not stat_df.empty and 'response_type' in stat_df.columns and not rec_df_all.empty and 'response_text' in rec_df_all.columns:
+                has_split_data = True
+                bool_is_null = rec_df_all['response_text'].isna() | (rec_df_all['response_text'] == '')
+                
+                groups = [
+                    {
+                        "title": "Response Text is NULL and candidate_tokens is 0",
+                        "subtitle": "This indicates a complete generation failure or hard block by safety filters at the model API layer. No response strings were populated in the response payload.",
+                        "stat_df": stat_df[stat_df['response_type'] == 'Response Text is NULL'].copy(),
+                        "rec_df": rec_df_all[bool_is_null].copy()
+                    },
+                    {
+                        "title": "Response Text is populated but 0 Tokens",
+                        "subtitle": "This typically indicates a telemetry counting anomaly or a specific `FinishReason` (e.g., `RECITATION`, `OTHER`) where the API successfully returned a generated response text, but incorrectly reported 0 generated tokens to the usage metadata tracking.",
+                        "stat_df": stat_df[stat_df['response_type'] == 'Response Text is POPULATED'].copy(),
+                        "rec_df": rec_df_all[~bool_is_null].copy()
+                    }
+                ]
+            else:
+                groups = [
+                    {
+                        "title": "All Empty Responses",
+                        "subtitle": "",
+                        "stat_df": stat_df.copy(),
+                        "rec_df": rec_df_all.copy()
+                    }
+                ]
+                
+            for group in groups:
+                sdf = group["stat_df"]
+                rdf = group["rec_df"]
+                
+                if sdf.empty and rdf.empty:
+                    continue
+                    
+                self.report_content.append(f"### {group['title']}\n\n")
+                if group["subtitle"]:
+                    self.report_content.append(f"{group['subtitle']}\n\n")
+                
+                if not sdf.empty:
+                    self.report_content.append("#### Overview\n")
+                    total_count = pd.to_numeric(sdf['Empty Response Count'], errors='coerce').sum()
+                    if pd.notna(total_count):
+                        total_count = int(total_count)
+                    else:
+                        total_count = 0
+                    self.report_content.append(f"**Total Count in Analysis Window:** {total_count}\n\n")
+                    
                     cols = ['Agent Name', 'Model Name', 'Empty Response Count']
-                    stat_df = stat_df[[c for c in cols if c in stat_df.columns]]
-                    
-                    # Standardize table formatting
-                    stat_df = self.formatter.standardize_table_formatting(stat_df)
+                    sdf = sdf[[c for c in cols if c in sdf.columns]]
+                    sdf = self.formatter.standardize_table_formatting(sdf)
                     
                     from .report_markdown_builder import ReportMarkdownBuilder
-                    stat_df = ReportMarkdownBuilder.bold_columns(stat_df, ['Agent Name', 'Model Name'])
+                    sdf = ReportMarkdownBuilder.bold_columns(sdf, ['Agent Name', 'Model Name'])
                         
-                    self.report_content.append(stat_df.to_markdown(index=False))
-                    self.report_content.append("\n<br>\n")
-            
-            if "records" in self.empty_responses:
-                self.add_subsection("Details")
-                # Rank | Timestamp | Model Name | Agent Name | User Message | Prompt Tokens | Latency (s) | Trace ID | Span ID
-                rec_df = pd.DataFrame(self.empty_responses["records"])
+                    self.report_content.append(sdf.to_markdown(index=False))
+                    self.report_content.append("\n<br>\n\n")
                 
-                if not rec_df.empty:
-                    rec_df = self.formatter.standardize_formatting(self.formatter.truncate_df(rec_df))
-                    rec_df['Rank'] = range(1, len(rec_df) + 1)
+                if not rdf.empty:
+                    self.report_content.append("#### Details\n\n")
+                    self.report_content.append(f"**Sample Details (limited to {self.num_empty_llm_responses})**\n<br>\n\n")
                     
-                    # Ensure Latency (s)
-                    if 'duration_ms' in rec_df.columns:
-                        rec_df['Latency (s)'] = (rec_df['duration_ms'] / 1000).round(3)
+                    
+                    # Try to present structurally diverse examples based on Agent, Model, and Message
+                    dedup_cols = []
+                    if 'agent_name' in rdf.columns: dedup_cols.append('agent_name')
+                    if 'model_name' in rdf.columns: dedup_cols.append('model_name')
+                    if 'content_text_summary' in rdf.columns: dedup_cols.append('content_text_summary')
+                    elif 'prompt_tokens' in rdf.columns: dedup_cols.append('prompt_tokens')
+                    
+                    if dedup_cols:
+                        diverse_rdf = rdf.drop_duplicates(subset=dedup_cols, keep='first')
+                        if len(diverse_rdf) < self.num_empty_llm_responses:
+                            # Fill the rest with non-unique rows until we hit max N limit
+                            remaining_rdf = rdf[~rdf.index.isin(diverse_rdf.index)]
+                            needed = self.num_empty_llm_responses - len(diverse_rdf)
+                            diverse_rdf = pd.concat([diverse_rdf, remaining_rdf.head(needed)])
+                        rdf = diverse_rdf.head(self.num_empty_llm_responses).copy()
                     else:
-                        rec_df['Latency (s)'] = 0.0
+                        rdf = rdf.head(self.num_empty_llm_responses).copy()
+                    rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
+                    rdf['Rank'] = range(1, len(rdf) + 1)
+                    
+                    if 'duration_ms' in rdf.columns:
+                        rdf['Latency (s)'] = (rdf['duration_ms'] / 1000).round(3)
+                    else:
+                        rdf['Latency (s)'] = 0.0
                         
-                    # Map
                     rec_map = {
                         'Rank': 'Rank',
                         'timestamp': 'Timestamp',
-                        'start_time': 'Timestamp', # Fallback
+                        'start_time': 'Timestamp',
                         'model_name': 'Model Name',
                         'agent_name': 'Agent Name',
                         'content_text_summary': 'User Message',
                         'prompt_tokens': 'Prompt Tokens',
-                        'prompt_token_count': 'Prompt Tokens', # Fallback
+                        'prompt_token_count': 'Prompt Tokens',
+                        'thoughts_tokens': 'thoughts_token_count',
+                        'candidates_tokens': 'candidates_token_count',
+                        'full_response': 'full_response',
+                        'response_text': 'response_text',
                         'Latency (s)': 'Latency (s)',
                         'trace_id': 'Trace ID',
                         'span_id': 'Span ID' 
                     }
 
-                    # Format Timestamp handled by _standardize_formatting
-                    
-                    # Use helper formatted table logic (or manually here since we have custom Latency calc)
-                    # Reuse generic logic for missing cols & renaming
+                    if 'full_response' in rdf.columns:
+                        rdf['full_response'] = rdf['full_response'].apply(self.formatter.format_as_code)
+                    if 'response_text' in rdf.columns:
+                        rdf['response_text'] = rdf['response_text'].apply(self.formatter.format_as_code)
+
                     final_r = []
                     ren_r = {}
-                    
-                    # Prioritize keys that actually exist in rec_df
-                    seen_targets = set()
-                    
-                    # Define desired order of Target Columns
-                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'Latency (s)', 'Trace ID', 'Span ID']
+                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'thoughts_token_count', 'candidates_token_count', 'response_text', 'full_response', 'Latency (s)', 'Trace ID', 'Span ID']
                     
                     for target in desired_order:
-                        # Find source key in rec_map that exists in rec_df
                         found = False
                         for src, tgt in rec_map.items():
-                            if tgt == target and src in rec_df.columns:
+                            if tgt == target and src in rdf.columns:
                                 final_r.append(src)
                                 ren_r[src] = tgt
                                 found = True
                                 break
                         if not found:
-                             # If not found, add N/A column
-                             rec_df[target] = "N/A"
+                             rdf[target] = "N/A"
                              final_r.append(target)
                              ren_r[target] = target
 
-                    df_final_rec = rec_df[final_r].rename(columns=ren_r)
-                    
-                    # Standardize table formatting
+                    df_final_rec = rdf[final_r].rename(columns=ren_r)
                     df_final_rec = self.formatter.standardize_table_formatting(df_final_rec)
                     
                     from .report_markdown_builder import ReportMarkdownBuilder
                     df_final_rec = ReportMarkdownBuilder.bold_columns(df_final_rec, ['Agent Name', 'Model Name'])
                     
-                    df_final_rec = self._apply_table_links(df_final_rec, rec_df, "empty")
-                    
+                    df_final_rec = self._apply_table_links(df_final_rec, rdf, "empty")
                     df_final_rec.columns = [f"**{c}**" for c in df_final_rec.columns]
+                    
                     self.report_content.append(df_final_rec.to_markdown(index=False))
                     self.report_content.append("\n<br>\n")
 

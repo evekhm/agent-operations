@@ -1,5 +1,7 @@
 import logging
 import os
+from .config import CACHE_TTL
+import math
 
 try:
     from opentelemetry import trace
@@ -271,9 +273,10 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         config = {}
         
     # Set a rounded reference time to ensure BigQuery caching works
-    # Rounding UP to the next hour to include recently generated data
+    # Rounding UP to the next multiple of CACHE_TTL ensures identical cacheable strings across executions.
     now = datetime.now(timezone.utc)
-    rounded_now = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    rounded_timestamp = math.ceil(now.timestamp() / CACHE_TTL) * CACHE_TTL
+    rounded_now = datetime.fromtimestamp(rounded_timestamp, tz=timezone.utc)
     set_reference_time(rounded_now)
     
     # Evaluate time periods into strict 'start to end' strings so they're explicitly documented in the prompt and report

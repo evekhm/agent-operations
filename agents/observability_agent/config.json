@@ -23,7 +23,9 @@
             "num_error_queries": 5,
             "_desc_num_error_queries": "Displays the top 5 error queries in the markdown tables to keep report readable.",
             "num_slowest_queries": 5,
-            "_desc_num_slowest_queries": "Displays the top 5 slowest queries in the markdown tables."
+            "_desc_num_slowest_queries": "Displays the top 5 slowest queries in the markdown tables.",
+            "num_empty_llm_responses": 5,
+            "_desc_num_empty_llm_responses": "Displays the top 5 empty LLM response traces in the markdown tables."
         },
         "_desc_kpis": "Key Performance Indicators defining the health thresholds for different execution layers. Targets are compared against actual metrics to calculate Service Level Objectives (SLOs).",
         "_desc_kpi_targets": "latency_target: The maximum acceptable time in seconds. percentile_target: Evaluates what % of requests meet the latency_target (e.g. 95.5%). error_target: The max acceptable error rate %.",

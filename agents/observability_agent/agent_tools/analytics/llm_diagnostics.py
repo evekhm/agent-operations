@@ -438,8 +438,9 @@ async def analyze_empty_llm_responses(
         )
         
         # We only care about explicit empty responses that are not just pending
-        # IFNULL handles cases where it might be explicitly null but completed.
-        where_clause += " AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
+        # Include cases where response generation failed (candidates = 0) OR text generation was empty (response_text IS NULL)
+        where_clause += " AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '')"
+        where_clause += " AND T.status != 'ERROR'"
 
         # 1. Get summary stats
         summary_query = ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY.format(
@@ -453,6 +454,7 @@ async def analyze_empty_llm_responses(
                 stats.append({
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
+                    "response_type": row['response_type'] if 'response_type' in row else 'Response Text is NULL',
                     "empty_response_count": int(row['empty_response_count'])
                 })
 
@@ -466,14 +468,26 @@ async def analyze_empty_llm_responses(
         records = []
         if not records_df.empty:
             for _, row in records_df.iterrows():
+                full_resp = row['full_response']
+                if isinstance(full_resp, str):
+                    try:
+                        full_resp = json.loads(full_resp)
+                    except:
+                        pass
+                
                 records.append({
                     "span_id": str(row['span_id']),
                     "trace_id": str(row['trace_id']) if pd.notna(row['trace_id']) else None,
                     "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                    "status": row['status'],
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
                     "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
+                    "thoughts_tokens": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else 0,
+                    "candidates_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
                     "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0.0,
+                    "response_text": row['response_text'] if pd.notna(row['response_text']) else None,
+                    "full_response": full_resp,
                     "content_text_summary": row['content_text_summary'] if pd.notna(row['content_text_summary']) else None
                 })
 
