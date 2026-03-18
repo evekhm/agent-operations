@@ -2303,7 +2303,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                                     if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
                                         selected_indices.append(idx)
                                         
-                        # Pass 4: If we STILL haven't reached the limit, pull in the remaining distinct traces
+                        # Pass 4: Fallback to non-unique traces if limit not met
                         if len(selected_indices) < self.num_empty_llm_responses:
                             for idx in rdf.index:
                                 if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
@@ -2311,6 +2311,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                                         
                         # Ensure we only pick what we found
                         rdf = rdf.loc[selected_indices].copy()
+                        
                     rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
                     rdf['Rank'] = range(1, len(rdf) + 1)
                     
