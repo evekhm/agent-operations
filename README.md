@@ -168,6 +168,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 * **Performance:** A top-down scorecard grading overall End-to-End, Agent, Tool, and Model execution against your defined Service Level Objectives (SLOs).
 * **System Bottlenecks & Impact:** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
 * **Error Analysis & Critical Workflow Failures:** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
+* **Empty LLM Responses:** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
 * **Hypothesis Testing: Latency & Tokens:** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
 * **Granular Breakdowns:** Browse the Agent Details, Tool Details, and Model Details for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time.
 

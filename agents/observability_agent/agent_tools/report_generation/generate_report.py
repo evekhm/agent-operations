@@ -709,6 +709,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 - **[Performance](#performance):** A top-down scorecard grading overall End-to-End, Agent, Tool, and Model execution against your defined Service Level Objectives (SLOs).
 - **[System Bottlenecks & Impact](#system-bottlenecks--impact):** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
 - **[Error Analysis](#error-analysis) & [Critical Workflow Failures](#critical-workflow-failures):** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
+- **[Empty LLM Responses](#empty-llm-responses):** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
 - **[Hypothesis Testing: Latency & Tokens](#hypothesis-testing-latency--tokens):** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
 - **Granular Breakdowns:** Browse the [Agent Details](#agent-details), [Tool Details](#tool-details), and [Model Details](#model-details) for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time."""
         self.report_content.append(nav_text + "\n\n---\n")
