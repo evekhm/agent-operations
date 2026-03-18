@@ -210,7 +210,6 @@ class ReportGenerator:
             df_disp['Output Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_output_tokens', 'p95_output_tokens'), axis=1)
             df_disp['Thought Tok (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_thought_tokens', 'p95_thought_tokens'), axis=1)
             df_disp['Tokens Consumed (Avg/P95)'] = df_disp.apply(lambda r: self.formatter.format_token_metric(r, 'avg_total_tokens', 'p95_total_tokens'), axis=1)
-            df_disp['Lat vs Input Correl'] = df_disp.apply(lambda r: f"{r['corr_latency_input']:.2f}" if 'corr_latency_input' in r and pd.notna(r['corr_latency_input']) else "-", axis=1)
 
         df_disp = df_disp.rename(columns={name_col: 'Name'})
         
@@ -220,7 +219,7 @@ class ReportGenerator:
             'Err %', 'Target (%)', 'Err Status'
         ]
         if include_tokens:
-            final_cols_order.extend(['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)', 'Lat vs Input Correl'])
+            final_cols_order.extend(['Input Tok (Avg/P95)', 'Output Tok (Avg/P95)', 'Thought Tok (Avg/P95)', 'Tokens Consumed (Avg/P95)'])
         final_cols_order.append('Overall')
         
         # Only select columns that exist to prevent KeyError if some token columns are missing
@@ -1048,6 +1047,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                     "Min Output Tokens": {},
                     "Max Output Tokens": {},
                     "Mean Total Tokens": {},
+                    "Latency vs Input Corr.": {},
                     "Latency vs Output Corr.": {},
                     "Latency vs Output+Thinking Corr.": {},
                     "Correlation Strength": {},
@@ -1083,10 +1083,21 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 
                         if len(subset) > 1:
 
+                            def format_corr(c):
+                                if pd.isna(c): return "N/A"
+                                return f"**{c:.3f}**" if abs(c) > 0.85 else f"{c:.3f}"
+
+                            # Latency vs Input
+                            if subset['latency_seconds'].std() > 0 and subset['prompt_token_count'].std() > 0:
+                                corr_in = subset['latency_seconds'].corr(subset['prompt_token_count'])
+                                metrics_data["Latency vs Input Corr."][m] = format_corr(corr_in)
+                            else:
+                                metrics_data["Latency vs Input Corr."][m] = "N/A"
+
                             # Latency vs Output
                             if subset['latency_seconds'].std() > 0 and subset['candidates_token_count'].std() > 0:
                                 corr_out = subset['latency_seconds'].corr(subset['candidates_token_count'])
-                                metrics_data["Latency vs Output Corr."][m] = f"{corr_out:.3f}" if not pd.isna(corr_out) else "N/A"
+                                metrics_data["Latency vs Output Corr."][m] = format_corr(corr_out)
                             else:
                                 metrics_data["Latency vs Output Corr."][m] = "N/A"
 
@@ -1094,7 +1105,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                             total_gen = subset['candidates_token_count'] + subset['thoughts_token_count'].fillna(0)
                             if subset['latency_seconds'].std() > 0 and total_gen.std() > 0:
                                 corr_gen = subset['latency_seconds'].corr(total_gen)
-                                metrics_data["Latency vs Output+Thinking Corr."][m] = f"{corr_gen:.3f}" if not pd.isna(corr_gen) else "N/A"
+                                metrics_data["Latency vs Output+Thinking Corr."][m] = format_corr(corr_gen)
                             else:
                                 metrics_data["Latency vs Output+Thinking Corr."][m] = "N/A"
                                 corr_gen = float('nan') # Ensure variables exist for next block
@@ -1322,7 +1333,12 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                              else:
                                  corr_out = float('nan')
                              
-                             correlation_map[model] = {'out': corr_out}
+                             if 'prompt_token_count' in model_corr_df.columns and model_corr_df['duration_ms'].std() > 0 and model_corr_df['prompt_token_count'].std() > 0:
+                                 corr_in = model_corr_df['duration_ms'].corr(model_corr_df['prompt_token_count'])
+                             else:
+                                 corr_in = float('nan')
+                                 
+                             correlation_map[model] = {'out': corr_out, 'in': corr_in}
                              
                              if has_thoughts:
                                  # Output + Thinking
@@ -1371,18 +1387,25 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                      row[r['model_name']] = val
                  stats_rows.append(row)
              
-             # Correlation Rows
+            # Correlation Rows
+             row_corr_in = {"Metric": "Latency vs Input Corr."}
              row_corr_out = {"Metric": "Latency vs Output Corr."}
              row_corr_tot = {"Metric": "Latency vs Output+Thinking Corr."}
              row_strength = {"Metric": "Correlation Strength"}
              
+             def format_global_corr(c):
+                 if not isinstance(c, float) or pd.isna(c): return "N/A"
+                 return f"**{c:.3f}**" if abs(c) > 0.85 else f"{c:.3f}"
+
              for model in sorted(self.df_models['model_name'].unique()):
                  corrs = correlation_map.get(model, {})
+                 c_in = corrs.get('in', 'N/A')
                  c_out = corrs.get('out', 'N/A')
                  c_tot = corrs.get('total', 'N/A')
                  
-                 row_corr_out[model] = f"{c_out:.3f}" if isinstance(c_out, float) else "N/A"
-                 row_corr_tot[model] = f"{c_tot:.3f}" if isinstance(c_tot, float) else "N/A"
+                 row_corr_in[model] = format_global_corr(c_in)
+                 row_corr_out[model] = format_global_corr(c_out)
+                 row_corr_tot[model] = format_global_corr(c_tot)
                  
                  # Strength Logic (using c_out or max of both?)
                  # User example shows strength row. I'll use c_tot if available, else c_out
@@ -1397,6 +1420,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                      else: s_str = "⬜ **Weak**"
                      row_strength[model] = s_str
 
+             stats_rows.append(row_corr_in)
              stats_rows.append(row_corr_out)
              stats_rows.append(row_corr_tot)
              stats_rows.append(row_strength)
@@ -2186,13 +2210,13 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                 
                 groups = [
                     {
-                        "title": "Response Text is NULL and candidate_tokens is 0",
+                        "title": "Response Text is NULL and candidates_tokens_count is 0",
                         "subtitle": "This indicates a complete generation failure or hard block by safety filters at the model API layer. No response strings were populated in the response payload.",
                         "stat_df": stat_df[stat_df['response_type'] == 'Response Text is NULL'].copy(),
                         "rec_df": rec_df_all[bool_is_null].copy()
                     },
                     {
-                        "title": "Response Text is populated but 0 Tokens",
+                        "title": "Response Text is populated but candidates_tokens_count is 0",
                         "subtitle": "This typically indicates a telemetry counting anomaly or a specific `FinishReason` (e.g., `RECITATION`, `OTHER`) where the API successfully returned a generated response text, but incorrectly reported 0 generated tokens to the usage metadata tracking.",
                         "stat_df": stat_df[stat_df['response_type'] == 'Response Text is POPULATED'].copy(),
                         "rec_df": rec_df_all[~bool_is_null].copy()
@@ -2243,23 +2267,50 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                     self.report_content.append(f"**Sample Details (limited to {self.num_empty_llm_responses})**\n<br>\n\n")
                     
                     
-                    # Try to present structurally diverse examples based on Agent, Model, and Message
-                    dedup_cols = []
-                    if 'agent_name' in rdf.columns: dedup_cols.append('agent_name')
-                    if 'model_name' in rdf.columns: dedup_cols.append('model_name')
-                    if 'content_text_summary' in rdf.columns: dedup_cols.append('content_text_summary')
-                    elif 'prompt_tokens' in rdf.columns: dedup_cols.append('prompt_tokens')
+                    # Try to present structurally diverse examples based on User Priority Rule:
+                    # 1) Try different agent
+                    # 2) Then try different model
+                    # 3) Then try different user message
+                    # 4) Finally, PAD with identical duplicates if we still haven't reached the limit.
+                    selected_indices = []
                     
-                    if dedup_cols:
-                        diverse_rdf = rdf.drop_duplicates(subset=dedup_cols, keep='first')
-                        if len(diverse_rdf) < self.num_empty_llm_responses:
-                            # Fill the rest with non-unique rows until we hit max N limit
-                            remaining_rdf = rdf[~rdf.index.isin(diverse_rdf.index)]
-                            needed = self.num_empty_llm_responses - len(diverse_rdf)
-                            diverse_rdf = pd.concat([diverse_rdf, remaining_rdf.head(needed)])
-                        rdf = diverse_rdf.head(self.num_empty_llm_responses).copy()
-                    else:
-                        rdf = rdf.head(self.num_empty_llm_responses).copy()
+                    if not rdf.empty:
+                        # Reset index to ensure uniqueness for subset extraction
+                        rdf = rdf.reset_index(drop=True)
+                        
+                        # Pass 1: Unique Agents
+                        if 'agent_name' in rdf.columns:
+                            for idx in rdf.drop_duplicates(subset=['agent_name'], keep='first').index:
+                                if len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                
+                        # Pass 2: Unique Agent + Model combinations
+                        if len(selected_indices) < self.num_empty_llm_responses and 'model_name' in rdf.columns and 'agent_name' in rdf.columns:
+                            for idx in rdf.drop_duplicates(subset=['agent_name', 'model_name'], keep='first').index:
+                                if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                    
+                        # Pass 3: Unique Agent + Model + Message combinations
+                        if len(selected_indices) < self.num_empty_llm_responses:
+                            dedup_msg = []
+                            if 'agent_name' in rdf.columns: dedup_msg.append('agent_name')
+                            if 'model_name' in rdf.columns: dedup_msg.append('model_name')
+                            if 'content_text_summary' in rdf.columns: dedup_msg.append('content_text_summary')
+                            elif 'prompt_tokens' in rdf.columns: dedup_msg.append('prompt_tokens')
+                            
+                            if dedup_msg:
+                                for idx in rdf.drop_duplicates(subset=dedup_msg, keep='first').index:
+                                    if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                        selected_indices.append(idx)
+                                        
+                        # Pass 4: If we STILL haven't reached the limit, pull in the remaining distinct traces
+                        if len(selected_indices) < self.num_empty_llm_responses:
+                            for idx in rdf.index:
+                                if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                        
+                        # Ensure we only pick what we found
+                        rdf = rdf.loc[selected_indices].copy()
                     rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
                     rdf['Rank'] = range(1, len(rdf) + 1)
                     
@@ -2267,6 +2318,11 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                         rdf['Latency (s)'] = (rdf['duration_ms'] / 1000).round(3)
                     else:
                         rdf['Latency (s)'] = 0.0
+                        
+                    if 'status' in rdf.columns:
+                        rdf['Status'] = rdf['status'].apply(self._status_to_emoji)
+                    else:
+                        rdf['Status'] = '?'
                         
                     rec_map = {
                         'Rank': 'Rank',
@@ -2282,6 +2338,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                         'full_response': 'full_response',
                         'response_text': 'response_text',
                         'Latency (s)': 'Latency (s)',
+                        'Status': 'Status',
                         'trace_id': 'Trace ID',
                         'span_id': 'Span ID' 
                     }
@@ -2293,7 +2350,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 
                     final_r = []
                     ren_r = {}
-                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'thoughts_token_count', 'candidates_token_count', 'response_text', 'full_response', 'Latency (s)', 'Trace ID', 'Span ID']
+                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'thoughts_token_count', 'candidates_token_count', 'response_text', 'full_response', 'Latency (s)', 'Status', 'Trace ID', 'Span ID']
                     
                     for target in desired_order:
                         found = False
