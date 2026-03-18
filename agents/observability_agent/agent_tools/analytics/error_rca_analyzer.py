@@ -113,7 +113,7 @@ async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, 
             if len(df.columns) == 1 and df.columns[0] in ['error', 'message']:
                 continue
                 
-            logger.info(f"   [DEBUG] DF {df_name} shape: {df.shape}, cols: {df.columns.tolist()}, data: {df.head(1).to_dict('records')}")
+            logger.debug(f"DF {df_name} shape: {df.shape}, cols: {df.columns.tolist()}, data: {df.head(1).to_dict('records')}")
             # Drop rows where all elements are missing, to prevent generating RCAs for completely empty/null records
             df = df.dropna(how='all')
             if df.empty:
