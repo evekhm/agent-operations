@@ -1,8 +1,7 @@
 <!-- TOC -->
 * [Agent Operations (Observability Agent)](#agent-operations-observability-agent)
   * [Overview](#overview)
-  * [Observability Reports](#observability-reports)
-    * [Current Report Capabilities (Default Overview)](#current-report-capabilities-default-overview)
+    * [Current Report Capabilities](#current-report-capabilities)
       * [Executive Intelligence](#executive-intelligence)
       * [Root Cause Analysis & Error Telemetry](#root-cause-analysis--error-telemetry)
       * [Deep Performance Profiling](#deep-performance-profiling)
@@ -11,7 +10,13 @@
   * [Installation](#installation)
   * [Quickstart](#quickstart)
   * [Command Line Usage](#command-line-usage)
+    * [Playbook: overview (Default System Overview)](#playbook-overview-default-system-overview)
   * [Roadmap (Future Playbooks & Features)](#roadmap-future-playbooks--features)
+    * [Conversational Report Q&A](#conversational-report-qa)
+    * [Playbook: health (Healthcheck)](#playbook-health-healthcheck)
+    * [Playbook: incident (Incident Review)](#playbook-incident-incident-review)
+    * [Playbook: latest (Single Trace Deep Dive)](#playbook-latest-single-trace-deep-dive)
+    * [Playbook: trend (Trend Analysis)](#playbook-trend-trend-analysis)
   * [Release Notes](#release-notes)
 <!-- TOC -->
 # Agent Operations (Observability Agent)
