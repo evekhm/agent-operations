@@ -411,6 +411,14 @@ class ChartGenerator:
         """
         if df.empty: return None
 
+        df = df.copy()
+        # Force categories to strings so unused categories do not persist 
+        # and appear as 0-count rows in the chart
+        if x_col in df.columns:
+            df[x_col] = df[x_col].astype(str)
+        if hue_col and hue_col in df.columns:
+            df[hue_col] = df[hue_col].astype(str)
+
         # Aggregate data for stacking
         pivot_df = df.groupby([x_col, hue_col]).size().unstack(fill_value=0)
         
@@ -419,6 +427,9 @@ class ChartGenerator:
         pivot_df = pivot_df[pivot_df['total'] > 0]
         pivot_df = pivot_df.sort_values('total', ascending=True)
         pivot_df = pivot_df.drop(columns=['total'])
+        
+        # Explicitly ensure index isn't retaining categorical artifact
+        pivot_df.index = pivot_df.index.astype(str)
         
         base_size = figsize if figsize else self.SIZE_LARGE
         plt.figure(figsize=self._get_figsize(*base_size))

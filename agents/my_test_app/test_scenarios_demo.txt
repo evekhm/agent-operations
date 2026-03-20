@@ -41,7 +41,7 @@ VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|How does a neural network learn?|
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Explain the concept of 'digital twin' technology.
 VALID_ALL|gemini-2.5-flash|HIGH_TEMP|us-central1|Using HIGH_TEMP, brainstorm innovative solutions for 'reducing plastic waste in oceans'.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Attempt 'inventory_update_for_SKU_Z987' with a high chance of partial data commit.
-VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Calculate the percentage of SUCCESS versus FAILED unreliable_tool_agent invocations in agent_events_test for the current week.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Calculate the percentage of SUCCESS versus FAILED unreliable_tool_agent invocations in {TEST_TABLE_ID} for the current week.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Identify any CONFIG changes in config_audit_trail that immediately preceded a sharp drop in agent_success_rate in agent_performance_metrics.
 VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Get event_log_server_frontend, error_log_server_backend, access_log_database.
 VALID_ALL|gemini-3-pro-preview|NORMAL|global|Find the current weather in London, then use Google to find a highly-rated restaurant nearby.
@@ -58,7 +58,7 @@ VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Describe how to implement a custom
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the essential components of an observability stack for a RAG-based AI agent?
 VALID_ALL|gemini-3.1-pro-preview|NORMAL|global|Detail the process for handling long-running operations in an ADK custom tool.
 VALID_ALL|gemini-2.5-pro|OVER_PROVISIONED|us-central1|Using config OVER_PROVISIONED, generate a comprehensive report on 'global AI market trends'.
-VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Calculate the percentage of SUCCESS versus FAILED unreliable_tool_agent invocations in agent_events_test for the current week.
+VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Calculate the percentage of SUCCESS versus FAILED unreliable_tool_agent invocations in {TEST_TABLE_ID} for the current week.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Find all user_id`s who experienced more than 5 ERROR events in agent_logs_prod within any 1-hour window today.
 VALID_ALL|gemini-2.5-flash|WRONG_MAX_TOKENS|us-central1|Apply config WRONG_MAX_TOKENS, extract key insights from 'the full text of the US Constitution'.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What are the advantages of serverless computing?
@@ -193,7 +193,7 @@ VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Calculate the moving average of dail
 VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Retrieve the average `latency_ms` for `google_search_agent` calls from `tool_execution_metrics` in the last 7 days, grouped by `model_id`.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Find all `user_id`s who experienced more than 5 `ERROR` events in `agent_logs_prod` within any 1-hour window today.
 VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|List the top 10 most expensive queries run against `agent_config_history` based on `total_bytes_processed` in the past month.
-VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Calculate the percentage of `SUCCESS` versus `FAILED` `unreliable_tool_agent` invocations in `agent_events_test` for the current week.
+VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|Calculate the percentage of `SUCCESS` versus `FAILED` `unreliable_tool_agent` invocations in `{TEST_TABLE_ID}` for the current week.
 VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Show the distribution of `tool_type` across all successful agent sessions in `agent_sessions_full` for yesterday.
 VALID_ALL|gemini-2.5-pro|NORMAL|us-central1|What is the average number of `intermediate_steps` for `Complex/Chained` agent requests in `agent_step_logs`?
 VALID_ALL|gemini-2.5-flash|NORMAL|us-central1|Identify any `CONFIG` changes in `config_audit_trail` that immediately preceded a sharp drop in `agent_success_rate` in `agent_performance_metrics`.

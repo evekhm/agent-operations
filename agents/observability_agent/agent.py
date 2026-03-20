@@ -1,5 +1,7 @@
 import logging
 import os
+from .config import CACHE_TTL
+import math
 
 try:
     from opentelemetry import trace
@@ -46,9 +48,9 @@ from .agent_tools.analytics.latency import (
 )
 from .agent_tools.analytics.sql import run_sql_query
 from .config import MODEL_ID, AGENT_NAME, PROJECT_ID, AGENT_DATASET_ID, \
-    AGENT_TABLE_ID, AGENT_VERSION, DATASET_ID, TABLE_ID, OBSERVABILITY_APP_NAME, AGENT_DATASET_LOCATION
+    AGENT_TABLE_ID, OBSERVABILITY_APP_NAME, AGENT_DATASET_LOCATION
 from .prompts import (INVOCATION_ANALYST_PROMPT, AGENT_ANALYST_PROMPT, LLM_ANALYST_PROMPT, TOOL_ANALYST_PROMPT,
-                      REPORT_CREATOR_PROMPT, AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT)
+                      AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT)
 from .utils.telemetry import setup_telemetry
 from .utils.time import set_reference_time, parse_time_range
 import json
@@ -271,9 +273,10 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         config = {}
         
     # Set a rounded reference time to ensure BigQuery caching works
-    # Rounding UP to the next hour to include recently generated data
+    # Rounding UP to the next multiple of CACHE_TTL ensures identical cacheable strings across executions.
     now = datetime.now(timezone.utc)
-    rounded_now = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    rounded_timestamp = math.ceil(now.timestamp() / CACHE_TTL) * CACHE_TTL
+    rounded_now = datetime.fromtimestamp(rounded_timestamp, tz=timezone.utc)
     set_reference_time(rounded_now)
     
     # Evaluate time periods into strict 'start to end' strings so they're explicitly documented in the prompt and report
@@ -344,6 +347,29 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
         kpi_percentile=kpi_percentile
     )
     tool_analyst.instruction = hydrated_tool_prompt
+
+    from .prompts import AUGMENTATION_PROMPT, HOLISTIC_ASSESSMENT_PROMPT
+    
+    hydrated_augmentation_prompt = AUGMENTATION_PROMPT.format(
+        time_period=time_period_fixed,
+        kpis_string=kpis_string,
+        project_id=PROJECT_ID,
+        base_report_markdown="{base_report_markdown}", # Keep placeholder for tools.py
+        raw_data_json="{raw_data_json}" # Keep placeholder for tools.py
+    )
+    augmentor_agent.instruction = hydrated_augmentation_prompt + """
+    
+    The base report and raw telemetry data is provided in the conversation history from the previous agent.
+    If there is a deep architectural 'Holistic' analysis provided in the previous turn by another agent, YOU MUST incorporate its findings into your Executive Summary and Recommendations.
+    """
+    
+    hydrated_holistic_prompt = HOLISTIC_ASSESSMENT_PROMPT.format(
+        time_period=time_period_fixed,
+        project_id=PROJECT_ID,
+        base_report_markdown="{base_report_markdown}", # Keep placeholder for tools.py
+        raw_data_json="{raw_data_json}" # Keep placeholder for tools.py
+    )
+    holistic_agent.instruction = hydrated_holistic_prompt + "\n\nThe deterministic base report is provided in the conversation history from the previous agent."
 
     # Format config for display
     config_str = json.dumps(config, indent=2, default=str)

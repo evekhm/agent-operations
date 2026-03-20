@@ -20,7 +20,7 @@ def fill_prompt_template(
     parallel_pct=10,
     config_test_pct=5,
     complex_pct=5,
-    agent_events_table_id="agent_events_test"
+    agent_events_table_id="{TEST_TABLE_ID}"
 ):
     """Fills the placeholders in the prompt template."""
     if model_weights is None:

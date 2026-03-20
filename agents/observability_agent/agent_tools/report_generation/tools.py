@@ -85,9 +85,7 @@ async def generate_base_report(tool_context: ToolContext, time_period: str = "7d
             config["data_retrieval"] = {}
         config["data_retrieval"]["time_period"] = time_period
                 
-        # Sync views
-        # (Removed redundant view syncing, handled reliably by data fetcher if data is None)
-        
+
         # Fetch data
         data_manager = ReportDataManager(config)
         raw_data = await data_manager.fetch_all_data()
@@ -131,22 +129,25 @@ async def save_report(report_content: str, playbook_name: str = "overview", time
             f.write(report_content)
         
         pdf_path = report_path.replace(".md", ".pdf")
-        pdf_status = ""
-        try:
-            from pathlib import Path
-            from md2pdf.core import md2pdf
-            md_p = Path(report_path).absolute()
-            pdf_p = Path(pdf_path).absolute()
-            css_p = Path(base_dir) / "pdf_style.css"
-            
-            md2pdf(pdf=pdf_p, md=md_p, css=css_p, base_url=md_p.parent)
-            
-            rel_pdf_path = os.path.normpath(os.path.relpath(pdf_path))
-            abs_pdf_path = os.path.abspath(pdf_path)
-            pdf_status = f"\nPDF visually generated and saved to: `{rel_pdf_path}`\n   (Absolute Path: {abs_pdf_path})"
-        except Exception as pdf_e:
-            pdf_status = f"\nFailed to generate PDF report: {str(pdf_e)}"
-            logger.error(f"Failed to generate PDF report: {pdf_e}")
+        
+        # --- PDF Generation Disabled ---
+        # pdf_status = ""
+        # try:
+        #     from pathlib import Path
+        #     from md2pdf.core import md2pdf
+        #     md_p = Path(report_path).absolute()
+        #     pdf_p = Path(pdf_path).absolute()
+        #     css_p = Path(base_dir) / "pdf_style.css"
+        #     
+        #     md2pdf(pdf=pdf_p, md=md_p, css=css_p, base_url=md_p.parent)
+        #     
+        #     rel_pdf_path = os.path.normpath(os.path.relpath(pdf_path))
+        #     abs_pdf_path = os.path.abspath(pdf_path)
+        #     pdf_status = f"\nPDF visually generated and saved to: `{rel_pdf_path}`\n   (Absolute Path: {abs_pdf_path})"
+        # except Exception as pdf_e:
+        #     pdf_status = f"\nFailed to generate PDF report: {str(pdf_e)}"
+        #     logger.error(f"Failed to generate PDF report: {pdf_e}")
+        # -------------------------------
         
         rel_report_path = os.path.normpath(os.path.relpath(report_path))
         abs_report_path = os.path.abspath(report_path)
@@ -257,7 +258,11 @@ async def inject_and_save_report(tool_context: ToolContext, insights_json_str: s
                 final_report += orphaned_content
             
         if holistic_analysis.strip():
-            if "# Appendix" in final_report:
+            if "## Hypothesis Testing: Latency & Tokens" in final_report:
+                final_report = final_report.replace("## Hypothesis Testing: Latency & Tokens", f"{holistic_analysis.strip()}\n\n## Hypothesis Testing: Latency & Tokens")
+            elif "## Appendix" in final_report:
+                final_report = final_report.replace("## Appendix", f"{holistic_analysis.strip()}\n\n## Appendix")
+            elif "# Appendix" in final_report:
                 final_report = final_report.replace("# Appendix", f"{holistic_analysis.strip()}\n\n# Appendix")
             else:
                 final_report += f"\n\n{holistic_analysis.strip()}\n"

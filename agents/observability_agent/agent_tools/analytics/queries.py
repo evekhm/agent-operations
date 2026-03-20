@@ -228,6 +228,7 @@ SELECT
   AVG(L.total_token_count) as avg_total_tokens,
   APPROX_QUANTILES(L.total_token_count, 100)[OFFSET(95)] as p95_total_tokens,
   -- Correlation Metrics
+  CORR(A.{{latency_col}}, L.prompt_token_count) as corr_latency_input,
   CORR(A.{{latency_col}}, L.candidates_token_count - IFNULL(L.thoughts_token_count, 0)) as corr_latency_pure_output,
   CORR(A.{{latency_col}}, L.candidates_token_count) as corr_latency_output_plus_thoughts,
   CORR(A.{{latency_col}}, L.total_token_count) as corr_latency_total
@@ -378,11 +379,15 @@ ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY = f"""
 SELECT
     model_name,
     agent_name,
+    CASE 
+        WHEN T.response_text IS NULL OR TRIM(T.response_text) = '' THEN 'Response Text is NULL'
+        ELSE 'Response Text is POPULATED'
+    END as response_type,
     COUNT(*) as empty_response_count
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 WHERE {{where_clause}}
-GROUP BY model_name, agent_name
-ORDER BY empty_response_count DESC, agent_name ASC, model_name ASC
+GROUP BY model_name, agent_name, response_type
+ORDER BY response_type ASC, empty_response_count DESC, agent_name ASC, model_name ASC
 """
 
 ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY = f"""
@@ -390,10 +395,15 @@ SELECT
     T.span_id,
     T.trace_id,
     T.timestamp,
+    T.status,
     T.model_name,
     T.agent_name,
     T.prompt_token_count,
+    T.thoughts_token_count,
+    T.candidates_token_count,
     T.duration_ms,
+    T.response_text,
+    T.full_response,
     I.content_text_summary
 FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
 LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
@@ -443,5 +453,24 @@ WHERE {{where_clause}}
 AND T.parent_span_id IS NULL
 AND T.{{metric}} >= {{threshold_val}}
 ORDER BY T.{{metric}} DESC, T.trace_id ASC
+LIMIT {{limit}}
+"""
+
+ANALYZE_HALLUCINATION_LOOPS_QUERY = f"""
+SELECT 
+    T.trace_id,
+    T.span_id,
+    T.agent_name,
+    T.model_name,
+    T.candidates_token_count,
+    T.duration_ms,
+    I.content_text_summary,
+    T.response_text,
+    T.timestamp
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+WHERE {{where_clause}}
+QUALIFY ROW_NUMBER() OVER(PARTITION BY T.trace_id, T.span_id ORDER BY T.timestamp DESC) = 1
+ORDER BY T.candidates_token_count DESC
 LIMIT {{limit}}
 """

@@ -42,7 +42,7 @@ AGENT_DATASET_LOCATION = os.getenv('AGENT_DATASET_LOCATION', DATASET_LOCATION)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
 
 # Agent
-AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.3')
+AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.4')
 
 
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
@@ -52,7 +52,7 @@ assert MODEL_ID, "AGENT_MODEL_ID is not set"
 
 # Agent Configurations
 RCA_MAX_CONCURRENT_REQUESTS = os.getenv('RCA_MAX_CONCURRENT_REQUESTS', '5')
-MAX_CHARS_PAYLOAD_SQL = os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000') # max chars for the returned SQL payload to be
+MAX_CHARS_PAYLOAD_SQL = int(os.getenv('MAX_CHARS_PAYLOAD_SQL', '1000')) # max chars for the returned SQL payload to be
 # truncated (e.g when using LLM)
 
 
@@ -66,7 +66,6 @@ INVOCATION_TIMEOUT_MINUTES = int(os.getenv('INVOCATION_TIMEOUT_MINUTES', '5'))
 
 TOOLS_TO_EXCLUDE = ["transfer_to_agent"]
 TOOLS_TO_EXCLUDE_STR = ", ".join(f"'{tool}'" for tool in TOOLS_TO_EXCLUDE) if TOOLS_TO_EXCLUDE else None
-DEBUG = str(os.getenv('DEBUG', 'False')).lower() in ('true', '1', 't')
 
 # BQ Views
 COMMON_COLUMNS = ["trace_id", "span_id", "session_id", "duration_ms", "agent_name", "root_agent_name",
@@ -80,7 +79,7 @@ AGENT_SPECIFIC_COLUMNS = ["instruction", "parent_span_id"]
 INVOCATION_SPECIFIC_COLUMNS = ["content_text", "content_text_summary", "invocation_id"]
 
 OBSERVABILITY_APP_NAME = os.getenv('OBSERVABILITY_APP_NAME', "observability_analyst_app")
-MAX_RAW_RECORDS_LIMIT = int(os.getenv("MAX_RAW_RECORDS_LIMIT", 100000))
+MAX_RAW_RECORDS_LIMIT = int(os.getenv("MAX_RAW_RECORDS_LIMIT", 10000000))
 
 # KPI Defaults (Fallback if no config file)=========================================
 # =========================================
@@ -153,7 +152,6 @@ print(
     f"  CONNECTION_ID: {CONNECTION_ID}\n"
     f"  AGENT_NAME: {AGENT_NAME}\n"
     f"  AGENT_VERSION: {AGENT_VERSION}\n"
-    f"  DEBUG: {DEBUG}\n"
     f"  AGENT_PROJECT_ID: {AGENT_PROJECT_ID}\n"
     f"  AGENT_DATASET_ID: {AGENT_DATASET_ID}\n"
     f"  AGENT_TABLE_ID: {AGENT_TABLE_ID}\n"

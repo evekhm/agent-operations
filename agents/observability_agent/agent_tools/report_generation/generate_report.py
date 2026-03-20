@@ -108,12 +108,15 @@ class ReportGenerator:
         self.llm_errors = data.get('llm_errors', pd.DataFrame())
         
         self.empty_responses = data.get('empty_responses', {})
+        self.hallucination_loops = data.get('hallucination_loops', {})
         
         # Config Defaults
         self.data_config = self.config.get("data_retrieval", {})
         self.pres_config = self.config.get("data_presentation", {})
         self.num_slowest_queries = self.pres_config.get("num_slowest_queries", 5)
         self.num_error_queries = self.pres_config.get("num_error_queries", 5)
+        self.num_empty_llm_responses = self.pres_config.get("num_empty_llm_responses", 5)
+        self.num_hallucination_loops = self.pres_config.get("num_hallucination_loops", 5)
         self.time_range_desc = self.data_config.get("time_period", "24h")
         self.playbook = self.config.get("playbook", "overview")
         
@@ -524,8 +527,7 @@ class ReportGenerator:
                         
                         self.add_image(
                             f"{agent} via {model} Latency Sequence", 
-                            os.path.join(self.assets_dir, chart_filename),
-                            subtitle=f"**Total Requests:** {len(am_df)}"
+                            os.path.join(self.assets_dir, chart_filename)
                         )
         except Exception as e:
             logger.error(f"Failed to generate Agent sequence plots in appendix: {e}")
@@ -579,7 +581,7 @@ class ReportGenerator:
                         figsize=(16, 6)
                     )
                     if path:
-                        self.add_image(f"{agent} via {model} Token Sequence", path, subtitle=f"**Total Requests:** {req_count}")
+                        self.add_image(f"{agent} via {model} Token Sequence", path)
 
     def _render_performance_section(self, title: str, df: pd.DataFrame, time_col: str, name_col: str,
                                     kpi_target_key: str, kpi_error_key: str, include_tokens: bool = False,
@@ -694,6 +696,27 @@ class ReportGenerator:
         self.report_content.append(pd.DataFrame(header_data, columns=["Property", "Value"]).to_markdown(index=False, headers=["**Property**", "**Value**"]))
         self.report_content.append("\n---\n")
 
+    def _render_navigation_guide(self):
+        self.add_section("How to Navigate This Report")
+        nav_text = """This observability report provides a comprehensive, deep-dive analysis of your multi-agent ecosystem. Given its extensive length, it is designed to be consumed either as a high-level summary or as a granular debugging tool. 
+
+**Recommended Reading Path:**
+If you are new to this report or looking for immediate takeaways, we recommend following this primary path:
+1. **[Executive Summary](#executive-summary):** Start here for a snapshot of critical system health metrics and an overview of whether your latency and error budgets are being met.
+2. **[Root Cause Insights](#root-cause-insights):** Jump directly to the AI SRE's automated diagnosis of *why* the system is failing, including specific traces and anomalies. 
+3. **[Recommendations](#recommendations) & [Architectural Recommendations](#architectural-recommendations):** Review the prioritized action items and structural changes required to resolve the identified bottlenecks and stability issues.
+
+**Deep-Dive Sections:**
+For engineers investigating specific traces, token usage, or resource exhaustion errors, utilize the sections below:
+- **[Performance](#performance):** A top-down scorecard grading overall End-to-End, Agent, Tool, and Model execution against your defined Service Level Objectives (SLOs).
+- **[System Bottlenecks & Impact](#system-bottlenecks--impact):** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
+- **[Error Analysis](#error-analysis) & [Critical Workflow Failures](#critical-workflow-failures):** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
+- **[Empty LLM Responses](#empty-llm-responses):** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
+- **[Pathological Generation Loops](#pathological-generation-loops):** Identifies instances where the LLM generated massive token outputs, typically symptomatic of a runaway cognitive reasoning loop or hallucination.
+- **[Hypothesis Testing: Latency & Tokens](#hypothesis-testing-latency--tokens):** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
+- **Granular Breakdowns:** Browse the [Agent Details](#agent-details), [Tool Details](#tool-details), and [Model Details](#model-details) for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time."""
+        self.report_content.append(nav_text + "\n\n---\n")
+
     def _render_executive_summary(self):
         # --- Executive Summary ---
         self.add_section("Executive Summary")
@@ -704,8 +727,9 @@ class ReportGenerator:
     def _render_performance_end_to_end(self):
         # --- Performance ---
         self.add_section("Performance")
-        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("This section provides a high-level scorecard for End to End, Sub Agent, Tool, and LLM levels, assessing compliance against defined Service Level Objectives (SLOs).\n")
+        self.report_content.append("\n---\n")
+        self.report_content.append("\n(AI_SUMMARY: Performance)\n")
         self.report_content.append("\n---\n")
 
         # End to End (Roots)
@@ -994,8 +1018,7 @@ class ReportGenerator:
                     )
                     self.add_image(
                         chart_title, 
-                        os.path.join(self.assets_dir, chart_filename),
-                        subtitle=f"**Total Requests:** {len(agent_df)}"
+                        os.path.join(self.assets_dir, chart_filename)
                     )
         except Exception as e:
             logger.error(f"Failed to generate Agent sequence plots: {e}")
@@ -1028,6 +1051,7 @@ class ReportGenerator:
                     "Min Output Tokens": {},
                     "Max Output Tokens": {},
                     "Mean Total Tokens": {},
+                    "Latency vs Input Corr.": {},
                     "Latency vs Output Corr.": {},
                     "Latency vs Output+Thinking Corr.": {},
                     "Correlation Strength": {},
@@ -1063,10 +1087,21 @@ class ReportGenerator:
 
                         if len(subset) > 1:
 
+                            def format_corr(c):
+                                if pd.isna(c): return "N/A"
+                                return f"**{c:.3f}**" if abs(c) > 0.85 else f"{c:.3f}"
+
+                            # Latency vs Input
+                            if subset['latency_seconds'].std() > 0 and subset['prompt_token_count'].std() > 0:
+                                corr_in = subset['latency_seconds'].corr(subset['prompt_token_count'])
+                                metrics_data["Latency vs Input Corr."][m] = format_corr(corr_in)
+                            else:
+                                metrics_data["Latency vs Input Corr."][m] = "N/A"
+
                             # Latency vs Output
                             if subset['latency_seconds'].std() > 0 and subset['candidates_token_count'].std() > 0:
                                 corr_out = subset['latency_seconds'].corr(subset['candidates_token_count'])
-                                metrics_data["Latency vs Output Corr."][m] = f"{corr_out:.3f}" if not pd.isna(corr_out) else "N/A"
+                                metrics_data["Latency vs Output Corr."][m] = format_corr(corr_out)
                             else:
                                 metrics_data["Latency vs Output Corr."][m] = "N/A"
 
@@ -1074,7 +1109,7 @@ class ReportGenerator:
                             total_gen = subset['candidates_token_count'] + subset['thoughts_token_count'].fillna(0)
                             if subset['latency_seconds'].std() > 0 and total_gen.std() > 0:
                                 corr_gen = subset['latency_seconds'].corr(total_gen)
-                                metrics_data["Latency vs Output+Thinking Corr."][m] = f"{corr_gen:.3f}" if not pd.isna(corr_gen) else "N/A"
+                                metrics_data["Latency vs Output+Thinking Corr."][m] = format_corr(corr_gen)
                             else:
                                 metrics_data["Latency vs Output+Thinking Corr."][m] = "N/A"
                                 corr_gen = float('nan') # Ensure variables exist for next block
@@ -1270,8 +1305,7 @@ class ReportGenerator:
                     )
                     self.add_image(
                         chart_title, 
-                        os.path.join(self.assets_dir, chart_filename),
-                        subtitle=f"**Total Requests:** {len(model_df)}"
+                        os.path.join(self.assets_dir, chart_filename)
                     )
         except Exception as e:
             logger.error(f"Failed to generate Model sequence plots: {e}")
@@ -1303,7 +1337,12 @@ class ReportGenerator:
                              else:
                                  corr_out = float('nan')
                              
-                             correlation_map[model] = {'out': corr_out}
+                             if 'prompt_token_count' in model_corr_df.columns and model_corr_df['duration_ms'].std() > 0 and model_corr_df['prompt_token_count'].std() > 0:
+                                 corr_in = model_corr_df['duration_ms'].corr(model_corr_df['prompt_token_count'])
+                             else:
+                                 corr_in = float('nan')
+                                 
+                             correlation_map[model] = {'out': corr_out, 'in': corr_in}
                              
                              if has_thoughts:
                                  # Output + Thinking
@@ -1352,18 +1391,25 @@ class ReportGenerator:
                      row[r['model_name']] = val
                  stats_rows.append(row)
              
-             # Correlation Rows
+            # Correlation Rows
+             row_corr_in = {"Metric": "Latency vs Input Corr."}
              row_corr_out = {"Metric": "Latency vs Output Corr."}
              row_corr_tot = {"Metric": "Latency vs Output+Thinking Corr."}
              row_strength = {"Metric": "Correlation Strength"}
              
+             def format_global_corr(c):
+                 if not isinstance(c, float) or pd.isna(c): return "N/A"
+                 return f"**{c:.3f}**" if abs(c) > 0.85 else f"{c:.3f}"
+
              for model in sorted(self.df_models['model_name'].unique()):
                  corrs = correlation_map.get(model, {})
+                 c_in = corrs.get('in', 'N/A')
                  c_out = corrs.get('out', 'N/A')
                  c_tot = corrs.get('total', 'N/A')
                  
-                 row_corr_out[model] = f"{c_out:.3f}" if isinstance(c_out, float) else "N/A"
-                 row_corr_tot[model] = f"{c_tot:.3f}" if isinstance(c_tot, float) else "N/A"
+                 row_corr_in[model] = format_global_corr(c_in)
+                 row_corr_out[model] = format_global_corr(c_out)
+                 row_corr_tot[model] = format_global_corr(c_tot)
                  
                  # Strength Logic (using c_out or max of both?)
                  # User example shows strength row. I'll use c_tot if available, else c_out
@@ -1378,6 +1424,7 @@ class ReportGenerator:
                      else: s_str = "⬜ **Weak**"
                      row_strength[model] = s_str
 
+             stats_rows.append(row_corr_in)
              stats_rows.append(row_corr_out)
              stats_rows.append(row_corr_tot)
              stats_rows.append(row_strength)
@@ -1998,10 +2045,10 @@ class ReportGenerator:
                         cat_df = self.md_builder.bold_first_column(cat_df)
                         cat_df.columns = [f"**{c}**" for c in cat_df.columns]
                         summary_md += cat_df.to_markdown(index=False) + "\n\n"
-                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err) if isinstance(df_err, pd.DataFrame) else 0}):**\n\n"
                     else:
                         summary_md += "No exact categories matched.\n\n"
-                        summary_md += f"**Sample Details (Limited to {len(df_err)}):**\n\n"
+                        summary_md += f"**Sample Details (Limited to {len(df_err) if isinstance(df_err, pd.DataFrame) else 0}):**\n\n"
 
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Name")
             df_final = self.md_builder.bold_columns_by_pattern(df_final, "Root Agent")
@@ -2130,107 +2177,271 @@ class ReportGenerator:
     def _render_empty_responses(self):
         # --- Empty LLM Responses ---
         self.add_section("Empty LLM Responses")
+        
+        # Hardcoded Explanation
+        self.report_content.append("This section surfaces LLM generation defects where the API successfully returned a 200 OK status, but forced an empty `candidates` list (0 tokens generated). This typically occurs due to backend telemetry anomalies or internal model safety filters blocking the response mid-generation.\n\n")
+
+        # Inject AI Summary if it exists
+        if hasattr(self, "chart_summaries") and "empty_responses_summary" in self.chart_summaries:
+            self.report_content.append(self.chart_summaries["empty_responses_summary"] + "\n\n")
+
         if self.empty_responses and isinstance(self.empty_responses, dict):
-            if "stats" in self.empty_responses:
-                self.add_subsection("Summary")
-                # Model Name | Agent Name | Empty Response Count
-                # existing stats might not map 1:1, check keys
-                # Assuming stats is a list of dicts with these keys
-                stat_df = pd.DataFrame(self.empty_responses["stats"])
-                # Rename if needed
-                if not stat_df.empty:
-                    # Rename columns to match fixed report
-                    stat_df.rename(columns={
-                        'model_name': 'Model Name',
-                        'agent_name': 'Agent Name',
-                        'count': 'Empty Response Count',
-                        'empty_response_count': 'Empty Response Count'
-                    }, inplace=True, errors='ignore')
+            stat_df = pd.DataFrame(self.empty_responses.get("stats", []))
+            rec_df_all = pd.DataFrame(self.empty_responses.get("records", []))
+            
+            if not stat_df.empty:
+                stat_df.rename(columns={
+                    'model_name': 'Model Name',
+                    'agent_name': 'Agent Name',
+                    'count': 'Empty Response Count',
+                    'empty_response_count': 'Empty Response Count'
+                }, inplace=True, errors='ignore')
+
+                total_empty = pd.to_numeric(stat_df['Empty Response Count'], errors='coerce').sum()
+                if pd.notna(total_empty):
+                    total_empty = int(total_empty)
+                else:
+                    total_empty = 0
                     
-                    # Reorder: Agent Name | Model Name | Count
+                self.report_content.append(f"**Total Empty LLM Responses for all in Analysis Window:** {total_empty}\n\n")
+
+            groups = []
+            has_split_data = False
+            
+            if not stat_df.empty and 'response_type' in stat_df.columns and not rec_df_all.empty and 'response_text' in rec_df_all.columns:
+                has_split_data = True
+                bool_is_null = rec_df_all['response_text'].isna() | (rec_df_all['response_text'] == '')
+                
+                groups = [
+                    {
+                        "title": "Response Text is NULL and candidates_tokens_count is 0",
+                        "subtitle": "This indicates a complete generation failure or hard block by safety filters at the model API layer. No response strings were populated in the response payload.",
+                        "stat_df": stat_df[stat_df['response_type'] == 'Response Text is NULL'].copy(),
+                        "rec_df": rec_df_all[bool_is_null].copy()
+                    },
+                    {
+                        "title": "Response Text is populated but candidates_tokens_count is 0",
+                        "subtitle": "This typically indicates a telemetry counting anomaly or a specific `FinishReason` (e.g., `RECITATION`, `OTHER`) where the API successfully returned a generated response text, but incorrectly reported 0 generated tokens to the usage metadata tracking.",
+                        "stat_df": stat_df[stat_df['response_type'] == 'Response Text is POPULATED'].copy(),
+                        "rec_df": rec_df_all[~bool_is_null].copy()
+                    }
+                ]
+            else:
+                groups = [
+                    {
+                        "title": "All Empty Responses",
+                        "subtitle": "",
+                        "stat_df": stat_df.copy(),
+                        "rec_df": rec_df_all.copy()
+                    }
+                ]
+                
+            for group in groups:
+                sdf = group["stat_df"]
+                rdf = group["rec_df"]
+                
+                if sdf.empty and rdf.empty:
+                    continue
+                    
+                self.report_content.append(f"### {group['title']}\n\n")
+                if group["subtitle"]:
+                    self.report_content.append(f"{group['subtitle']}\n\n")
+                
+                if not sdf.empty:
+                    self.report_content.append("#### Overview\n")
+                    total_count = pd.to_numeric(sdf['Empty Response Count'], errors='coerce').sum()
+                    if pd.notna(total_count):
+                        total_count = int(total_count)
+                    else:
+                        total_count = 0
+                    self.report_content.append(f"**Total Count in Analysis Window:** {total_count}\n\n")
+                    
                     cols = ['Agent Name', 'Model Name', 'Empty Response Count']
-                    stat_df = stat_df[[c for c in cols if c in stat_df.columns]]
-                    
-                    # Standardize table formatting
-                    stat_df = self.formatter.standardize_table_formatting(stat_df)
+                    sdf = sdf[[c for c in cols if c in sdf.columns]]
+                    sdf = self.formatter.standardize_table_formatting(sdf)
                     
                     from .report_markdown_builder import ReportMarkdownBuilder
-                    stat_df = ReportMarkdownBuilder.bold_columns(stat_df, ['Agent Name', 'Model Name'])
+                    sdf = ReportMarkdownBuilder.bold_columns(sdf, ['Agent Name', 'Model Name'])
                         
-                    self.report_content.append(stat_df.to_markdown(index=False))
-                    self.report_content.append("\n<br>\n")
-            
-            if "records" in self.empty_responses:
-                self.add_subsection("Details")
-                # Rank | Timestamp | Model Name | Agent Name | User Message | Prompt Tokens | Latency (s) | Trace ID | Span ID
-                rec_df = pd.DataFrame(self.empty_responses["records"])
+                    self.report_content.append(sdf.to_markdown(index=False))
+                    self.report_content.append("\n<br>\n\n")
                 
-                if not rec_df.empty:
-                    rec_df = self.formatter.standardize_formatting(self.formatter.truncate_df(rec_df))
-                    rec_df['Rank'] = range(1, len(rec_df) + 1)
+                if not rdf.empty:
+                    self.report_content.append("#### Details\n\n")
+                    self.report_content.append(f"**Sample Details (limited to {self.num_empty_llm_responses})**\n<br>\n\n")
                     
-                    # Ensure Latency (s)
-                    if 'duration_ms' in rec_df.columns:
-                        rec_df['Latency (s)'] = (rec_df['duration_ms'] / 1000).round(3)
-                    else:
-                        rec_df['Latency (s)'] = 0.0
+                    
+                    # Try to present structurally diverse examples based on User Priority Rule:
+                    # 1) Try different agent
+                    # 2) Then try different model
+                    # 3) Then try different user message
+                    # 4) Finally, PAD with identical duplicates if we still haven't reached the limit.
+                    selected_indices = []
+                    
+                    if not rdf.empty:
+                        # Reset index to ensure uniqueness for subset extraction
+                        rdf = rdf.reset_index(drop=True)
                         
-                    # Map
+                        # Pass 1: Unique Agents
+                        if 'agent_name' in rdf.columns:
+                            for idx in rdf.drop_duplicates(subset=['agent_name'], keep='first').index:
+                                if len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                
+                        # Pass 2: Unique Agent + Model combinations
+                        if len(selected_indices) < self.num_empty_llm_responses and 'model_name' in rdf.columns and 'agent_name' in rdf.columns:
+                            for idx in rdf.drop_duplicates(subset=['agent_name', 'model_name'], keep='first').index:
+                                if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                    
+                        # Pass 3: Unique Agent + Model + Message combinations
+                        if len(selected_indices) < self.num_empty_llm_responses:
+                            dedup_msg = []
+                            if 'agent_name' in rdf.columns: dedup_msg.append('agent_name')
+                            if 'model_name' in rdf.columns: dedup_msg.append('model_name')
+                            if 'content_text_summary' in rdf.columns: dedup_msg.append('content_text_summary')
+                            elif 'prompt_tokens' in rdf.columns: dedup_msg.append('prompt_tokens')
+                            
+                            if dedup_msg:
+                                for idx in rdf.drop_duplicates(subset=dedup_msg, keep='first').index:
+                                    if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                        selected_indices.append(idx)
+                                        
+                        # Pass 4: Fallback to non-unique traces if limit not met
+                        if len(selected_indices) < self.num_empty_llm_responses:
+                            for idx in rdf.index:
+                                if idx not in selected_indices and len(selected_indices) < self.num_empty_llm_responses:
+                                    selected_indices.append(idx)
+                                        
+                        # Ensure we only pick what we found
+                        rdf = rdf.loc[selected_indices].copy()
+                        
+                    rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
+                    rdf['Rank'] = range(1, len(rdf) + 1)
+                    
+                    if 'duration_ms' in rdf.columns:
+                        rdf['Latency (s)'] = (rdf['duration_ms'] / 1000).round(3)
+                    else:
+                        rdf['Latency (s)'] = 0.0
+                        
+                    if 'status' in rdf.columns:
+                        rdf['Status'] = rdf['status'].apply(self._status_to_emoji)
+                    else:
+                        rdf['Status'] = '?'
+                        
                     rec_map = {
                         'Rank': 'Rank',
                         'timestamp': 'Timestamp',
-                        'start_time': 'Timestamp', # Fallback
+                        'start_time': 'Timestamp',
                         'model_name': 'Model Name',
                         'agent_name': 'Agent Name',
                         'content_text_summary': 'User Message',
                         'prompt_tokens': 'Prompt Tokens',
-                        'prompt_token_count': 'Prompt Tokens', # Fallback
+                        'prompt_token_count': 'Prompt Tokens',
+                        'thoughts_tokens': 'thoughts_token_count',
+                        'candidates_tokens': 'candidates_token_count',
+                        'full_response': 'full_response',
+                        'response_text': 'response_text',
                         'Latency (s)': 'Latency (s)',
+                        'Status': 'Status',
                         'trace_id': 'Trace ID',
                         'span_id': 'Span ID' 
                     }
 
-                    # Format Timestamp handled by _standardize_formatting
-                    
-                    # Use helper formatted table logic (or manually here since we have custom Latency calc)
-                    # Reuse generic logic for missing cols & renaming
+                    if 'full_response' in rdf.columns:
+                        rdf['full_response'] = rdf['full_response'].apply(self.formatter.format_as_code)
+                    if 'response_text' in rdf.columns:
+                        rdf['response_text'] = rdf['response_text'].apply(self.formatter.format_as_code)
+
                     final_r = []
                     ren_r = {}
-                    
-                    # Prioritize keys that actually exist in rec_df
-                    seen_targets = set()
-                    
-                    # Define desired order of Target Columns
-                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'Latency (s)', 'Trace ID', 'Span ID']
+                    desired_order = ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'User Message', 'Prompt Tokens', 'thoughts_token_count', 'candidates_token_count', 'response_text', 'full_response', 'Latency (s)', 'Status', 'Trace ID', 'Span ID']
                     
                     for target in desired_order:
-                        # Find source key in rec_map that exists in rec_df
                         found = False
                         for src, tgt in rec_map.items():
-                            if tgt == target and src in rec_df.columns:
+                            if tgt == target and src in rdf.columns:
                                 final_r.append(src)
                                 ren_r[src] = tgt
                                 found = True
                                 break
                         if not found:
-                             # If not found, add N/A column
-                             rec_df[target] = "N/A"
+                             rdf[target] = "N/A"
                              final_r.append(target)
                              ren_r[target] = target
 
-                    df_final_rec = rec_df[final_r].rename(columns=ren_r)
-                    
-                    # Standardize table formatting
+                    df_final_rec = rdf[final_r].rename(columns=ren_r)
                     df_final_rec = self.formatter.standardize_table_formatting(df_final_rec)
                     
                     from .report_markdown_builder import ReportMarkdownBuilder
                     df_final_rec = ReportMarkdownBuilder.bold_columns(df_final_rec, ['Agent Name', 'Model Name'])
                     
-                    df_final_rec = self._apply_table_links(df_final_rec, rec_df, "empty")
-                    
+                    df_final_rec = self._apply_table_links(df_final_rec, rdf, "empty")
                     df_final_rec.columns = [f"**{c}**" for c in df_final_rec.columns]
+                    
                     self.report_content.append(df_final_rec.to_markdown(index=False))
                     self.report_content.append("\n<br>\n")
+
+        self.report_content.append("\n---\n")
+
+
+    def _render_hallucination_loops(self):
+        # --- Pathological Generation Loops ---
+        self.add_section("Pathological Generation Loops")
+        self.report_content.append("This section surfaces severe anomaly traces where the agent entered an infinite cognitive loop, repeating the same text internally until it exhausted output tokens and/or hard-failed on timeout. These generation hallucinations drastically inflate latency, blow out token costs, and indicate a critical orchestrational logic failure.\n\n")
+
+        if self.hallucination_loops and isinstance(self.hallucination_loops, dict):
+            rec_df_all = pd.DataFrame(self.hallucination_loops.get("records", []))
+            
+            if rec_df_all.empty:
+                self.report_content.append("No pathological generation loops were detected. Your agents are not exhibiting token-exhaustion anomalies.\n")
+            else:
+                rdf = rec_df_all.copy()
+                rdf = rdf.head(self.num_hallucination_loops)
+                
+                rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
+                rdf['Rank'] = range(1, len(rdf) + 1)
+                
+                if 'duration_ms' in rdf.columns:
+                    rdf['Latency (s)'] = (rdf['duration_ms'] / 1000).round(3)
+                else:
+                    rdf['Latency (s)'] = 0.0
+                    
+                rec_map = {
+                    'Rank': 'Rank',
+                    'timestamp': 'Timestamp',
+                    'agent_name': 'Agent Name',
+                    'model_name': 'Model Name',
+                    'candidates_token_count': 'Output Tokens',
+                    'content_text_summary': 'User Message',
+                    'response_text': 'Hallucination Text',
+                    'Latency (s)': 'Latency (s)',
+                    'span_id': 'Span ID',
+                    'trace_id': 'Trace ID'
+                }
+                
+                final_r = []
+                ren_r = {}
+                for target in ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'Output Tokens', 'User Message', 'Hallucination Text', 'Latency (s)', 'Span ID', 'Trace ID']:
+                    for src, tgt in rec_map.items():
+                        if tgt == target and src in rdf.columns:
+                            final_r.append(src)
+                            ren_r[src] = tgt
+                            break
+                            
+                df_final = rdf[final_r].rename(columns=ren_r)
+                df_final = self.formatter.standardize_table_formatting(df_final)
+                
+                from .report_markdown_builder import ReportMarkdownBuilder
+                df_final = ReportMarkdownBuilder.bold_columns(df_final, ['Agent Name', 'Model Name'])
+                
+                df_final = self._apply_table_links(df_final, rdf, "hallucination")
+                df_final.columns = [f"**{c}**" for c in df_final.columns]
+                
+                self.report_content.append(df_final.to_markdown(index=False))
+                self.report_content.append("\n<br>\n")
+        else:
+            self.report_content.append("No pathological generation loops were detected.\n")
 
         self.report_content.append("\n---\n")
 
@@ -2240,7 +2451,7 @@ class ReportGenerator:
         self.add_section("Root Cause Insights")
         self.report_content.append("(Root Cause Insights will be generated by AI Agent)\n")
 
-
+    def _render_hypothesis_testing(self):
         # 3. Hypothesis Testing: Agent/Model Latency vs Tokens
         if hasattr(self, 'df_raw_llm') and not self.df_raw_llm.empty:
             self.add_section("Hypothesis Testing: Latency & Tokens")
@@ -2395,6 +2606,7 @@ class ReportGenerator:
         
         self._render_report_header()
         
+        self._render_navigation_guide()
         self._render_executive_summary()
         self._render_performance()
         self._render_agent_details()
@@ -2403,8 +2615,12 @@ class ReportGenerator:
         self._render_system_bottlenecks()
         self._render_error_analysis()
         self._render_empty_responses()
+        self._render_hallucination_loops()
+
+        # 3. Insights Phase
         self._render_root_cause_insights()
         self._render_recommendations()
+        self._render_hypothesis_testing()
         # Placeholder rendering skipped, tools.py handles injection before Appendix
         self._render_appendix()
         self._render_report_parameters()

@@ -180,6 +180,10 @@ def parse_scenarios(scenarios_file: str, valid_datastore: str, valid_web_datasto
             print(f"Skipping scenario, no replay file or questions: {line}")
             continue
             
+        # Dynamically inject the TEST_TABLE_ID into any queries that use the {TEST_TABLE_ID} placeholder
+        active_table = os.environ.get("TEST_TABLE_ID", "agent_events")
+        queries = [q.replace("{TEST_TABLE_ID}", active_table) for q in queries]
+            
         user_id = f"{scenario_target}_{model}_{i}_{uuid.uuid4().hex[:8]}"
         user_id = user_id.replace("-", "_").replace(".", "_") # Sanitize user_id
         work_items.append((user_id, env_vars, queries, state))

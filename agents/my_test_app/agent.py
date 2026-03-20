@@ -214,7 +214,8 @@ class AgentFactory:
             description="Analyzes data in BigQuery datasets.",
             instruction=(
                 f"You are a data analyst. Use the BigQuery tools to answer questions about data in `{self.project_id}.{self.dataset_id}`. "
-                f"The main table for events is `{self.table_id}`. Use `list_tables` if needed."
+                f"The main table for events is `{self.table_id}`. Use `list_tables` if needed. "
+                f"CRITICAL: The timestamp column is 'timestamp', not 'event_time'. You can query JSON columns using JSON_EXTRACT_SCALAR(). Avoid casting JSON directly to STRING or comparing JSON directly to strings. If a user asks about a table that does not exist, use `{self.table_id}` instead."
             ),
             tools=[bigquery_toolset],
             generate_content_config=get_agent_config(self.env.get("BQ_AGENT_CONFIG", "NORMAL")),
@@ -294,7 +295,7 @@ class AgentFactory:
                 "1. If the input contains a _CONFIG keyword (e.g., 'WRONG_MAX_TOKENS', 'INVALID_MODEL_CONFIG', 'NORMAL', 'OVER_PROVISIONED', 'HIGH_TEMP'), you MUST route it to the corresponding 'config_test_agent_...'.\n"
                 "2. If the input mentions 'unreliable tool', 'flaky action', 'timeout', 'simulate', or asks to test a failure or a slow response, you MUST route it to 'unreliable_tool_agent'.\n"
                 "3. If the input asks to fetch/lookup multiple items in parallel (e.g., 'parallel lookup', 'Retrieve ... in parallel'), you MUST route it to 'parallel_db_lookup'.\n"
-                "4. If the input asks about BigQuery datasets, tables, or records (e.g., '`agent_events_test`', '`prod_events`'), you MUST route it to 'bigquery_data_agent'.\n"
+                "4. If the input asks about BigQuery datasets, tables, or records (e.g., '`agent_events_demo_v3`', '`prod_events`'), you MUST route it to 'bigquery_data_agent'.\n"
                 "5. If the input asks about ADK documentation, how to use ADK tools, or ADK Application structure, you MUST route it to 'adk_documentation_agent'.\n"
                 "6. If the input asks about AI Agent Observability, Tracing, Data Models, or Langfuse, you MUST route it to 'ai_observability_agent'.\n"
                 "7. For general knowledge questions (e.g., 'Who is the CEO...', 'weather in...'), you MUST route it to 'google_search_agent'.\n"

@@ -3,9 +3,6 @@ Analytics tools for tracing execution concurrency and identifying architectural 
 """
 import json
 import logging
-from typing import Optional
-
-import pandas as pd
 
 from ...config import PROJECT_ID, DATASET_ID, DEFAULT_TIME_RANGE
 from ...utils.bq import execute_bigquery

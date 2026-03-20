@@ -23,7 +23,8 @@ from agents.observability_agent.agent_tools.analytics.latency import (
 
 from agents.observability_agent.config import TOOL_EVENTS_VIEW_ID, LLM_EVENTS_VIEW_ID, MAX_RAW_RECORDS_LIMIT
 from agents.observability_agent.agent_tools.analytics.llm_diagnostics import (
-    analyze_empty_llm_responses
+    analyze_empty_llm_responses,
+    analyze_hallucination_loops
 )
 from agents.observability_agent.agent_tools.analytics.correlation import fetch_correlation_data
 from agents.observability_agent.agent_tools.analytics.latency import get_raw_invocation_events, get_raw_agent_events
@@ -197,6 +198,16 @@ class ReportDataManager:
         limit_empty = self.data_config.get("num_empty_llm_responses", 20)
         task_empty = self.trace_task("EmptyLLM", analyze_empty_llm_responses(limit=limit_empty, time_range=self.time_range_desc))
         
+        limit_loops = self.data_config.get("num_hallucination_loops", 100)
+        token_threshold = self.data_config.get("hallucination_loop_token_threshold", 8000)
+        duration_threshold = self.data_config.get("hallucination_loop_duration_ms_threshold", 120000)
+        task_loops = self.trace_task("HallucinationLoops", analyze_hallucination_loops(
+            limit=limit_loops, 
+            time_range=self.time_range_desc, 
+            token_threshold=token_threshold,
+            duration_threshold=duration_threshold
+        ))
+        
         task_correlation = self.trace_task("Correlation", fetch_correlation_data(time_range=self.time_range_desc, limit=MAX_RAW_RECORDS_LIMIT))
         task_raw_llm = self.trace_task("RawLLM", self.fetch_raw_llm_data(time_range=self.time_range_desc))
         task_raw_invocations = self.trace_task("RawInvocations", self.fetch_raw_invocation_data(time_range=self.time_range_desc))
@@ -207,14 +218,14 @@ class ReportDataManager:
             task_agent_models_llm,
             task_e2e_slow, task_agent_slow, task_tool_slow, task_llm_slow,
             task_root_errors, task_agent_errors, task_tool_errors, task_llm_errors,
-            task_empty, task_correlation, task_raw_llm, task_raw_invocations, task_raw_agents
+            task_empty, task_loops, task_correlation, task_raw_llm, task_raw_invocations, task_raw_agents
         )
 
         (
             raw_agents, raw_roots, raw_tools, raw_models, raw_agent_models_e2e, raw_agent_models_llm,
             raw_e2e_slow, raw_agent_slow, raw_tool_slow, raw_llm_slow,
             raw_root_errors, raw_agent_errors, raw_tool_errors, raw_llm_errors,
-            raw_empty, raw_correlation, df_raw_llm_data, df_raw_invocations, df_raw_agents
+            raw_empty, raw_loops, raw_correlation, df_raw_llm_data, df_raw_invocations, df_raw_agents
         ) = results
 
         # Process Results
@@ -277,7 +288,9 @@ class ReportDataManager:
         data['df_raw_llm'] = df_raw_llm_data
         data['df_raw_invocations'] = df_raw_invocations
         data['df_raw_agents'] = df_raw_agents
+
         data['empty_responses'] = json.loads(raw_empty) if isinstance(raw_empty, str) else raw_empty
+        data['hallucination_loops'] = json.loads(raw_loops) if isinstance(raw_loops, str) else raw_loops
         data['outliers'] = {} # Placeholder
 
         # Apply root cause analysis using limit from config

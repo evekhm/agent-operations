@@ -16,13 +16,6 @@ from typing import Optional
 import pandas as pd
 from google.cloud import bigquery
 
-from ...config import (PROJECT_ID, DATASET_ID, LLM_EVENTS_VIEW_ID, INVOCATION_EVENTS_VIEW_ID, AGENT_EVENTS_VIEW_ID,
-                       DEFAULT_TIME_RANGE)
-from ...utils.bq import execute_bigquery, run_query_async
-from ...utils.caching import cached_tool
-from ...utils.common import AnalysisEncoder, build_standard_where_clause
-from ...utils.telemetry import trace_span
-
 from .queries import (
     ANALYZE_LATENCY_GROUPS_QUERY,
     GET_CONCURRENT_REQUEST_IMPACT_QUERY,
@@ -30,8 +23,14 @@ from .queries import (
     GET_CONFIG_OUTLIERS_QUERY,
     FETCH_SINGLE_QUERY,
     ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY,
-    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY
+    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY,
+    ANALYZE_HALLUCINATION_LOOPS_QUERY
 )
+from ...config import (DEFAULT_TIME_RANGE)
+from ...utils.bq import execute_bigquery, run_query_async
+from ...utils.caching import cached_tool
+from ...utils.common import AnalysisEncoder, build_standard_where_clause
+from ...utils.telemetry import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +403,60 @@ async def fetch_single_query(span_id: str) -> str:
         return json.dumps({"error": error_msg})
 
 
+@trace_span()
+@cached_tool()
+async def analyze_hallucination_loops(
+    time_range: str = DEFAULT_TIME_RANGE,
+    agent_name: Optional[str] = None,
+    root_agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    token_threshold: int = 8000,
+    duration_threshold: float = 120000.0,
+    limit: int = 10
+) -> str:
+    """
+    Identify cases where the LLM got stuck in an internal cognitive loop (generating massive token amounts).
+    
+    Args:
+        time_range (str): Time range to analyze.
+        agent_name (str): Optional. Filter by agent name.
+        root_agent_name (str): Optional. Filter by root agent name.
+        model_name (str): Optional. Filter by model version.
+        token_threshold (int): Output token counts exceeding this are considered loops.
+        limit (int): Max number of detailed records to return.
+
+    Returns:
+        str: JSON string containing individual hallucination loops.
+    """
+    logger.info(f"[TOOL CALL-analyze_hallucination_loops] time_range='{time_range}', token_threshold={token_threshold}, limit={limit}")
+    try:
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config={
+                "agent_name": (agent_name, "="),
+                "root_agent_name": (root_agent_name, "="),
+                "model_name": (model_name, "=")
+            }
+        )
+        
+        # We explicitly catch generated output over the threshold combined with duration threshold
+        where_clause += f" AND T.candidates_token_count > {token_threshold} AND T.duration_ms > {duration_threshold}"
+        
+        query = ANALYZE_HALLUCINATION_LOOPS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
+        
+        df = await execute_bigquery(query)
+        if df.empty:
+             return json.dumps({"records": []})
+
+        return json.dumps({"records": df.to_dict(orient="records")}, cls=AnalysisEncoder)
+    except Exception as e:
+        error_msg = f"Error fetching hallucination loops: {str(e)}"
+        logger.error(f"[PROGRESS] {error_msg}")
+        return json.dumps({"error": error_msg})
+
 
 @trace_span()
 @cached_tool()
@@ -440,8 +493,9 @@ async def analyze_empty_llm_responses(
         )
         
         # We only care about explicit empty responses that are not just pending
-        # IFNULL handles cases where it might be explicitly null but completed.
-        where_clause += " AND (T.candidates_token_count = 0 OR IFNULL(T.candidates_token_count, 0) = 0)"
+        # Include cases where response generation failed (candidates = 0) OR text generation was empty (response_text IS NULL)
+        where_clause += " AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '')"
+        where_clause += " AND T.status != 'ERROR'"
 
         # 1. Get summary stats
         summary_query = ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY.format(
@@ -455,6 +509,7 @@ async def analyze_empty_llm_responses(
                 stats.append({
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
+                    "response_type": row['response_type'] if 'response_type' in row else 'Response Text is NULL',
                     "empty_response_count": int(row['empty_response_count'])
                 })
 
@@ -468,14 +523,26 @@ async def analyze_empty_llm_responses(
         records = []
         if not records_df.empty:
             for _, row in records_df.iterrows():
+                full_resp = row['full_response']
+                if isinstance(full_resp, str):
+                    try:
+                        full_resp = json.loads(full_resp)
+                    except:
+                        pass
+                
                 records.append({
                     "span_id": str(row['span_id']),
                     "trace_id": str(row['trace_id']) if pd.notna(row['trace_id']) else None,
                     "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                    "status": row['status'],
                     "model_name": row['model_name'],
                     "agent_name": row['agent_name'],
                     "prompt_tokens": int(row['prompt_token_count']) if pd.notna(row['prompt_token_count']) else 0,
+                    "thoughts_tokens": int(row['thoughts_token_count']) if pd.notna(row['thoughts_token_count']) else 0,
+                    "candidates_tokens": int(row['candidates_token_count']) if pd.notna(row['candidates_token_count']) else 0,
                     "duration_ms": float(row['duration_ms']) if pd.notna(row['duration_ms']) else 0.0,
+                    "response_text": row['response_text'] if pd.notna(row['response_text']) else None,
+                    "full_response": full_resp,
                     "content_text_summary": row['content_text_summary'] if pd.notna(row['content_text_summary']) else None
                 })
 
