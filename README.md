@@ -144,26 +144,6 @@ You can provide CLI arguments when running the analyst script to dynamically ove
 ### Playbook: overview (Default System Overview)
 By default, the agent executes the `overview` playbook, which provides a comprehensive aggregation of latency, token usage, and error metrics for the specified time period across your Agent, Tool, and LLM layers. It automatically diagnoses root causes for bottlenecks and outputs an "AI SRE" augmented intelligence report.
 
-**How to Navigate This Report**
-
-This observability report provides a comprehensive, deep-dive analysis of your multi-agent ecosystem. Given its extensive length, it is designed to be consumed either as a high-level summary or as a granular debugging tool.
-
-**Recommended Reading Path:**
-If you are new to this report or looking for immediate takeaways, we recommend following this primary path:
-* **Executive Summary:** Start here for a snapshot of critical system health metrics and an overview of whether your latency and error budgets are being met.
-* **Root Cause Insights:** Jump directly to the AI SRE's automated diagnosis of why the system is failing, including specific traces and anomalies.
-* **Recommendations & Architectural Recommendations:** Review the prioritized action items and structural changes required to resolve the identified bottlenecks and stability issues.
-
-**Deep-Dive Sections:**
-For engineers investigating specific traces, token usage, or resource exhaustion errors, utilize the sections below:
-* **Performance:** A top-down scorecard grading overall End-to-End, Agent, Tool, and Model execution against your defined Service Level Objectives (SLOs).
-* **System Bottlenecks & Impact:** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
-* **Error Analysis & Critical Workflow Failures:** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
-* **Empty LLM Responses:** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
-* **Pathological Generation Loops:** Identifies instances where the LLM generated massive token outputs, typically symptomatic of a runaway cognitive reasoning loop or hallucination.
-* **Hypothesis Testing: Latency & Tokens:** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
-* **Granular Breakdowns:** Browse the Agent Details, Tool Details, and Model Details for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time.
-
 ```shell
 agents/observability_agent/generate_report.sh --time_period 7d
 ```
