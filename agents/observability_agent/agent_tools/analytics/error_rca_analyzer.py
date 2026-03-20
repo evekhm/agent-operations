@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Dict, Any
 
 import pandas as pd
@@ -24,30 +25,60 @@ Return ONLY valid JSON. No markdown blocks, no prefixes.
 """
 
 async def _get_rca(client, df_name, idx, row_dict, prompt, semaphore):
-    async with semaphore:
-        try:
-            response = await client.aio.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=prompt,
-            )
-            text = response.text.strip()
-            # Remove markdown blocks if agent hallucinated them
-            if text.startswith("```json"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            elif text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    max_retries = 5
+    base_delay = 5.0
+
+    for attempt in range(max_retries):
+        async with semaphore:
+            try:
+                response = await client.aio.models.generate_content(
+                    model='gemini-2.5-pro',
+                    contents=prompt,
+                )
+                text = response.text.strip()
+                # Remove markdown blocks if agent hallucinated them
+                if text.startswith("```json"):
+                    text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                elif text.startswith("```"):
+                    text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                    
+                data = json.loads(text)
                 
-            data = json.loads(text)
-            return {
-                "rca_analysis": data.get("rca_analysis", "Extracted text but missing rca_analysis key."),
-                "category": data.get("category", "OTHER_ERROR")
-            }
-        except Exception as e:
-            logger.error(f"Failed to generate RCA for {df_name} row {idx}: {e}")
-            return {
-                "rca_analysis": "RCA Generation failed.",
-                "category": "OTHER_ERROR"
-            }
+                if attempt > 0:
+                    logger.info(f"✅ Successfully recovered RCA for {df_name} row {idx} after {attempt} retries!")
+                    
+                return {
+                    "rca_analysis": data.get("rca_analysis", "Extracted text but missing rca_analysis key."),
+                    "category": data.get("category", "OTHER_ERROR"),
+                    "status": "success",
+                    "retries": attempt
+                }
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower()
+                
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    if is_rate_limit:
+                        logger.warning(f"⚠️ Rate limit (429) hit for {df_name} row {idx}. We are going to retry in {delay}s...")
+                    else:
+                        logger.warning(f"⚠️ RCA generation error ({type(e).__name__}) for {df_name} row {idx}. We are going to retry in {delay}s...")
+                else:
+                    if is_rate_limit:
+                        logger.warning(f"❌ Exhausted retries for {df_name} row {idx} due to persistent Rate Limits (429).")
+                    else:
+                        logger.error(f"❌ Failed to generate RCA for {df_name} row {idx} after {max_retries} attempts: {type(e).__name__} - {error_str[:150]}...")
+                    
+                    return {
+                        "rca_analysis": "RCA Generation failed after retries.",
+                        "category": "OTHER_ERROR",
+                        "status": "failed",
+                        "retries": attempt
+                    }
+        
+        # Sleep outside the semaphore to avoid blocking the concurrency queue
+        if attempt < max_retries - 1:
+            await asyncio.sleep(base_delay * (2 ** attempt))
 
 def _categorize_error_message(error_message: str) -> str:
     """Categorizes the error message based on the exact same logic as BigQuery ANALYZE_ERROR_CATEGORIES_QUERY."""
@@ -131,12 +162,22 @@ async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, 
                     for col in ['session_id', 'timestamp']:
                         row_dict.pop(col, None)
                         
+                    # Truncate massive strings (like pathological generation loops) to save token quota and prevent 429 errors
+                    try:
+                        truncation_limit = int(os.environ.get("RCA_PAYLOAD_TRUNCATION_LIMIT", 1000))
+                    except ValueError:
+                        truncation_limit = 1000
+                        
+                    for k, v in row_dict.items():
+                        if isinstance(v, str) and len(v) > truncation_limit:
+                            row_dict[k] = v[:truncation_limit] + "... [TRUNCATED DUE TO LENGTH]"
+                            
                     prompt = RCA_PROMPT.format(error_data=json.dumps(row_dict, indent=2, default=str))
                     tasks.append(_get_rca(client, df_name, idx, row_dict, prompt, sem))
                     task_mapping.append(df_name)
                 except Exception as e:
                     logger.warning(f"   Failed to prepare RCA prompt for row {idx} in {df_name}: {e}")
-                    tasks.append(asyncio.sleep(0, result={"rca_analysis": "RCA Generation failed (preparation error).", "category": "OTHER_ERROR"}))
+                    tasks.append(asyncio.sleep(0, result={"rca_analysis": "RCA Generation failed (preparation error).", "category": "OTHER_ERROR", "status": "failed", "retries": 0}))
                     task_mapping.append(df_name)
 
     if tasks:
@@ -228,5 +269,19 @@ async def perform_inline_rca(data: Dict[str, Any], limit: int = 3) -> Dict[str, 
 
 
             
-    logger.info("✅ Inline RCA analysis complete.")
+    successful = 0
+    recovered = 0
+    failed = 0
+    for res in results:
+        status = res.get("status")
+        retries = res.get("retries", 0)
+        if status == "success":
+            if retries == 0:
+                successful += 1
+            else:
+                recovered += 1
+        elif status == "failed":
+            failed += 1
+
+    logger.info(f"✅ Inline RCA analysis complete. Summary: {successful} succeeded instantly, {recovered} recovered after retries, {failed} failed permanently.")
     return data

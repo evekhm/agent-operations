@@ -23,7 +23,8 @@ from .queries import (
     GET_CONFIG_OUTLIERS_QUERY,
     FETCH_SINGLE_QUERY,
     ANALYZE_EMPTY_RESPONSES_SUMMARY_QUERY,
-    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY
+    ANALYZE_EMPTY_RESPONSES_RECORDS_QUERY,
+    ANALYZE_HALLUCINATION_LOOPS_QUERY
 )
 from ...config import (DEFAULT_TIME_RANGE)
 from ...utils.bq import execute_bigquery, run_query_async
@@ -401,6 +402,60 @@ async def fetch_single_query(span_id: str) -> str:
         logger.error(f"[PROGRESS] Failed to fetch query {span_id}: {str(e)}")
         return json.dumps({"error": error_msg})
 
+
+@trace_span()
+@cached_tool()
+async def analyze_hallucination_loops(
+    time_range: str = DEFAULT_TIME_RANGE,
+    agent_name: Optional[str] = None,
+    root_agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    token_threshold: int = 8000,
+    duration_threshold: float = 120000.0,
+    limit: int = 10
+) -> str:
+    """
+    Identify cases where the LLM got stuck in an internal cognitive loop (generating massive token amounts).
+    
+    Args:
+        time_range (str): Time range to analyze.
+        agent_name (str): Optional. Filter by agent name.
+        root_agent_name (str): Optional. Filter by root agent name.
+        model_name (str): Optional. Filter by model version.
+        token_threshold (int): Output token counts exceeding this are considered loops.
+        limit (int): Max number of detailed records to return.
+
+    Returns:
+        str: JSON string containing individual hallucination loops.
+    """
+    logger.info(f"[TOOL CALL-analyze_hallucination_loops] time_range='{time_range}', token_threshold={token_threshold}, limit={limit}")
+    try:
+        where_clause = build_standard_where_clause(
+            time_range=time_range,
+            filter_config={
+                "agent_name": (agent_name, "="),
+                "root_agent_name": (root_agent_name, "="),
+                "model_name": (model_name, "=")
+            }
+        )
+        
+        # We explicitly catch generated output over the threshold combined with duration threshold
+        where_clause += f" AND T.candidates_token_count > {token_threshold} AND T.duration_ms > {duration_threshold}"
+        
+        query = ANALYZE_HALLUCINATION_LOOPS_QUERY.format(
+            where_clause=where_clause,
+            limit=limit
+        )
+        
+        df = await execute_bigquery(query)
+        if df.empty:
+             return json.dumps({"records": []})
+
+        return json.dumps({"records": df.to_dict(orient="records")}, cls=AnalysisEncoder)
+    except Exception as e:
+        error_msg = f"Error fetching hallucination loops: {str(e)}"
+        logger.error(f"[PROGRESS] {error_msg}")
+        return json.dumps({"error": error_msg})
 
 
 @trace_span()

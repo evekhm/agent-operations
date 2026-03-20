@@ -79,7 +79,7 @@ AGENT_SPECIFIC_COLUMNS = ["instruction", "parent_span_id"]
 INVOCATION_SPECIFIC_COLUMNS = ["content_text", "content_text_summary", "invocation_id"]
 
 OBSERVABILITY_APP_NAME = os.getenv('OBSERVABILITY_APP_NAME', "observability_analyst_app")
-MAX_RAW_RECORDS_LIMIT = int(os.getenv("MAX_RAW_RECORDS_LIMIT", 100000))
+MAX_RAW_RECORDS_LIMIT = int(os.getenv("MAX_RAW_RECORDS_LIMIT", 10000000))
 
 # KPI Defaults (Fallback if no config file)=========================================
 # =========================================

@@ -108,6 +108,7 @@ class ReportGenerator:
         self.llm_errors = data.get('llm_errors', pd.DataFrame())
         
         self.empty_responses = data.get('empty_responses', {})
+        self.hallucination_loops = data.get('hallucination_loops', {})
         
         # Config Defaults
         self.data_config = self.config.get("data_retrieval", {})
@@ -115,6 +116,7 @@ class ReportGenerator:
         self.num_slowest_queries = self.pres_config.get("num_slowest_queries", 5)
         self.num_error_queries = self.pres_config.get("num_error_queries", 5)
         self.num_empty_llm_responses = self.pres_config.get("num_empty_llm_responses", 5)
+        self.num_hallucination_loops = self.pres_config.get("num_hallucination_loops", 5)
         self.time_range_desc = self.data_config.get("time_period", "24h")
         self.playbook = self.config.get("playbook", "overview")
         
@@ -710,6 +712,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 - **[System Bottlenecks & Impact](#system-bottlenecks--impact):** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
 - **[Error Analysis](#error-analysis) & [Critical Workflow Failures](#critical-workflow-failures):** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
 - **[Empty LLM Responses](#empty-llm-responses):** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
+- **[Pathological Generation Loops](#pathological-generation-loops):** Identifies instances where the LLM generated massive token outputs, typically symptomatic of a runaway cognitive reasoning loop or hallucination.
 - **[Hypothesis Testing: Latency & Tokens](#hypothesis-testing-latency--tokens):** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
 - **Granular Breakdowns:** Browse the [Agent Details](#agent-details), [Tool Details](#tool-details), and [Model Details](#model-details) for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time."""
         self.report_content.append(nav_text + "\n\n---\n")
@@ -2381,6 +2384,67 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 
         self.report_content.append("\n---\n")
 
+
+    def _render_hallucination_loops(self):
+        # --- Pathological Generation Loops ---
+        self.add_section("Pathological Generation Loops")
+        self.report_content.append("This section surfaces severe anomaly traces where the agent entered an infinite cognitive loop, repeating the same text internally until it exhausted output tokens and/or hard-failed on timeout. These generation hallucinations drastically inflate latency, blow out token costs, and indicate a critical orchestrational logic failure.\n\n")
+
+        if self.hallucination_loops and isinstance(self.hallucination_loops, dict):
+            rec_df_all = pd.DataFrame(self.hallucination_loops.get("records", []))
+            
+            if rec_df_all.empty:
+                self.report_content.append("No pathological generation loops were detected. Your agents are not exhibiting token-exhaustion anomalies.\n")
+            else:
+                rdf = rec_df_all.copy()
+                rdf = rdf.head(self.num_hallucination_loops)
+                
+                rdf = self.formatter.standardize_formatting(self.formatter.truncate_df(rdf))
+                rdf['Rank'] = range(1, len(rdf) + 1)
+                
+                if 'duration_ms' in rdf.columns:
+                    rdf['Latency (s)'] = (rdf['duration_ms'] / 1000).round(3)
+                else:
+                    rdf['Latency (s)'] = 0.0
+                    
+                rec_map = {
+                    'Rank': 'Rank',
+                    'timestamp': 'Timestamp',
+                    'agent_name': 'Agent Name',
+                    'model_name': 'Model Name',
+                    'candidates_token_count': 'Output Tokens',
+                    'content_text_summary': 'User Message',
+                    'response_text': 'Hallucination Text',
+                    'Latency (s)': 'Latency (s)',
+                    'span_id': 'Span ID',
+                    'trace_id': 'Trace ID'
+                }
+                
+                final_r = []
+                ren_r = {}
+                for target in ['Rank', 'Timestamp', 'Agent Name', 'Model Name', 'Output Tokens', 'User Message', 'Hallucination Text', 'Latency (s)', 'Span ID', 'Trace ID']:
+                    for src, tgt in rec_map.items():
+                        if tgt == target and src in rdf.columns:
+                            final_r.append(src)
+                            ren_r[src] = tgt
+                            break
+                            
+                df_final = rdf[final_r].rename(columns=ren_r)
+                df_final = self.formatter.standardize_table_formatting(df_final)
+                
+                from .report_markdown_builder import ReportMarkdownBuilder
+                df_final = ReportMarkdownBuilder.bold_columns(df_final, ['Agent Name', 'Model Name'])
+                
+                df_final = self._apply_table_links(df_final, rdf, "hallucination")
+                df_final.columns = [f"**{c}**" for c in df_final.columns]
+                
+                self.report_content.append(df_final.to_markdown(index=False))
+                self.report_content.append("\n<br>\n")
+        else:
+            self.report_content.append("No pathological generation loops were detected.\n")
+
+        self.report_content.append("\n---\n")
+
         # --- Root Cause Insights ---
 
     def _render_root_cause_insights(self):
@@ -2551,6 +2615,9 @@ For engineers investigating specific traces, token usage, or resource exhaustion
         self._render_system_bottlenecks()
         self._render_error_analysis()
         self._render_empty_responses()
+        self._render_hallucination_loops()
+
+        # 3. Insights Phase
         self._render_root_cause_insights()
         self._render_recommendations()
         self._render_hypothesis_testing()

@@ -455,3 +455,22 @@ AND T.{{metric}} >= {{threshold_val}}
 ORDER BY T.{{metric}} DESC, T.trace_id ASC
 LIMIT {{limit}}
 """
+
+ANALYZE_HALLUCINATION_LOOPS_QUERY = f"""
+SELECT 
+    T.trace_id,
+    T.span_id,
+    T.agent_name,
+    T.model_name,
+    T.candidates_token_count,
+    T.duration_ms,
+    I.content_text_summary,
+    T.response_text,
+    T.timestamp
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW_ID}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW_ID}` I ON T.trace_id = I.trace_id
+WHERE {{where_clause}}
+QUALIFY ROW_NUMBER() OVER(PARTITION BY T.trace_id, T.span_id ORDER BY T.timestamp DESC) = 1
+ORDER BY T.candidates_token_count DESC
+LIMIT {{limit}}
+"""

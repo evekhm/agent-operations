@@ -3,6 +3,10 @@
 ## v0.0.4  (Bug Fixes & Observability Hardening)
 ### 📊 Report Generation & Visualizations
 * **Empty LLM Responses Analysis:** Enhanced "Empty LLM Responses".
+* **Pathological Generation Loops:** Added detection and reporting for massive token exhaustive hallucinations.
+* **RCA Rate Limit Recovery:** Added exponential backoff retry loop (up to 5 attempts) to gracefully handle intermittent Vertex AI 429 Rate Limits during automated root cause analysis.
+* **Massive Payload Safeguard:** Added strict text truncation inside the RCA prompt generation to prevent pathological token loops from intentionally crashing the Vertex API quota (controlled via the new `RCA_PAYLOAD_TRUNCATION_LIMIT` parameter in `.env.sample`).
+* **RCA Metadata Tracking:** Introduced detailed logging that summarizes success, retry recovery, and failure rates at the conclusion of the inline RCA phase.
 * **RCA Column Persistence:** fixed arbitrary truncation limits on the Root Cause Analysis (`rca_analysis`) dataset, ensuring full AI SRE explanations render cleanly in the markdown payload.
 * **Correlated Metrics:** Introduced new "Latency vs Input Token" correlation charts to the underlying observability pipeline.
 * **Metadata Transparency:** The underlying agent model used to generate the report itself is now explicitly tagged in the metadata table.

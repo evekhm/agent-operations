@@ -44,6 +44,7 @@ Key capabilities include:
 4. **Distinct Error Sampling:** Provides tables populated with the most severe errors, deliberately deduplicating by error message and interleaving categories to ensure you view a diverse breadth of distinct failure modes without repetitive noise.
 5. **Inline AI Root Cause Analysis (RCA):** An LLM automatically analyzes the traces of the slowest bottlenecks and top errors, directly injecting technical root cause hypothesis sentences into the performance tables.
 6. **Empty LLM Responses Analysis:** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates across unique Agents and Models to surface the most diverse set of generation failures without flooding the report.
+7. **Pathological Generation Loops:** Identifies instances where the LLM generated massive token outputs, typically symptomatic of a runaway cognitive reasoning loop or hallucination.
 
 #### Deep Performance Profiling
 7. **Execution Bottleneck Tracing:** Decomposes multi-agent execution paths to isolate pure LLM generation latency from system "overhead" (tool calls, prompt processing, Context Building). It mathematically flags which components are dragging down end-to-end (E2E) latency.
@@ -169,6 +170,7 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 * **System Bottlenecks & Impact:** A forensic breakdown of the absolute slowest invocations, agents, models, and tools.
 * **Error Analysis & Critical Workflow Failures:** Categorized insights into system crashes, hallucinated tool calls, capacity rejections (e.g., HTTP 429s), and flaky simulated tools.
 * **Empty LLM Responses:** Identifies cases where the LLM returned 0 output tokens. Extracts the full context (User Message, Model, Prompt Tokens) and intelligently deduplicates to surface the most diverse set of generation failures.
+* **Pathological Generation Loops:** Identifies instances where the LLM generated massive token outputs, typically symptomatic of a runaway cognitive reasoning loop or hallucination.
 * **Hypothesis Testing: Latency & Tokens:** A rigorous analysis exploring the correlation between token consumption and latency, identifying pathological reasoning loops or context bloating.
 * **Granular Breakdowns:** Browse the Agent Details, Tool Details, and Model Details for raw volume, traffic distribution, token breakdowns, and sequential latency charts over time.
 
