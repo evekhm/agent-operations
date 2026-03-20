@@ -60,7 +60,7 @@ Key capabilities include:
 
 ### Sample Reports
 
-* [overview_v0.0.4](samples/observability_overview_report_20260309_162639_v002.md) [`google-adk==1.27.0`]
+* [overview_v0.0.4](samples/observability_overview_report_20260320_063748_v004~~~~) [`google-adk==1.27.0`]
 * [overview_v0.0.3](samples/observability_overview_report_20260310_064740_v003.md) [`google-adk==1.26.0`]
 * [overview_v0.0.2](samples/observability_overview_report_20260309_162639_v002.md) [`google-adk==1.26.0`]
 
