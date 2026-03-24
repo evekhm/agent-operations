@@ -47,15 +47,6 @@ def load_analyst_config() -> dict:
         except Exception as e:
             logger.error(f"Failed to load config from {agent_config_path}: {e}")
 
-    env_path = os.getenv("AGENT_CONFIG_FILE")
-    if env_path and os.path.exists(env_path):
-        try:
-            with open(env_path, 'r') as f:
-                logger.info(f"Loaded analyst config from {env_path}")
-                loaded = json.load(f)
-                config.update(loaded)
-        except Exception as e:
-            logger.error(f"Failed to load config from {env_path}: {e}")
 
     parser = argparse.ArgumentParser(description="Observability Analyst CLI")
     parser.add_argument("--time_period", type=str, help="Time range for Current Reality")

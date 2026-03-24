@@ -136,7 +136,7 @@ def trace_span(name_override=None):
                         if error_occurred:
                             _TOOL_STATS[report_name]['errors'] += 1
             return wrapper
-
+    return decorator
 
 def configure_otel_tracing(project_id: str) -> None:
     """Configures OpenTelemetry to export traces to Google Cloud Trace."""

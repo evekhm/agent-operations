@@ -47,7 +47,6 @@ def _get_bq_client():
     """
     global _bq_client, _views_ensured
     if _bq_client is None:
-        import requests
         from google.auth.transport.requests import AuthorizedSession
         from requests.adapters import HTTPAdapter
         import google.auth
@@ -99,6 +98,13 @@ def check_table_exists(client, table_ref) -> bool:
         return True
     except NotFound:
         return False
+
+def initialize_bq_environment():
+    """
+    Public initialization function to sequentially establish the BigQuery client, 
+    connections, and views before any parallel query execution.
+    """
+    _get_bq_client()
 
 # ==============================================================================
 # QUERY EXECUTION & CACHING
@@ -195,6 +201,9 @@ async def execute_bigquery(query: str, timeout: int = 1200, job_config=None,
                 logger.info(f"[CACHE EXPIRED] Cache file is older than {cache_ttl}s, re-executing")
         except Exception as e:
             logger.warning(f"[CACHE READ ERROR] Failed to read cache, re-executing: {e}")
+    
+    # Ensure the client and views are initialized sequentially before we log the execution
+    _get_bq_client()
     
     # Execute query
     logger.info(f"[BQ EXEC] Running query (timeout={timeout}s)")

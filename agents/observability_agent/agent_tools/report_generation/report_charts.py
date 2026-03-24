@@ -1,11 +1,10 @@
 import logging
 import os
 from typing import List, Dict
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-import seaborn as sns
-import numpy as np
 
 # Try to load custom configuration
 try:
