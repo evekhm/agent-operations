@@ -16,7 +16,15 @@ sys.path.append(os.path.join(dir_path, "../.."))
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
-from agents.observability_agent.config import OBSERVABILITY_APP_NAME, DEFAULT_KPIS
+from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryAgentAnalyticsPlugin, BigQueryLoggerConfig
+from agents.observability_agent.config import (
+    OBSERVABILITY_APP_NAME, 
+    DEFAULT_KPIS,
+    PROJECT_ID,
+    AGENT_DATASET_ID,
+    AGENT_TABLE_ID,
+    AGENT_DATASET_LOCATION
+)
 from agents.observability_agent.agent import root_agent
 
 # Load Environment
@@ -88,10 +96,26 @@ async def main():
         session_service = InMemorySessionService()
         await session_service.create_session(session_id=session_id, user_id=user_id, app_name=OBSERVABILITY_APP_NAME)
         
+        bq_config = BigQueryLoggerConfig(
+            enabled=True,
+            max_content_length=500 * 1024,
+            batch_size=1,
+            shutdown_timeout=10.0
+        )
+        
+        bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
+            project_id=PROJECT_ID,
+            dataset_id=AGENT_DATASET_ID,
+            table_id=AGENT_TABLE_ID,
+            config=bq_config,
+            location=AGENT_DATASET_LOCATION
+        )
+
         report_runner = Runner(
             agent=root_agent,
             session_service=session_service,
-            app_name=OBSERVABILITY_APP_NAME
+            app_name=OBSERVABILITY_APP_NAME,
+            plugins=[bq_logging_plugin]
         )
         
         prompt = f"Generate an observability {playbook_name} report. Use time_period='{time_period}', baseline_period='{baseline_period}', and bucket_size='{bucket_size}'."
@@ -113,6 +137,12 @@ async def main():
                     print(text_chunk, end="", flush=True)
                     
         print(f"\n\n⏱️ Total script execution wall time: {time.time() - start_time:.2f} seconds")
+        
+        print("\n⏳ Flushing telemetry data to BigQuery...")
+        if hasattr(bq_logging_plugin, 'shutdown'):
+            bq_logging_plugin.shutdown()
+        await asyncio.sleep(2.0)
+
         
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")
