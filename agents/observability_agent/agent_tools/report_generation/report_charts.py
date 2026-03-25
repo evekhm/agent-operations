@@ -1,11 +1,10 @@
 import logging
 import os
 from typing import List, Dict
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-import seaborn as sns
-import numpy as np
 
 # Try to load custom configuration
 try:
@@ -16,8 +15,7 @@ except ImportError:
     CHART_LABEL_SIZE = 8
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ChartGenerator")
+logger = logging.getLogger(__name__)
 
 # Configure Professional Plotting Style
 plt.style.use('seaborn-v0_8-whitegrid')

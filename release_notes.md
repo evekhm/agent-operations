@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.0.5  (Bug Fixes)
+### 📊 Report Generation & Visualizations
+* **Query Initialization**: Added strict logic to verify if target BigQuery views exist or require creation before issuing queries.
+### ⚙️ Data Pipeline & OpenTelemetry Support
+* **Observability Agent Plugin**: Enabled the `BigQueryAgentAnalyticsPlugin` by default when running via the `generate_report.sh` script.
+* **Telemetry Cleanup**: Resolved a telemetry typo that prevented deterministic event tracking across different stages of the execution cycle.
+### 🛠️ Tooling & Configuration
+* **Logging Architecture**: Unified the logging configuration across all files.
+* **Codebase Cleanup**: Removed stale and unused prompt files and deprecated reference scripts.
+
 ## v0.0.4  (Bug Fixes & Observability Hardening)
 ### 📊 Report Generation & Visualizations
 * **Empty LLM Responses Analysis:** Enhanced "Empty LLM Responses".
