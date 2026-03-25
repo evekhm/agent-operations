@@ -53,6 +53,9 @@ APIS=(
   "iam.googleapis.com"                   # For managing Identity and Access Management (Permissions)
   "cloudresourcemanager.googleapis.com"   # For managing projects, folders, and organizations
   "iap.googleapis.com"                    # For IAP
+  "bigquery.googleapis.com"               # For BigQuery
+  "geminidataanalytics.googleapis.com"    # Conversational Analytics API
+  "cloudaicompanion.googleapis.com"    # Gemini for Google Cloud API
 )
 
 echo "Starting Google Cloud API enablement process..."

@@ -16,17 +16,12 @@ google-cloud-logging
 pandas
 scipy
 python-dotenv
-google-adk>=1.26.0
+google-adk>=1.27.0
 numpy
 python-dateutil
 opentelemetry-instrumentation-google-genai>=0.6b0
-# opentelemetry-instrumentation-sqlite3
-# opentelemetry-exporter-gcp-logging
-# opentelemetry-exporter-gcp-monitoring
-# opentelemetry-exporter-otlp-proto-grpc
-# opentelemetry-instrumentation-vertexai>=2.0b0
-# opentelemetry-exporter-gcp-trace
-# opentelemetry-sdk
+google-cloud-bigquery
+google-cloud-geminidataanalytics
 pydantic-ai
 seaborn
 md2pdf

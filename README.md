@@ -180,6 +180,12 @@ For evaluating long-term structural degradation or improvement. Dissects large t
 
 ---
 
+## CA Analytics
+
+[Conversational Analytics — setup & IAM](https://docs.cloud.google.com/bigquery/docs/conversational-analytics) - — lets you query that same table using natural language, with the CA Data Agent writing SQL, returning results, and generating insights for you.
+
+[Create a Conversational Analytics Data Agent](https://docs.cloud.google.com/bigquery/docs/create-data-agents) - Instead of writing all our analysis queries by hand, we create a CA Data Agent that understands our event log table and can answer questions in natural language.
+
 ## Release Notes
 
 See [Release notes](release_notes.md) for the changes.
