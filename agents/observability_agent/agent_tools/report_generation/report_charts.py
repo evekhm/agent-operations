@@ -15,8 +15,7 @@ except ImportError:
     CHART_LABEL_SIZE = 8
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ChartGenerator")
+logger = logging.getLogger(__name__)
 
 # Configure Professional Plotting Style
 plt.style.use('seaborn-v0_8-whitegrid')

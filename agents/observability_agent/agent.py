@@ -45,7 +45,6 @@ import json
 from datetime import datetime, timezone, timedelta
 
 log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
-logging.basicConfig(level=getattr(logging, log_level, logging.ERROR))
 logger = logging.getLogger(__name__)
 
 setup_telemetry()
@@ -136,9 +135,6 @@ def set_playbook_config(time_period: str, baseline_period: str, bucket_size: str
     """Hydrates the PLAYBOOK_INVESTIGATOR_PROMPT with dynamic values and updates the playbook_agent."""
     assert kpis, "kpis are not set, config.json is corrupt"
 
-    if config is None:
-        config = {}
-        
     # Set a rounded reference time to ensure BigQuery caching works
     # Rounding UP to the next multiple of CACHE_TTL ensures identical cacheable strings across executions.
     now = datetime.now(timezone.utc)

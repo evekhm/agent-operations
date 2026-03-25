@@ -140,8 +140,9 @@ async def main():
         
         print("\n⏳ Flushing telemetry data to BigQuery...")
         if hasattr(bq_logging_plugin, 'shutdown'):
-            bq_logging_plugin.shutdown()
+            await bq_logging_plugin.shutdown()
         await asyncio.sleep(2.0)
+
 
         
     except Exception as e:

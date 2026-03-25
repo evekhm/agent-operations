@@ -28,7 +28,6 @@ except ImportError as e:
     logging.warning(f"OpenTelemetry is optional, could not import: {e}")
 
 # Initialize logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Load Default Env ---
