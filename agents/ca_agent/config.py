@@ -27,13 +27,18 @@ os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'True'
 PROJECT_ID = os.getenv('PROJECT_ID')
 CA_AGENT_ID = os.getenv('CA_AGENT_ID')
 CA_CONVERSATION_ID = os.getenv('CA_CONVERSATION_ID')
-
+CA_LOCATION = os.getenv('CA_LOCATION', 'global')
 DATASET_ID = os.getenv('DATASET_ID', "agent_ops_demo")
 DATASET_LOCATION = os.getenv('DATASET_LOCATION')
 TABLE_ID = os.getenv('TABLE_ID', "agent_events")
 LOCATION = "us-central1"  # @param {type:"string"}
 
 CONNECTION_ID = f"{LOCATION}.bqml_connection"  # @param {type:"string"} Cloud Resource Connection for Gemini SQL functions
+
+AGENT_EVENTS_VIEW = os.getenv('AGENT_EVENTS_VIEW_ID', 'agent_events_view')
+INVOCATION_EVENTS_VIEW = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_events_view')
+LLM_EVENTS_VIEW = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
+TOOL_EVENTS_VIEW = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 
 # Ensure environment variables are set for ADK/Vertex AI
 os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID

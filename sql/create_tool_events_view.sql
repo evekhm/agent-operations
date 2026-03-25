@@ -18,6 +18,7 @@ CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.tool_events_view` (
     tool_name OPTIONS(description="The name of the executed tool."),
     tool_args OPTIONS(description="JSON representation of the arguments passed to the tool."),
     tool_result OPTIONS(description="JSON representation of the tool's result on success."),
+    tool_origin OPTIONS(description="The origin of the tool (e.g., LOCAL, REMOTE)."),
     duration_ms OPTIONS(description="The total time in milliseconds for the tool execution."),
     error_message OPTIONS(description="The exception message if the tool call failed."),
     status OPTIONS(description="The execution status. 'OK' on success, 'ERROR' on failure, or 'PENDING' if the tool is still running or crashed."),
@@ -45,7 +46,8 @@ WITH ToolStarts AS (
     JSON_QUERY(content, '$.args') as tool_args,
     attributes as start_attributes,
     user_id,
-    session_id
+    session_id,
+    JSON_VALUE(content, '$.tool_origin') as tool_origin
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type = 'TOOL_STARTING'
 ),
@@ -69,7 +71,8 @@ ToolEnds AS (
     COALESCE(
         JSON_VALUE(content, '$.tool'),
         JSON_VALUE(attributes, '$.tool_name')
-    ) as tool_name
+    ) as tool_name,
+    JSON_VALUE(content, '$.tool_origin') as tool_origin
   FROM `{project_id}.{dataset_id}.{table_id}`
   WHERE event_type IN ('TOOL_COMPLETED', 'TOOL_ERROR')
 )
@@ -81,6 +84,7 @@ SELECT
     COALESCE(S.tool_name, E.tool_name) as tool_name,
     S.tool_args,
     E.tool_result,
+    COALESCE(S.tool_origin, E.tool_origin) as tool_origin,
 
     E.duration_ms,
     CASE

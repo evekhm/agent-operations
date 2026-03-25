@@ -45,17 +45,27 @@ echo "----------------------------------------------------------"
 ACCESS_TOKEN=$(gcloud auth print-access-token)
 # Define the APIs needed for the project
 APIS=(
-  "discoveryengine.googleapis.com"        # For specialized GenAI search and applications
+  "discoveryengine.googleapis.com"       # For specialized GenAI search and applications
   "aiplatform.googleapis.com"            # For Vertex AI: model hosting, MLOps, and vector databases
   "artifactregistry.googleapis.com"      # For storing and managing container images (Docker/OCI)
   "cloudbuild.googleapis.com"            # For building and testing code/containers
   "run.googleapis.com"                   # For deploying serverless containers (like your agent)
   "iam.googleapis.com"                   # For managing Identity and Access Management (Permissions)
-  "cloudresourcemanager.googleapis.com"   # For managing projects, folders, and organizations
-  "iap.googleapis.com"                    # For IAP
-  "bigquery.googleapis.com"               # For BigQuery
-  "geminidataanalytics.googleapis.com"    # Conversational Analytics API
-  "cloudaicompanion.googleapis.com"    # Gemini for Google Cloud API
+  "cloudresourcemanager.googleapis.com"  # For managing projects, folders, and organizations
+  "iap.googleapis.com"                   # For Identity-Aware Proxy
+  "bigquery.googleapis.com"              # For BigQuery data warehousing
+  "geminidataanalytics.googleapis.com"   # For Conversational Analytics API
+  "cloudaicompanion.googleapis.com"      # For Gemini for Google Cloud API
+  "monitoring.googleapis.com"            # For Cloud Monitoring API
+  "cloudasset.googleapis.com"            # For Cloud Asset API
+  "recommender.googleapis.com"           # For Recommender API
+  "appoptimize.googleapis.com"           # For App Optimize API
+  "logging.googleapis.com"               # For Cloud Logging (essential companion to Monitoring)
+  "secretmanager.googleapis.com"         # For securely storing agent API keys, tokens, and credentials
+  "storage.googleapis.com"               # For Cloud Storage (object storage for documents/agent state)
+  "compute.googleapis.com"               # Required for networking, VPCs, and setting up IAP Load Balancers
+  "pubsub.googleapis.com"                # For event-driven messaging and asynchronous agent tasks
+  "servicenetworking.googleapis.com"     # For private VPC connections (useful for secure DB/Vertex access)
 )
 
 echo "Starting Google Cloud API enablement process..."
