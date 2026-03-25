@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Dict, Any
 from ..analytics.error_rca_analyzer import perform_inline_rca
-
+from agents.observability_agent.utils.bq import initialize_bq_environment
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -37,8 +37,7 @@ from agents.observability_agent.config import (
 load_dotenv(os.path.join(dir_path, "../.env"), override=True)
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ReportDataManager")
+logger = logging.getLogger(__name__)
 
 # Resolve FutureWarning
 pd.set_option('future.no_silent_downcasting', True)
@@ -145,7 +144,13 @@ class ReportDataManager:
 
     async def fetch_all_data(self) -> Dict[str, Any]:
         """Fetches all data required for the report."""
-        logger.info(f"ReportDataManager: Fetching data in parallel (Time Range: {self.time_range_desc})...")
+        # Initialize BQ client and ensure views are created sequentially 
+        # *before* parallel tasks and their logs begin.
+
+        logger.info("Initializing BQ environment and verifying required views...")
+        initialize_bq_environment()
+
+        logger.info(f"Fetching data in parallel (Time Range: {self.time_range_desc})...")
         
         # Define tasks
         task_agents = self.trace_task("Agents", analyze_latency_grouped(

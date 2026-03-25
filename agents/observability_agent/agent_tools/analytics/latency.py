@@ -17,7 +17,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .llm_diagnostics import logger
+
 from .queries import (
     GET_LATENCY_DISTRIBUTION_QUERY,
     GET_LATENCY_PERFORMANCE_QUERY,

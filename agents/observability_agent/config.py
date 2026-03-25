@@ -42,7 +42,7 @@ AGENT_DATASET_LOCATION = os.getenv('AGENT_DATASET_LOCATION', DATASET_LOCATION)
 AGENT_TABLE_ID = os.getenv('AGENT_TABLE_ID', TABLE_ID)
 
 # Agent
-AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.4')
+AGENT_VERSION = os.getenv('AGENT_VERSION', '0.0.5')
 
 
 AGENT_NAME = os.getenv('AGENT_NAME', 'observability_analyst')
@@ -88,23 +88,6 @@ MAX_RAW_RECORDS_LIMIT = int(os.getenv("MAX_RAW_RECORDS_LIMIT", 10000000))
 CHART_TITLE_SIZE = int(os.getenv('CHART_TITLE_SIZE', 10))
 CHART_LABEL_SIZE = int(os.getenv('CHART_LABEL_SIZE', 8))
 SHOW_CHART_TITLES = str(os.getenv('SHOW_CHART_TITLES', 'False')).lower() in ('true', '1', 't')
-
-# =========================================
-# LATENCY DIMENSIONS
-# =========================================
-CURRENT_DIMENSION_LIST = [
-    "System Health & KPIs",           # H2, H3: Overall KPIs, error rates by type
-    "Tool Reliability",               # H11: tool success rates, latency per tool
-    "Agent Performance",              # H9, H2: agent-model matrix, orchestration overhead
-    "LLM Efficiency",                 # H1, H7, H8, H10: tokens, thinking, config
-    "Conversation Analytics",         # H12:session turns, context growth
-    "Orchestration & Traces",         # H6, H14: E2E latency, agent call graphs
-    "Error & Anomaly Detection",      # H13: error classification, retry patterns
-    "Cost & Efficiency Analysis",     # H10: Config impact (token efficiency, not $)
-    "Token Usage & Correlation",      # H1: Token correlation + H7: Thinking overhead
-    "Slow Query Deep Dive",           # H5: Outliers + H8: Anomalous inefficiency
-]
-
 
 logger = logging.getLogger(__name__)
 
