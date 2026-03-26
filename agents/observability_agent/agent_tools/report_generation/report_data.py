@@ -37,8 +37,7 @@ from agents.observability_agent.config import (
 load_dotenv(os.path.join(dir_path, "../.env"), override=True)
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ReportDataManager")
+logger = logging.getLogger(__name__)
 
 # Resolve FutureWarning
 pd.set_option('future.no_silent_downcasting', True)
