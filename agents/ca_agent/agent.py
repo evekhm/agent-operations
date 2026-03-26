@@ -11,6 +11,8 @@ import google.auth
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models.google_llm import Gemini
+from google.adk.planners import BuiltInPlanner
+from google.genai.types import ThinkingConfig
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryAgentAnalyticsPlugin
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.tool_context import ToolContext
@@ -105,6 +107,9 @@ root_agent = Agent(
         f"You also have access to the `run_gemini_cli` tool to execute `gemini` CLI commands if needed."
     ),
     tools=[bigquery_toolset, set_state, list_code_files, read_code_file, run_gemini_cli],
+    planner=BuiltInPlanner(
+        thinking_config=ThinkingConfig(include_thoughts=True)
+    ),
     generate_content_config={
         "temperature": 0.5,
         "top_p": 0.9,
