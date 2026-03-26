@@ -29,6 +29,7 @@ You can generate comprehensive performance and latency intelligence reports usin
 
 ### Current Report Capabilities
 When running the default `overview` playbook, the script orchestrates a pipeline of advanced analytical queries and AI-augmented insights to produce a highly structured, data-backed Markdown report.
+Here a sample of [latest report](https://github.com/evekhm/agent-operations/blob/main/samples/observability_overview_report_latest.md)
 
 #### Executive Intelligence
 1. **Holistic AI Executive Summary:** Ingests the entire raw JSON telemetry context (latency metrics, error maps, token counts) and synthesizes a ReAct-powered executive summary outlining systemic issues, top bottlenecks, and prioritized architectural recommendations.
