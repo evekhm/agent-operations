@@ -14,6 +14,7 @@ from google.adk.models.google_llm import Gemini
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryAgentAnalyticsPlugin
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.tool_context import ToolContext
+from custom_tools import list_code_files, read_code_file, run_gemini_cli
 
 # Two clients: one manages Data Agents, the other handles conversations
 data_agent_client = geminidataanalytics.DataAgentServiceClient()
@@ -42,8 +43,21 @@ bigquery_toolset = BigQueryToolset(
     credentials_config=BigQueryCredentialsConfig(credentials=credentials)
 )
 
+from google.genai.types import HttpRetryOptions
+
+# Define robust exponential backoff strategy for 429 RESOURCE_EXHAUSTED errors
+api_retry_options = HttpRetryOptions(
+    attempts=10,
+    initial_delay=2.0,
+    max_delay=60.0,
+    exp_base=2.0,
+    jitter=0.5,
+    http_status_codes=[429, 500, 502, 503, 504]
+)
+
 llm = Gemini(
     model="gemini-2.5-flash",
+    retry_options=api_retry_options
 )
 
 def set_state(key: str, value: str, tool_context: ToolContext) -> str:
@@ -83,9 +97,14 @@ root_agent = Agent(
         f"introduce yourself with the above role, explain the data sources, and list the kinds of "
         f"questions you can answer.\n\n"
         f"Always use project `{PROJECT_ID}` for billing. "
-        f"Use CURRENT_TIMESTAMP() for current time comparisons in queries."
+        f"Use CURRENT_TIMESTAMP() for current time comparisons in queries.\n\n"
+        f"**CODE INSPECTION & FIXES:**\n"
+        f"You have access to the local project codebase through `list_code_files` and `read_code_file`. "
+        f"When you identify a failing tool or agent via BigQuery telemetry, use these tools to read the actual Python code responsible. "
+        f"Analyze the code against the error and propose a concrete code fix.\n"
+        f"You also have access to the `run_gemini_cli` tool to execute `gemini` CLI commands if needed."
     ),
-    tools=[bigquery_toolset, set_state],
+    tools=[bigquery_toolset, set_state, list_code_files, read_code_file, run_gemini_cli],
     generate_content_config={
         "temperature": 0.5,
         "top_p": 0.9,
