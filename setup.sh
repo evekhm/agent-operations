@@ -66,6 +66,7 @@ APIS=(
   "compute.googleapis.com"               # Required for networking, VPCs, and setting up IAP Load Balancers
   "pubsub.googleapis.com"                # For event-driven messaging and asynchronous agent tasks
   "servicenetworking.googleapis.com"     # For private VPC connections (useful for secure DB/Vertex access)
+  "developerknowledge.googleapis.com"    # For Developer Knowledge API MCP
 )
 
 echo "Starting Google Cloud API enablement process..."
@@ -206,6 +207,10 @@ curl -s -X POST \
     "type": "INCLUDE",
     "exactMatch": false
 }'
+
+## Enable MCP server
+gcloud beta services mcp enable developerknowledge.googleapis.com \
+    --project=$PROJECT_ID
 
 echo ""
 echo "=========================================================="

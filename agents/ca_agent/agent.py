@@ -17,6 +17,7 @@ from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryAgentAnal
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.tool_context import ToolContext
 from custom_tools import list_code_files, read_code_file, run_gemini_cli
+from mcp_tools import search_developer_knowledge, get_developer_knowledge_document
 
 # Two clients: one manages Data Agents, the other handles conversations
 data_agent_client = geminidataanalytics.DataAgentServiceClient()
@@ -28,8 +29,8 @@ CA_CONVERSATION_ID=f"agent_ops_conv_{_run_id}"
 CA_AGENT_ID=f"ca_agent_ops_{_run_id}"
 # --- Initialize the Plugin ---
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
-    project_id=PROJECT_ID,  # project_id is required input from user
-    dataset_id=DATASET_ID,  # dataset_id is required input from user
+    project_id=PROJECT_ID,
+    dataset_id=DATASET_ID,
     table_id=TABLE_ID,
     location=DATASET_LOCATION,
     # Optional: defaults to "agent_events". The plugin automatically creates
@@ -104,9 +105,15 @@ root_agent = Agent(
         f"You have access to the local project codebase through `list_code_files` and `read_code_file`. "
         f"When you identify a failing tool or agent via BigQuery telemetry, use these tools to read the actual Python code responsible. "
         f"Analyze the code against the error and propose a concrete code fix.\n"
-        f"You also have access to the `run_gemini_cli` tool to execute `gemini` CLI commands if needed."
+        f"You also have access to the `run_gemini_cli` tool to execute `gemini` CLI commands if needed.\n\n"
+        f"**DEVELOPER DOCUMENTATION ACCESS:**\n"
+        f"You have access to the Developer Knowledge MCP server to search and retrieve official Google developer documentation, including APIs, code snippets, release notes, best practices, guides, and debugging info. "
+        f"Use the `search_developer_knowledge` tool to find document snippets and names mapping to your interest. "
+        f"Use the `get_developer_knowledge_document` tool with a list of document names (parents) found in the search results to retrieve full document content. "
+        f"Prefer this over external internet searches for official Google developer inquiries."
     ),
-    tools=[bigquery_toolset, set_state, list_code_files, read_code_file, run_gemini_cli],
+    tools=[bigquery_toolset, set_state, list_code_files, read_code_file, run_gemini_cli, search_developer_knowledge,
+           get_developer_knowledge_document],
     planner=BuiltInPlanner(
         thinking_config=ThinkingConfig(include_thoughts=True)
     ),
@@ -1515,7 +1522,10 @@ try:
     data_agent_client.delete_data_agent(name=f"projects/{PROJECT_ID}/locations/{CA_LOCATION}/dataAgents/{CA_AGENT_ID}")
     print("Existing Data Agent deleted or deletion initiated.")
 except Exception as e:
-    print(f"Failed to delete existing Data Agent (might not exist): {e}")
+    if "404" in str(e) or "Not Found" in str(e) or "NotFound" in type(e).__name__:
+        pass
+    else:
+        print(f"Failed to delete existing Data Agent: {e}")
 
 print(f"Creating Data Agent '{CA_AGENT_ID}'...")
 ca_agent = data_agent_client.create_data_agent_sync(request=create_request)

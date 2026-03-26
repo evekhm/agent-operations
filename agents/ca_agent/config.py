@@ -38,6 +38,8 @@ INVOCATION_EVENTS_VIEW = os.getenv('INVOCATION_EVENTS_VIEW_ID', 'invocation_even
 LLM_EVENTS_VIEW = os.getenv('LLM_EVENTS_VIEW_ID', 'llm_events_view')
 TOOL_EVENTS_VIEW = os.getenv('TOOL_EVENTS_VIEW_ID', 'tool_events_view')
 
+DEVELOPER_KNOWLEDGE_API_KEY = os.environ.get("DEVELOPER_KNOWLEDGE_API_KEY")
+
 # Ensure environment variables are set for ADK/Vertex AI
 os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
 os.environ["GOOGLE_CLOUD_LOCATION"] = (

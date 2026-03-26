@@ -6,6 +6,15 @@ The Conversational Analytics (CA) agent, also known as the **Agent Operations Ob
 
 - [ ] Ensure the `.env` file in the project root is properly configured with your BigQuery project, dataset, and table details.
 - [ ] The agent relies on a set of normalized views described below.
+- [ ] To connect with MCP server, you need to enable the Developer Knowledge API and Create and Secure an API Key
+    - [ ] Enable Developer Knowledge API
+    - [ ] Create and Secure an API Key by Navigate to Console → APIs & Services → Credentials → Create credentials → API key. 
+    - [ ] Add to .env or load into the environment: 
+    ```bash
+        export DEVELOPER_KNOWLEDGE_API_KEY="<your-api-key>"
+    ```
+    
+    
 
 ## Configuration
 
