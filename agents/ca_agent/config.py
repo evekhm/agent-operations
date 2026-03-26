@@ -25,12 +25,10 @@ os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'True'
 
 # BigQuery to be analyzed
 PROJECT_ID = os.getenv('PROJECT_ID')
-CA_AGENT_ID = os.getenv('CA_AGENT_ID')
-CA_CONVERSATION_ID = os.getenv('CA_CONVERSATION_ID')
-CA_LOCATION = os.getenv('CA_LOCATION', 'global')
-DATASET_ID = os.getenv('DATASET_ID', "agent_ops_demo")
-DATASET_LOCATION = os.getenv('DATASET_LOCATION')
-TABLE_ID = os.getenv('TABLE_ID', "agent_events")
+CA_LOCATION = 'global'
+DATASET_ID = os.getenv('AGENT_DATASET_ID', "agent_ops_demo")
+DATASET_LOCATION = os.getenv('AGENT_DATASET_LOCATION', "us-central1")
+TABLE_ID = os.getenv('AGENT_TABLE_ID', "agent_events")
 LOCATION = "us-central1"  # @param {type:"string"}
 
 CONNECTION_ID = f"{LOCATION}.bqml_connection"  # @param {type:"string"} Cloud Resource Connection for Gemini SQL functions
@@ -48,3 +46,4 @@ os.environ["GOOGLE_CLOUD_LOCATION"] = (
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = (
     "True"  # Make sure you have Vertex AI API enabled
 )
+

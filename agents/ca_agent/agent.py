@@ -1,9 +1,11 @@
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+import pandas as pd
 
 from google.cloud import geminidataanalytics
-from config import PROJECT_ID, CA_CONVERSATION_ID, CA_AGENT_ID, DATASET_ID, TABLE_ID, AGENT_EVENTS_VIEW, CA_LOCATION, INVOCATION_EVENTS_VIEW, TOOL_EVENTS_VIEW, LLM_EVENTS_VIEW
+from config import (PROJECT_ID, DATASET_ID, TABLE_ID, AGENT_EVENTS_VIEW, CA_LOCATION,
+                    INVOCATION_EVENTS_VIEW, TOOL_EVENTS_VIEW, LLM_EVENTS_VIEW, DATASET_LOCATION)
 # Import Libraries & Initialize Plugin, Tools, Models and Agent
 import google.auth
 from google.adk.agents import Agent
@@ -17,16 +19,20 @@ from google.adk.tools.tool_context import ToolContext
 data_agent_client = geminidataanalytics.DataAgentServiceClient()
 data_chat_client = geminidataanalytics.DataChatServiceClient()
 
-
+import uuid as _uuid
+_run_id = _uuid.uuid4().hex[:8]
+CA_CONVERSATION_ID=f"agent_ops_conv_{_run_id}"
+CA_AGENT_ID=f"ca_agent_ops_{_run_id}"
 # --- Initialize the Plugin ---
 bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,  # project_id is required input from user
     dataset_id=DATASET_ID,  # dataset_id is required input from user
     table_id=TABLE_ID,
+    location=DATASET_LOCATION,
     # Optional: defaults to "agent_events". The plugin automatically creates
     # this table if it doesn't exist.
 )
-print(f"BigQueryAgentAnalyticsPlugin initialized, streaming data to {PROJECT_ID}:{DATASET_ID}.{TABLE_ID}")
+print(f"BigQueryAgentAnalyticsPlugin initialized, streaming data to {PROJECT_ID}:{DATASET_ID}.{TABLE_ID} in {DATASET_LOCATION}")
 
 # --- Initialize Tools & Model ---
 credentials, _ = google.auth.default(
@@ -50,15 +56,34 @@ root_agent = Agent(
     model=llm,
     name="ca_agent",
     instruction=(
-            "You are an agent operations analyst. Help the user understand agent behavior, "
-            "performance, errors, and usage patterns by querying the telemetry event logs "
-            "in the dataset `" + DATASET_ID + "`. "
-            "The primary table is `" + TABLE_ID + "`. "
-            "You should strongly prefer using the following views for analysis: "
-            "`" + AGENT_EVENTS_VIEW + "`, `" + INVOCATION_EVENTS_VIEW + "`, `" + TOOL_EVENTS_VIEW + "`, and `" + LLM_EVENTS_VIEW + "`. "
-            "They provide better pre-computed aggregations than querying the base table `" + TABLE_ID + "` directly for many common questions. "
-            "Help the user analyze metrics like latency, error rates, and token usage. "
-            "Always use the user's project for billing: " + PROJECT_ID + ". "
+        f"You are the Agent Operations Observability Analyst — a specialized data analyst "
+        f"that helps engineers understand the behavior, performance, errors, and usage patterns "
+        f"of multi-agent AI systems built with Google's Agent Development Kit (ADK).\n\n"
+        f"You operate on telemetry data stored in BigQuery:\n"
+        f"  - Project: {PROJECT_ID}\n"
+        f"  - Dataset: {DATASET_ID}\n"
+        f"  - Primary base table: {TABLE_ID}\n\n"
+        f"You have four pre-built semantic views optimized for analysis:\n"
+        f"  1. `{AGENT_EVENTS_VIEW}` — Agent execution lifecycle (start, end, latency, errors per span).\n"
+        f"  2. `{INVOCATION_EVENTS_VIEW}` — End-to-end invocation (user turn) metrics including user message.\n"
+        f"  3. `{LLM_EVENTS_VIEW}` — LLM call details: tokens, latency, model version, full request/response.\n"
+        f"  4. `{TOOL_EVENTS_VIEW}` — Tool execution details: tool name, args, results, latency, errors.\n\n"
+        f"Always prefer these views over querying the raw `{TABLE_ID}` table directly. "
+        f"Use the raw table only for event-level analysis such as tracing a specific session, "
+        f"multimodal content inspection (content_parts), HITL events, or state deltas.\n\n"
+        f"You can answer questions such as:\n"
+        f"  - What is the P95 latency for each agent or model?\n"
+        f"  - Which agents or tools have the highest error rates?\n"
+        f"  - Are there hallucination loops (runaway token generation)?\n"
+        f"  - What is the token usage breakdown by agent, model, or root agent?\n"
+        f"  - What errors occurred in the last 24 hours?\n"
+        f"  - Which invocations are slowest and why?\n"
+        f"  - Can you analyze a specific trace or session end-to-end?\n\n"
+        f"When asked 'who are you', 'what do you do', or 'what data do you have access to', "
+        f"introduce yourself with the above role, explain the data sources, and list the kinds of "
+        f"questions you can answer.\n\n"
+        f"Always use project `{PROJECT_ID}` for billing. "
+        f"Use CURRENT_TIMESTAMP() for current time comparisons in queries."
     ),
     tools=[bigquery_toolset, set_state],
     generate_content_config={
@@ -808,92 +833,504 @@ ORDER BY avg_ms DESC, total_count DESC
 """,
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show invocation requests",
-        sql_query=f"""SELECT      T.content_text,     T.content_text_summary,     T.invocation_id,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T  WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.duration_ms DESC, T.timestamp DESC LIMIT 10""",
+        natural_language_question="Show top slowest invocations",
+        sql_query=f"""
+SELECT
+    T.content_text,
+    T.content_text_summary,
+    T.invocation_id,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.duration_ms DESC, T.timestamp DESC
+LIMIT 10
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show agent requests",
-        sql_query=f"""SELECT      T.instruction,     T.parent_span_id,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id WHERE T.agent_name != T.root_agent_name AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.duration_ms DESC, T.timestamp DESC LIMIT 10""",
+        natural_language_question="Show top slowest sub-agent executions",
+        sql_query=f"""
+SELECT
+    T.instruction,
+    T.parent_span_id,
+    I.status AS root_status,
+    I.duration_ms AS root_duration_ms,
+    I.content_text_summary,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I
+    ON T.trace_id = I.trace_id
+WHERE T.agent_name != T.root_agent_name
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.duration_ms DESC, T.timestamp DESC
+LIMIT 10
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show tool requests",
-        sql_query=f"""SELECT      T.tool_name,     T.tool_args,     T.tool_result,     T.parent_span_id,     A.status AS agent_status,     A.duration_ms as agent_duration_ms,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A ON T.parent_span_id = A.span_id WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND tool_name NOT IN ('transfer_to_agent') ORDER BY T.duration_ms DESC, T.timestamp DESC LIMIT 10""",
+        natural_language_question="Show top slowest tool executions",
+        sql_query=f"""
+SELECT
+    T.tool_name,
+    T.tool_args,
+    T.tool_result,
+    T.parent_span_id,
+    A.status AS agent_status,
+    A.duration_ms AS agent_duration_ms,
+    I.status AS root_status,
+    I.duration_ms AS root_duration_ms,
+    I.content_text_summary,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I
+    ON T.trace_id = I.trace_id
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A
+    ON T.parent_span_id = A.span_id
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND tool_name NOT IN ('transfer_to_agent')
+ORDER BY T.duration_ms DESC, T.timestamp DESC
+LIMIT 10
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show LLM requests",
-        sql_query=f"""SELECT      T.model_name,     T.prompt_token_count,     T.candidates_token_count,     T.total_token_count,     T.thoughts_token_count,     T.time_to_first_token_ms,     T.full_request,     T.full_response,     T.llm_config,     T.parent_span_id,     T.response_text,     A.status AS agent_status,     A.duration_ms as agent_duration_ms,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A ON T.parent_span_id = A.span_id WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.duration_ms DESC, T.timestamp DESC LIMIT 10""",
+        natural_language_question="Show top slowest LLM calls with full context",
+        sql_query=f"""
+SELECT
+    T.model_name,
+    T.prompt_token_count,
+    T.candidates_token_count,
+    T.total_token_count,
+    T.thoughts_token_count,
+    T.time_to_first_token_ms,
+    T.full_request,
+    T.full_response,
+    T.llm_config,
+    T.parent_span_id,
+    T.response_text,
+    A.status AS agent_status,
+    A.duration_ms AS agent_duration_ms,
+    I.status AS root_status,
+    I.duration_ms AS root_duration_ms,
+    I.content_text_summary,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I
+    ON T.trace_id = I.trace_id
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A
+    ON T.parent_span_id = A.span_id
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.duration_ms DESC, T.timestamp DESC
+LIMIT 10
+""",
     ),
     geminidataanalytics.ExampleQuery(
         natural_language_question="Show invocation requests",
         sql_query=f"""SELECT      T.content_text,     T.content_text_summary,     T.invocation_id,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T  WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.timestamp DESC LIMIT 1000000""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show agent requests",
-        sql_query=f"""SELECT      T.instruction,     T.parent_span_id,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id WHERE T.agent_name != T.root_agent_name AND T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.timestamp DESC LIMIT 1000000""",
+        natural_language_question="Show failed invocations with detail",
+        sql_query=f"""
+SELECT
+    T.content_text,
+    T.content_text_summary,
+    T.invocation_id,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T
+WHERE T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.timestamp DESC
+LIMIT 1000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show tool requests",
-        sql_query=f"""SELECT      T.tool_name,     T.tool_args,     T.tool_result,     T.parent_span_id,     A.status AS agent_status,     A.duration_ms as agent_duration_ms,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A ON T.parent_span_id = A.span_id WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND tool_name NOT IN ('transfer_to_agent') ORDER BY T.timestamp DESC LIMIT 1000000""",
+        natural_language_question="Show failed sub-agent executions with detail",
+        sql_query=f"""
+SELECT
+    T.instruction,
+    T.parent_span_id,
+    I.status AS root_status,
+    I.duration_ms AS root_duration_ms,
+    I.content_text_summary,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I
+    ON T.trace_id = I.trace_id
+WHERE T.agent_name != T.root_agent_name
+    AND T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.timestamp DESC
+LIMIT 1000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show LLM requests",
-        sql_query=f"""SELECT      T.model_name,     T.prompt_token_count,     T.candidates_token_count,     T.total_token_count,     T.thoughts_token_count,     T.time_to_first_token_ms,     T.full_request,     T.full_response,     T.llm_config,     T.parent_span_id,     T.response_text,     A.status AS agent_status,     A.duration_ms as agent_duration_ms,     I.status AS root_status,     I.duration_ms as root_duration_ms,     I.content_text_summary,     T.trace_id,     T.span_id,     T.session_id,     T.duration_ms,     T.agent_name,     T.root_agent_name,     T.status,     T.timestamp,     T.error_message FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I ON T.trace_id = I.trace_id         LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A ON T.parent_span_id = A.span_id WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ORDER BY T.timestamp DESC LIMIT 1000000""",
+        natural_language_question="Show failed LLM calls with full context",
+        sql_query=f"""
+SELECT
+    T.model_name,
+    T.prompt_token_count,
+    T.candidates_token_count,
+    T.total_token_count,
+    T.thoughts_token_count,
+    T.time_to_first_token_ms,
+    T.full_request,
+    T.full_response,
+    T.llm_config,
+    T.parent_span_id,
+    T.response_text,
+    A.status AS agent_status,
+    A.duration_ms AS agent_duration_ms,
+    I.status AS root_status,
+    I.duration_ms AS root_duration_ms,
+    I.content_text_summary,
+    T.trace_id,
+    T.span_id,
+    T.session_id,
+    T.duration_ms,
+    T.agent_name,
+    T.root_agent_name,
+    T.status,
+    T.timestamp,
+    T.error_message
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS I
+    ON T.trace_id = I.trace_id
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS A
+    ON T.parent_span_id = A.span_id
+WHERE T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+ORDER BY T.timestamp DESC
+LIMIT 1000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show empty LLM responses",
-        sql_query=f"""SELECT     model_name,     agent_name,     CASE          WHEN T.response_text IS NULL OR TRIM(T.response_text) = '' THEN 'Response Text is NULL'         ELSE 'Response Text is POPULATED'     END as response_type,     COUNT(*) as empty_response_count FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '') AND T.status != 'ERROR' GROUP BY model_name, agent_name, response_type ORDER BY response_type ASC, empty_response_count DESC, agent_name ASC, model_name ASC""",
+        natural_language_question="Show empty LLM responses summary by agent and model",
+        sql_query=f"""
+SELECT
+    model_name,
+    agent_name,
+    CASE
+        WHEN T.response_text IS NULL OR TRIM(T.response_text) = '' THEN 'Response Text is NULL'
+        ELSE 'Response Text is POPULATED'
+    END AS response_type,
+    COUNT(*) AS empty_response_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '')
+    AND T.status != 'ERROR'
+GROUP BY model_name, agent_name, response_type
+ORDER BY response_type ASC, empty_response_count DESC, agent_name ASC, model_name ASC
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show hallucination loops",
-        sql_query=f"""SELECT      T.trace_id,     T.span_id,     T.agent_name,     T.model_name,     T.candidates_token_count,     T.duration_ms,     I.content_text_summary,     T.response_text,     T.timestamp FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` I ON T.trace_id = I.trace_id WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND T.candidates_token_count > 8000 AND T.duration_ms > 120000 QUALIFY ROW_NUMBER() OVER(PARTITION BY T.trace_id, T.span_id ORDER BY T.timestamp DESC) = 1 ORDER BY T.candidates_token_count DESC LIMIT 100""",
+        natural_language_question="Show hallucination loops (runaway token generation)",
+        sql_query=f"""
+SELECT
+    T.trace_id,
+    T.span_id,
+    T.agent_name,
+    T.model_name,
+    T.candidates_token_count,
+    T.duration_ms,
+    I.content_text_summary,
+    T.response_text,
+    T.timestamp
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` I
+    ON T.trace_id = I.trace_id
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND T.candidates_token_count > 8000
+    AND T.duration_ms > 120000
+QUALIFY ROW_NUMBER() OVER(PARTITION BY T.trace_id, T.span_id ORDER BY T.timestamp DESC) = 1
+ORDER BY T.candidates_token_count DESC
+LIMIT 100
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show correlation data",
-        sql_query=f"""SELECT     root_agent_name,     agent_name,     model_name,     total_token_count,     prompt_token_count,     candidates_token_count,     thoughts_token_count,     duration_ms,     timestamp,     time_to_first_token_ms FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13'   AND total_token_count > 0   AND duration_ms > 0 ORDER BY timestamp DESC, root_agent_name ASC, agent_name ASC LIMIT 100000""",
+        natural_language_question="Show token and latency correlation data for analysis",
+        sql_query=f"""
+SELECT
+    root_agent_name,
+    agent_name,
+    model_name,
+    total_token_count,
+    prompt_token_count,
+    candidates_token_count,
+    thoughts_token_count,
+    duration_ms,
+    timestamp,
+    time_to_first_token_ms
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND total_token_count > 0
+    AND duration_ms > 0
+ORDER BY timestamp DESC, root_agent_name ASC, agent_name ASC
+LIMIT 100000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show correlation data",
-        sql_query=f"""SELECT     root_agent_name,     agent_name,     model_name,     total_token_count,     prompt_token_count,     candidates_token_count,     thoughts_token_count,     duration_ms,     timestamp,     time_to_first_token_ms FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13'   AND total_token_count > 0   AND duration_ms > 0 ORDER BY timestamp DESC, root_agent_name ASC, agent_name ASC LIMIT 100000""",
+        natural_language_question="Show raw invocation latency data over time",
+        sql_query=f"""
+SELECT
+    root_agent_name AS agent_name,
+    duration_ms,
+    timestamp
+FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND duration_ms > 0
+ORDER BY timestamp DESC, duration_ms DESC, agent_name ASC
+LIMIT 100000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show raw invocation events",
-        sql_query=f"""SELECT     root_agent_name as agent_name,     duration_ms,     timestamp FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13'   AND duration_ms > 0 ORDER BY timestamp DESC, duration_ms DESC, agent_name ASC LIMIT 100000""",
+        natural_language_question="Show raw sub-agent latency data with model attribution",
+        sql_query=f"""
+WITH Agents AS (
+    SELECT *
+    FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T
+    WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+)
+SELECT
+    A.span_id,
+    A.agent_name,
+    L.model_name,
+    A.duration_ms,
+    A.timestamp
+FROM Agents AS A
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS L
+    ON A.trace_id = L.trace_id AND A.span_id = L.parent_span_id
+WHERE A.duration_ms > 0
+    AND A.agent_name != A.root_agent_name
+ORDER BY A.timestamp DESC, A.span_id ASC
+LIMIT 100000
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show raw agent events",
-        sql_query=f"""WITH Agents AS (     SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' ) SELECT     A.span_id,     A.agent_name,     L.model_name,     A.duration_ms,     A.timestamp FROM Agents AS A LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS L   ON A.trace_id = L.trace_id AND A.span_id = L.parent_span_id WHERE A.duration_ms > 0   AND A.agent_name != A.root_agent_name ORDER BY A.timestamp DESC, A.span_id ASC LIMIT 100000""",
+        natural_language_question="Categorize invocation errors by type",
+        sql_query=f"""
+SELECT
+    CASE
+        WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
+        WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
+        WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'
+        WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'
+        WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'
+        ELSE 'OTHER_ERROR'
+    END AS category,
+    COUNT(*) AS total_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T
+WHERE T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+GROUP BY category
+ORDER BY total_count DESC
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show invocation requests",
-        sql_query=f"""SELECT     CASE         WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'         WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'         WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'         WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'         WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'         WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'         WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'         ELSE 'OTHER_ERROR'     END as category,     COUNT(*) as total_count FROM `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` AS T WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND status = 'ERROR' GROUP BY category ORDER BY total_count DESC""",
+        natural_language_question="Show token usage statistics by root agent",
+        sql_query=f"""
+SELECT
+    root_agent_name,
+    AVG(prompt_token_count) AS avg_input_tokens,
+    APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] AS p95_input_tokens,
+    AVG(candidates_token_count) AS avg_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] AS p95_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] AS median_output_tokens,
+    MIN(candidates_token_count) AS min_output_tokens,
+    MAX(candidates_token_count) AS max_output_tokens,
+    AVG(thoughts_token_count) AS avg_thought_tokens,
+    APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] AS p95_thought_tokens,
+    AVG(total_token_count) AS avg_total_tokens,
+    APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] AS p95_total_tokens
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+GROUP BY 1
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Analyze latency grouped by LLM",
-        sql_query=f"""SELECT   root_agent_name,   AVG(prompt_token_count) as avg_input_tokens,   APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,   AVG(candidates_token_count) as avg_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,   MIN(candidates_token_count) as min_output_tokens,   MAX(candidates_token_count) as max_output_tokens,   AVG(thoughts_token_count) as avg_thought_tokens,   APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,   AVG(total_token_count) as avg_total_tokens,   APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' GROUP BY 1""",
+        natural_language_question="Show token usage statistics by sub-agent",
+        sql_query=f"""
+SELECT
+    agent_name,
+    AVG(prompt_token_count) AS avg_input_tokens,
+    APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] AS p95_input_tokens,
+    AVG(candidates_token_count) AS avg_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] AS p95_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] AS median_output_tokens,
+    MIN(candidates_token_count) AS min_output_tokens,
+    MAX(candidates_token_count) AS max_output_tokens,
+    AVG(thoughts_token_count) AS avg_thought_tokens,
+    APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] AS p95_thought_tokens,
+    AVG(total_token_count) AS avg_total_tokens,
+    APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] AS p95_total_tokens
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND agent_name != root_agent_name
+GROUP BY 1
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Analyze latency grouped by LLM",
-        sql_query=f"""SELECT   agent_name,   AVG(prompt_token_count) as avg_input_tokens,   APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,   AVG(candidates_token_count) as avg_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,   MIN(candidates_token_count) as min_output_tokens,   MAX(candidates_token_count) as max_output_tokens,   AVG(thoughts_token_count) as avg_thought_tokens,   APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,   AVG(total_token_count) as avg_total_tokens,   APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND agent_name != root_agent_name GROUP BY 1""",
+        natural_language_question="Show empty LLM response rows with full detail",
+        sql_query=f"""
+SELECT
+    T.span_id,
+    T.trace_id,
+    T.timestamp,
+    T.status,
+    T.model_name,
+    T.agent_name,
+    T.prompt_token_count,
+    T.thoughts_token_count,
+    T.candidates_token_count,
+    T.duration_ms,
+    T.response_text,
+    T.full_response,
+    I.content_text_summary
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` I
+    ON T.trace_id = I.trace_id
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '')
+    AND T.status != 'ERROR'
+ORDER BY timestamp DESC, T.trace_id ASC, T.span_id ASC
+LIMIT 100
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show empty LLM responses",
-        sql_query=f"""SELECT     T.span_id,     T.trace_id,     T.timestamp,     T.status,     T.model_name,     T.agent_name,     T.prompt_token_count,     T.thoughts_token_count,     T.candidates_token_count,     T.duration_ms,     T.response_text,     T.full_response,     I.content_text_summary FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.{INVOCATION_EVENTS_VIEW}` I ON T.trace_id = I.trace_id WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND (IFNULL(T.candidates_token_count, 0) = 0 OR T.response_text IS NULL OR T.response_text = '') AND T.status != 'ERROR' ORDER BY timestamp DESC, T.trace_id ASC, T.span_id ASC LIMIT 100""",
+        natural_language_question="Categorize tool errors by type",
+        sql_query=f"""
+SELECT
+    CASE
+        WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
+        WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
+        WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'
+        WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'
+        WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'
+        ELSE 'OTHER_ERROR'
+    END AS category,
+    COUNT(*) AS total_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW}` AS T
+WHERE T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+    AND tool_name NOT IN ('transfer_to_agent')
+GROUP BY category
+ORDER BY total_count DESC
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show tool requests",
-        sql_query=f"""SELECT     CASE         WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'         WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'         WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'         WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'         WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'         WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'         WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'         ELSE 'OTHER_ERROR'     END as category,     COUNT(*) as total_count FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW}` AS T WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND tool_name NOT IN ('transfer_to_agent') AND status = 'ERROR' GROUP BY category ORDER BY total_count DESC""",
+        natural_language_question="Categorize sub-agent errors by type",
+        sql_query=f"""
+SELECT
+    CASE
+        WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
+        WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
+        WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'
+        WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'
+        WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'
+        ELSE 'OTHER_ERROR'
+    END AS category,
+    COUNT(*) AS total_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T
+WHERE T.agent_name != T.root_agent_name
+    AND T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+GROUP BY category
+ORDER BY total_count DESC
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Show agent requests",
-        sql_query=f"""SELECT     CASE         WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'         WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'         WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'         WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'         WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'         WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'         WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'         ELSE 'OTHER_ERROR'     END as category,     COUNT(*) as total_count FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW}` AS T WHERE T.agent_name != T.root_agent_name AND T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND status = 'ERROR' GROUP BY category ORDER BY total_count DESC""",
+        natural_language_question="Show token usage statistics by agent and model",
+        sql_query=f"""
+SELECT
+    agent_name,
+    model_name,
+    AVG(prompt_token_count) AS avg_input_tokens,
+    APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] AS p95_input_tokens,
+    AVG(candidates_token_count) AS avg_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] AS p95_output_tokens,
+    APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] AS median_output_tokens,
+    MIN(candidates_token_count) AS min_output_tokens,
+    MAX(candidates_token_count) AS max_output_tokens,
+    AVG(thoughts_token_count) AS avg_thought_tokens,
+    APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] AS p95_thought_tokens,
+    AVG(total_token_count) AS avg_total_tokens,
+    APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] AS p95_total_tokens
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+GROUP BY 1, 2
+""",
     ),
     geminidataanalytics.ExampleQuery(
-        natural_language_question="Analyze latency grouped by LLM",
-        sql_query=f"""SELECT   agent_name, model_name,   AVG(prompt_token_count) as avg_input_tokens,   APPROX_QUANTILES(prompt_token_count, 100)[OFFSET(95)] as p95_input_tokens,   AVG(candidates_token_count) as avg_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(95)] as p95_output_tokens,   APPROX_QUANTILES(candidates_token_count, 100)[OFFSET(50)] as median_output_tokens,   MIN(candidates_token_count) as min_output_tokens,   MAX(candidates_token_count) as max_output_tokens,   AVG(thoughts_token_count) as avg_thought_tokens,   APPROX_QUANTILES(thoughts_token_count, 100)[OFFSET(95)] as p95_thought_tokens,   AVG(total_token_count) as avg_total_tokens,   APPROX_QUANTILES(total_token_count, 100)[OFFSET(95)] as p95_total_tokens FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' GROUP BY 1, 2""",
-    ),
-    geminidataanalytics.ExampleQuery(
-        natural_language_question="Show LLM requests",
-        sql_query=f"""SELECT     CASE         WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'         WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'         WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'         WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'         WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'         WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'         WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'         ELSE 'OTHER_ERROR'     END as category,     COUNT(*) as total_count FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T WHERE T.status = 'ERROR' AND T.timestamp BETWEEN '2000-01-01 00:00:00' AND '2026-03-25 03:39:13' AND status = 'ERROR' GROUP BY category ORDER BY total_count DESC""",
+        natural_language_question="Categorize LLM errors by type",
+        sql_query=f"""
+SELECT
+    CASE
+        WHEN LOWER(error_message) LIKE '%quota%' OR LOWER(error_message) LIKE '%rate limit%' THEN 'QUOTA_EXCEEDED'
+        WHEN LOWER(error_message) LIKE '%timeout%' OR LOWER(error_message) LIKE '%deadline%' OR LOWER(error_message) LIKE '%timed out%' THEN 'TIMEOUT'
+        WHEN LOWER(error_message) LIKE '%permission%' OR LOWER(error_message) LIKE '%unauthorized%' OR LOWER(error_message) LIKE '%403%' THEN 'PERMISSION_DENIED'
+        WHEN LOWER(error_message) LIKE '%model%' OR LOWER(error_message) LIKE '%generation%' OR LOWER(error_message) LIKE '%500%' THEN 'MODEL_ERROR'
+        WHEN LOWER(error_message) LIKE '%not found%' AND LOWER(error_message) LIKE '%tool%' THEN 'TOOL_NOT_FOUND'
+        WHEN LOWER(error_message) LIKE '%tool%' OR LOWER(error_message) LIKE '%function%' THEN 'TOOL_ERROR'
+        WHEN LOWER(error_message) LIKE '%parse%' OR LOWER(error_message) LIKE '%json%' THEN 'PARSING_ERROR'
+        ELSE 'OTHER_ERROR'
+    END AS category,
+    COUNT(*) AS total_count
+FROM `{PROJECT_ID}.{DATASET_ID}.{LLM_EVENTS_VIEW}` AS T
+WHERE T.status = 'ERROR'
+    AND T.timestamp BETWEEN TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY) AND CURRENT_TIMESTAMP()
+GROUP BY category
+ORDER BY total_count DESC
+""",
     ),
 ]
 
@@ -971,7 +1408,33 @@ new_example_queries = [
     ),
     geminidataanalytics.ExampleQuery(
         natural_language_question="AI-Powered Root Cause Analysis (Agent Ops)",
-        sql_query=f"""WITH failed_session AS ( SELECT session_id FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` WHERE error_message IS NOT NULL ORDER BY timestamp DESC LIMIT 1 ), SessionContext AS ( SELECT s.session_id, STRING_AGG(CONCAT(e.event_type, ': ', COALESCE(TO_JSON_STRING(e.content), '')), '\\n' ORDER BY e.timestamp) as full_history FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` e JOIN failed_session s ON e.session_id = s.session_id GROUP BY s.session_id ) SELECT session_id, AI.GENERATE( ('Analyze this conversation log and explain the root cause of the failure. Log: ', full_history), endpoint => 'gemini-2.5-flash' ).result AS root_cause_explanation FROM SessionContext;""",
+        sql_query=f"""
+WITH failed_session AS (
+    SELECT session_id
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
+    WHERE error_message IS NOT NULL
+    ORDER BY timestamp DESC
+    LIMIT 1
+),
+SessionContext AS (
+    SELECT
+        s.session_id,
+        STRING_AGG(
+            CONCAT(e.event_type, ': ', COALESCE(TO_JSON_STRING(e.content), '')),
+            '\\n' ORDER BY e.timestamp
+        ) AS full_history
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` AS e
+    JOIN failed_session AS s ON e.session_id = s.session_id
+    GROUP BY s.session_id
+)
+SELECT
+    session_id,
+    AI.GENERATE(
+        ('Analyze this conversation log and explain the root cause of the failure. Log: ', full_history),
+        endpoint => 'gemini-2.5-flash'
+    ).result AS root_cause_explanation
+FROM SessionContext
+""",
     ),
 ]
 
@@ -979,13 +1442,30 @@ example_queries += new_example_queries
 
 published_context = geminidataanalytics.Context(
     system_instruction=(
-        "You are an agent operations analyst. You have access to four specialized views "
-        "(`agent_events_view`, `invocation_events_view`, `llm_events_view`, `tool_events_view`) "
-        "that provide a semantic layer over raw agent telemetry. "
-        "Always prefer these views for analysis. "
-        "Help the user understand agent behavior, performance, errors, and usage patterns. "
-        "When asked who you are, what data you have access to, or what you do, summarize your capabilities "
-        "and list the data sources you can access including details on their purpose."
+        f"You are the Agent Operations Observability Analyst — a specialized data analyst "
+        f"that helps engineers understand the behavior, performance, errors, and usage patterns "
+        f"of multi-agent AI systems built with Google's Agent Development Kit (ADK).\n\n"
+        f"You operate on telemetry data stored in BigQuery:\n"
+        f"  - Project: {PROJECT_ID}\n"
+        f"  - Dataset: {DATASET_ID}\n"
+        f"  - Primary base table: {TABLE_ID}\n\n"
+        f"You have four pre-built semantic views optimized for analysis:\n"
+        f"  1. `agent_events_view` — Agent execution lifecycle (start, end, latency, errors per span).\n"
+        f"  2. `invocation_events_view` — End-to-end invocation (user turn) metrics including user message.\n"
+        f"  3. `llm_events_view` — LLM call details: tokens, latency, model version, full request/response.\n"
+        f"  4. `tool_events_view` — Tool execution details: tool name, args, results, latency, errors.\n\n"
+        f"Always prefer these views for analysis. Use the raw `{TABLE_ID}` table only for "
+        f"event-level tracing, multimodal content inspection, HITL events, or state deltas.\n\n"
+        f"You can answer questions such as:\n"
+        f"  - What is the P95 latency for each agent or model?\n"
+        f"  - Which agents or tools have the highest error rates?\n"
+        f"  - Are there hallucination loops (runaway token generation)?\n"
+        f"  - What is the token usage breakdown by agent, model, or root agent?\n"
+        f"  - What errors occurred in the last 24 hours?\n"
+        f"  - Which invocations are slowest and why?\n\n"
+        f"When asked 'who are you', 'what data do you have access to', or 'what can you do', "
+        f"introduce yourself with the above role, explain the data sources, and list the kinds of "
+        f"questions you can answer."
     ),
     datasource_references=datasource_references,
     glossary_terms=glossary_terms,

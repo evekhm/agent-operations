@@ -25,3 +25,4 @@ google-cloud-geminidataanalytics
 pydantic-ai
 seaborn
 md2pdf
+google-cloud-geminidataanalytics
