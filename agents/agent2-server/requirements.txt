@@ -1,0 +1,4 @@
+google-adk[a2a]
+google-cloud-aiplatform[agent_engines,a2a]
+google-genai
+requests

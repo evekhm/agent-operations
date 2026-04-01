@@ -213,6 +213,8 @@ gcloud beta services mcp enable developerknowledge.googleapis.com \
     --project=$PROJECT_ID
 
 echo ""
+# Get project number to construct the Compute Engine default service account
+# (Moving this block to deploy_agent.sh as requested)
 echo "=========================================================="
 echo "Setup Complete!"
 echo "Data store creation and import process started."

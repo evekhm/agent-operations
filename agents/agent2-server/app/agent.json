@@ -1,0 +1,19 @@
+{
+  "name": "agent2_server",
+  "description": "A remote agent that can provide weather and time information.",
+  "version": "1.0.0",
+  "url": "http://localhost:8001/a2a/app",
+  "capabilities": {
+    "streaming": false
+  },
+  "default_input_modes": ["text/plain"],
+  "default_output_modes": ["text/plain"],
+  "skills": [
+    {
+      "id": "weather_time",
+      "name": "Weather and Time",
+      "description": "Provides weather and current time information for cities.",
+      "tags": ["weather", "time"]
+    }
+  ]
+}
