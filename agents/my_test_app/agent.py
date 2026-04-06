@@ -15,24 +15,26 @@ from google.adk.tools import google_search
 from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
 from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
 from google.genai import types
+from app_utils.telemetry import setup_telemetry
+
+# Initialize logging
+logger = logging.getLogger(__name__)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=False)
 
 try:
     # Add project root to sys.path to import app_utils
     _root_dir = Path(__file__).resolve().parent.parent.parent
     if str(_root_dir) not in sys.path:
         sys.path.insert(0, str(_root_dir))
-    
-    from app_utils.telemetry import setup_telemetry
     setup_telemetry()
 except ImportError as e:
     logging.warning(f"OpenTelemetry is optional, could not import: {e}")
 
-# Initialize logging
-logger = logging.getLogger(__name__)
+
 
 # --- Load Default Env ---
 _, default_project_id = google.auth.default()
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=False)
+
 
 # --- Add shared library to path ---
 CURRENT_DIR = Path(__file__).resolve().parent

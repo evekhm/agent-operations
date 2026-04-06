@@ -1,10 +1,11 @@
 # 1. Configuration Check
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    source "$SCRIPT_DIR/.env"
+ENV_PATH="$SCRIPT_DIR/../../.env"
+if [ -f "$ENV_PATH" ]; then
+    source "$ENV_PATH"
 else
-    echo "WARNING: .env file not found at $SCRIPT_DIR/.env"
+    echo "WARNING: .env file not found at $ENV_PATH"
 fi
 
 
@@ -27,9 +28,12 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/logging.logWriter" --quiet
 
-SERVICE_NAME=$(basename "agents/agent2-server")
+echo "Ensuring Vertex AI User permission for Cloud Run..."
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/aiplatform.user" --quiet
 
 adk deploy cloud_run --project=${PROJECT_ID} --region=${DATASET_LOCATION} \
-    --service_name=${SERVICE_NAME} \
-    --a2a --with_ui agents/agent2-server/ \
+    --service_name=${PTO_AGENT_SERVICE_NAME} \
+    --a2a --with_ui "${SCRIPT_DIR}"/ \
     -- --no-allow-unauthenticated --set-env-vars="DATASET_LOCATION=${DATASET_LOCATION},DATASET_ID=${DATASET_ID},TABLE_ID=${TABLE_ID}"

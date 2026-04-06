@@ -26,3 +26,7 @@ pydantic-ai
 seaborn
 md2pdf
 google-cloud-geminidataanalytics
+requests
+uvicorn
+a2a-sdk
+google-cloud-aiplatform

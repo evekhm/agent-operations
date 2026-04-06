@@ -1,4 +1,7 @@
-google-adk[a2a]
+google-adk
 google-cloud-aiplatform[agent_engines,a2a]
 google-genai
 requests
+uvicorn
+a2a-sdk
+google-cloud-aiplatform

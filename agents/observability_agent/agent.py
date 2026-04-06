@@ -10,10 +10,15 @@ try:
 except ImportError:
     pass # OpenTelemetry is optional
 
+from typing import Optional
+from typing_extensions import override
 from google.adk.agents import Agent, SequentialAgent
 from google.adk.apps import App
-from google.adk.plugins import LoggingPlugin
+from google.adk.plugins import BasePlugin, LoggingPlugin
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.adk.agents.callback_context import CallbackContext
 from google.genai.types import HttpRetryOptions, GenerateContentConfig
 
 # Define robust exponential backoff strategy for 429 RESOURCE_EXHAUSTED errors
@@ -199,9 +204,78 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     location=AGENT_DATASET_LOCATION
 )
 
+class TokenSizeLoggerPlugin(BasePlugin):
+    """Custom plugin to log token counts and warnings for large inputs."""
+
+    def __init__(self, name: str = "token_size_logger", threshold_chars: int = 100000):
+        super().__init__(name)
+        self.threshold_chars = threshold_chars
+
+    def _get_input_size(self, llm_request: LlmRequest) -> int:
+        """Estimate input size by counting characters in the prompt."""
+        if not llm_request.contents:
+             return 0
+        total_chars = 0
+        for content in llm_request.contents:
+            if content.parts:
+                for part in content.parts:
+                    if part.text:
+                        total_chars += len(part.text)
+        return total_chars
+
+    @override
+    async def before_model_callback(
+        self, *, callback_context: CallbackContext, llm_request: LlmRequest
+    ) -> Optional[LlmResponse]:
+        input_chars = self._get_input_size(llm_request)
+        agent_name = callback_context.agent_name
+        
+        # Log the input size
+        self._log(f"🧠 LLM REQUEST (Estimated Input) - Agent: {agent_name}, Chars: {input_chars}")
+        
+        if input_chars > self.threshold_chars:
+            self._log(f"⚠️  WARNING - Large input detected for agent '{agent_name}': {input_chars} chars (> {self.threshold_chars})")
+        
+        return None
+
+    @override
+    async def after_model_callback(
+        self, *, callback_context: CallbackContext, llm_response: LlmResponse
+    ) -> Optional[LlmResponse]:
+        agent_name = callback_context.agent_name
+        if llm_response.usage_metadata:
+             self._log(f"🧠 LLM RESPONSE (Success) - Agent: {agent_name}")
+             self._log(f"   Token Usage - Input: {llm_response.usage_metadata.prompt_token_count}, Output: {llm_response.usage_metadata.candidates_token_count}")
+        return None
+
+    @override
+    async def on_model_error_callback(
+        self,
+        *,
+        callback_context: CallbackContext,
+        llm_request: LlmRequest,
+        error: Exception,
+    ) -> Optional[LlmResponse]:
+        agent_name = callback_context.agent_name
+        input_chars = self._get_input_size(llm_request)
+        
+        self._log(f"🧠 LLM ERROR - Agent: {agent_name}")
+        self._log(f"   Error: {error}")
+        self._log(f"   Input Size (Estimated Chars): {input_chars}")
+        
+        if input_chars > self.threshold_chars:
+             self._log(f"⚠️  WARNING - Large input during error for agent '{agent_name}': {input_chars} chars (> {self.threshold_chars})")
+        
+        return None
+
+    def _log(self, message: str) -> None:
+        """Internal method to format and print log messages."""
+        formatted_message: str = f"\033[93m[{self.name}] {message}\033[0m" # Yellow for warnings/logs
+        print(formatted_message)
+
 # Export an App instance that includes the root_agent and the required plugins
 observability_app = App(
     name=OBSERVABILITY_APP_NAME,
     root_agent=root_agent,
-    plugins=[LoggingPlugin(), bq_logging_plugin]
+    plugins=[LoggingPlugin(), bq_logging_plugin, TokenSizeLoggerPlugin()]
 )

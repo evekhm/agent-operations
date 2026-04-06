@@ -1,0 +1,45 @@
+{
+  "capabilities": {},
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "description": "An agent that calculates remaining time off and work days.",
+  "name": "pto_agent",
+  "preferredTransport": "JSONRPC",
+  "protocolVersion": "0.3.0",
+  "skills": [
+    {
+      "description": "An agent that calculates remaining time off and work days. I am a humorous AI assistant designed to calculate remaining days in the year and PTO. Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
+      "examples": [],
+      "id": "pto_agent",
+      "name": "model",
+      "tags": [
+        "llm"
+      ]
+    },
+    {
+      "description": "Calculates remaining days in the year, work days, weekends, and US public holidays,\nand calculates remaining PTO days based on a funny logic.\n\nReturns:\n    A string with the calculated details and a humorous summary.",
+      "id": "pto_agent-calculate_pto_details",
+      "name": "calculate_pto_details",
+      "tags": [
+        "llm",
+        "tools"
+      ]
+    },
+    {
+      "description": "Request additional input from the user.\n\nUse this tool when you need more information from the user to complete a task.\nCalling this tool will pause execution until the user responds.\n\nArgs:\n    message: The question or clarification request to show the user.",
+      "id": "pto_agent-request_user_input",
+      "name": "request_user_input",
+      "tags": [
+        "llm",
+        "tools"
+      ]
+    }
+  ],
+  "supportsAuthenticatedExtendedCard": false,
+  "url": "http://localhost:8000/a2a/pto_agent",
+  "version": "0.0.1"
+}

@@ -23,7 +23,7 @@ from google.adk.apps import App
 from google.adk.models import Gemini
 from google.adk.tools import LongRunningFunctionTool
 from google.genai import types
-
+from google.adk.a2a.utils.agent_to_a2a import to_a2a
 import os
 import google.auth
 
@@ -39,37 +39,62 @@ DATASET_ID = os.getenv('DATASET_ID', "agent_ops_demo")
 DATASET_LOCATION = os.getenv('DATASET_LOCATION', "us-central1")
 TABLE_ID = os.getenv('TABLE_ID', "agent_events")
 
-def get_weather(query: str) -> str:
-    """Simulates a web search. Use it get information on weather.
-
-    Args:
-        query: A string containing the location to get weather information for.
+def calculate_pto_details() -> str:
+    """Calculates remaining days in the year, work days, weekends, and US public holidays,
+    and calculates remaining PTO days based on a funny logic.
 
     Returns:
-        A string with the simulated weather information for the queried location.
+        A string with the calculated details and a humorous summary.
     """
-    if "sf" in query.lower() or "san francisco" in query.lower():
-        return "It's 40 degrees and foggy ."
-    return "It's 90 degrees and sunny."
+    import datetime
+    
+    # Current date is fixed to 2026-04-03 as per user environment metadata
+    today = datetime.date(2026, 4, 3)
+    year = today.year
+    end_of_year = datetime.date(year, 12, 31)
+    
+    total_remaining_days = (end_of_year - today).days + 1
+    
+    weekends = 0
+    current_date = today
+    while current_date <= end_of_year:
+        if current_date.weekday() in [5, 6]: # 5 is Saturday, 6 is Sunday
+            weekends += 1
+        current_date += datetime.timedelta(days=1)
+        
+    # US Public Holidays 2026
+    holidays = [
+        datetime.date(2026, 5, 25),  # Memorial Day
+        datetime.date(2026, 6, 19),  # Juneteenth
+        datetime.date(2026, 7, 4),   # Independence Day
+        datetime.date(2026, 9, 7),   # Labor Day
+        datetime.date(2026, 10, 12), # Columbus Day
+        datetime.date(2026, 11, 11), # Veterans Day
+        datetime.date(2026, 11, 26), # Thanksgiving
+        datetime.date(2026, 12, 25), # Christmas
+    ]
+    
+    remaining_holidays = [h for h in holidays if h >= today]
+    num_holidays = len(remaining_holidays)
+    
+    work_days = total_remaining_days - weekends - num_holidays
+    
+    pto_base = work_days / 10
+    pto_bonus = 5 if work_days > 100 else 0
+    remaining_pto = pto_base + pto_bonus
+    
+    result = (
+        f"As of today, {today.strftime('%Y-%m-%d')}:\n"
+        f"- Total days remaining in the year: {total_remaining_days}\n"
+        f"- Weekends remaining: {weekends}\n"
+        f"- Public holidays remaining: {num_holidays}\n"
+        f"- Work days remaining: {work_days}\n\n"
+        f"Based on our highly scientific and non-negotiable funny logic:\n"
+        f"You have approximately {remaining_pto:.1f} PTO days remaining to use or lose!\n"
+        f"(Formula: 10% of work days + a bonus of {pto_bonus} days for surviving the grind.)"
+    )
+    return result
 
-
-def get_current_time(query: str) -> str:
-    """Simulates getting the current time for a city.
-
-    Args:
-        city: The name of the city to get the current time for.
-
-    Returns:
-        A string with the current time information.
-    """
-    if "sf" in query.lower() or "san francisco" in query.lower():
-        tz_identifier = "America/Los_Angeles"
-    else:
-        return f"Sorry, I don't have timezone information for query: {query}."
-
-    tz = ZoneInfo(tz_identifier)
-    now = datetime.datetime.now(tz)
-    return f"The current time for query {query} is {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}"
 
 
 def request_user_input(message: str) -> dict:
@@ -85,16 +110,15 @@ def request_user_input(message: str) -> dict:
 
 
 root_agent = Agent(
-    name="root_agent",
+    name="pto_agent",
     model=Gemini(
         model="gemini-3-flash-preview",
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
-    description="An agent that can provide information about the weather and time.",
-    instruction="You are a helpful AI assistant designed to provide accurate and useful information. Always return tool results exactly as provided, word for word, without paraphrasing.",
+    description="An agent that calculates remaining time off and work days.",
+    instruction="You are a humorous AI assistant designed to calculate remaining days in the year and PTO. Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
     tools=[
-        get_weather,
-        get_current_time,
+        calculate_pto_details,
         LongRunningFunctionTool(func=request_user_input),
     ],
 )
@@ -117,3 +141,6 @@ app = App(
     name="app",
     plugins=[bq_logging_plugin, LoggingPlugin()]
 )
+
+# # Make agent A2A-compatible
+# app = to_a2a(root_agent)
