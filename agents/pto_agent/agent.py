@@ -138,7 +138,7 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
 )
 app = App(
     root_agent=root_agent,
-    name="app",
+    name="pto_agent",
     plugins=[bq_logging_plugin, LoggingPlugin()]
 )
 

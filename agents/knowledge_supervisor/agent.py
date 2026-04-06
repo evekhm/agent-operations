@@ -10,6 +10,8 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.planners import BuiltInPlanner
 
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 import httpx
 import google.auth.transport.requests
 import google.oauth2.id_token
@@ -49,6 +51,7 @@ class CloudRunAuth(httpx.Auth):
                     raise Exception(f"Failed to fetch ID token via SDK and gcloud: {e}")
         request.headers['Authorization'] = f"Bearer {token}"
         yield request
+
 
 class CardInterceptClient(httpx.AsyncClient):
     def __init__(self, server_url, **kwargs):
@@ -122,6 +125,6 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
 
 app = App(
     root_agent=root_agent,
-    name="app",
+    name="knowledge_supervisor",
     plugins=[bq_logging_plugin, LoggingPlugin()]
 )

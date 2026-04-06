@@ -184,7 +184,8 @@ root_agent = Agent(
     name=AGENT_NAME,
     model=Gemini(model=MODEL_ID, retry_options=api_retry_options),
     instruction=ROOT_AGENT_PROMPT,
-    description="Entry point for the Observability Agent application. Understands user intent and delegates analysis to specialized subagents.",
+    description="Entry point for the Observability Agent application. "
+                "Understands user intent and delegates analysis to specialized subagents.",
     sub_agents=[report_generation_workflow],
 )
 
@@ -277,5 +278,5 @@ class TokenSizeLoggerPlugin(BasePlugin):
 observability_app = App(
     name=OBSERVABILITY_APP_NAME,
     root_agent=root_agent,
-    plugins=[LoggingPlugin(), bq_logging_plugin, TokenSizeLoggerPlugin()]
+    plugins=[LoggingPlugin(), bq_logging_plugin]
 )

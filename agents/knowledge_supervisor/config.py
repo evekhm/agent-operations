@@ -15,6 +15,9 @@ MODEL_ID = os.getenv('SUPERVISOR_MODEL_ID', 'gemini-2.5-pro')
 PTO_AGENT_URL = os.getenv('PTO_AGENT_URL')
 PTO_AGENT_LOCATION = os.getenv('PTO_AGENT_LOCATION', "us-central1")
 PTO_SERVICE_NAME = os.getenv('PTO_AGENT_SERVICE_NAME', "ptoagent")
+DATASET_ID = os.getenv('DATASET_ID')
+DATASET_LOCATION = os.getenv('DATASET_LOCATION')
+TABLE_ID = os.getenv('TABLE_ID')
 
 def discover_pto_agent_url() -> str:
     """Discovers the pto_agent URL using .env fallback to Cloud Run."""
