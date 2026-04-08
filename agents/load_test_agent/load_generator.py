@@ -135,10 +135,10 @@ async def main():
             logger.info(f"\n=== Starting Query {current_query_num}: {q} ===")
             
             try:
-                logger.info(f"[{current_query_num}] Sending request...", end="", flush=True)
+                logger.info(f"[{current_query_num}] Sending request...")
                 # engine.query is synchronous, so run it in a thread
                 response = await asyncio.to_thread(engine.query, input={"message": q})
-                logger.info(f"[{current_query_num}] Received response.", end="", flush=True)
+                logger.info(f"[{current_query_num}] Received response.")
                 
                 # Extract answer, assume response might be a dict or string
                 if isinstance(response, dict):
