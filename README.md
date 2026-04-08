@@ -229,6 +229,27 @@ The `knowledge_supervisor` agent is a coordinator agent that can delegate tasks 
 *   **PTO Tracking**: Can calculate remaining time off by delegating to the remote `pto_agent`.
 *   **Candidate Tracking**: Can list hiring contexts and candidates by delegating to the local `candidate_tracker` agent (simulated free tier operations).
 
+### Stress Testing with Cloud Run Job
+
+We provide a stress testing infrastructure for the Knowledge Supervisor agent in `agents/load_test_agent/`. This runs as a Cloud Run Job and simulates concurrent user queries.
+
+#### Deployment
+To deploy the stress test job:
+```bash
+./agents/load_test_agent/deploy_job.sh
+```
+
+#### Execution
+To run the job with default parameters:
+```bash
+gcloud run jobs execute knowledge-supervisor-test --project=$PROJECT_ID --region=$REGION
+```
+
+To run with custom concurrency and number of questions:
+```bash
+gcloud run jobs execute knowledge-supervisor-test --project=$PROJECT_ID --region=$REGION --args="--num-questions=10","--concurrency=5","--topic=vacation and hiring"
+```
+
 ## Release Notes
 
 See [Release notes](release_notes.md) for the changes.

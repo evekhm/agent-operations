@@ -24,8 +24,6 @@ else
 fi
 
 echo "Discovering pto_agent URL..."
-PTO_AGENT_SERVICE_NAME="ptoagent"
-PTO_AGENT_LOCATION="us-central1"
 
 DISCOVERED_URL=$(gcloud run services describe "$PTO_AGENT_SERVICE_NAME" \
   --platform managed \

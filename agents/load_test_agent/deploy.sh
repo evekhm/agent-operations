@@ -31,9 +31,9 @@ gcloud builds submit --tag "$IMAGE_NAME" \
 cat <<EOF > resolved_env.yaml
 PROJECT_ID: "$PROJECT_ID"
 REGION: "$REGION"
-CONCURRENCY: "${CONCURRENCY:-2}"
-DURATION_MINUTES: "${DURATION_MINUTES:-5}"
-TOPICS_CONFIG: "${TOPICS_CONFIG:-paid time off calculations:5}"
+CONCURRENCY: "${CONCURRENCY}"
+DURATION_MINUTES: "${DURATION_MINUTES}"
+TOPICS_CONFIG: "${TOPICS_CONFIG}"
 EOF
 
 gcloud run jobs deploy "$JOB_NAME" \

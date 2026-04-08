@@ -19,7 +19,7 @@ import json
 from .config import (
     discover_pto_agent_url,
     SUPERVISOR_DISPLAY_NAME,
-    SUPERVISOR_MODEL_ID
+    MODEL_ID
 )
 
 # Configure logging
@@ -89,7 +89,7 @@ if server_url.startswith("https://"):
     logger.info("Enabling CloudRunAuth for HTTPS URL")
     auth = CloudRunAuth(audience=server_url)
 
-auth_client = CardInterceptClient(server_url=server_url, auth=auth)
+auth_client = CardInterceptClient(server_url=server_url, auth=auth, timeout=60.0)
 
 logger.info(f"Creating RemoteA2aAgent pointing to {server_url}/.well-known/agent-card.json")
 pto_remote_agent = RemoteA2aAgent(
@@ -126,7 +126,7 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
 root_agent = Agent(
     name="root_agent", # Keeping original name
     model=Gemini(
-        model=SUPERVISOR_MODEL_ID,
+        model=MODEL_ID,
         retry_options=types.HttpRetryOptions(attempts=5),
     ),
     description="A supervisor agent that coordinates other agents to answer user queries.",

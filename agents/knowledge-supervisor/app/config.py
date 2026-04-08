@@ -16,25 +16,27 @@ else:
     logger.info(f".env not found at {env_path}, relying on environment variables.")
 
 _, project_id = google.auth.default()
-os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 
-SUPERVISOR_MODEL_ID = os.getenv('SUPERVISOR_MODEL_ID', 'gemini-2.5-pro')
+PROJECT_ID =  os.getenv('PROJECT_ID', project_id)
+REGION = os.getenv('SUPERVISOR_REGION', 'us-central1')
+MODEL_ID = os.getenv('SUPERVISOR_MODEL_ID', 'gemini-2.5-pro')
 SUPERVISOR_DISPLAY_NAME = os.getenv('SUPERVISOR_DISPLAY_NAME', "knowledge_supervisor")
 
 # A2A PTO Agent
 PTO_AGENT_URL = os.getenv('PTO_AGENT_URL')
-PTO_AGENT_LOCATION = os.getenv('PTO_AGENT_LOCATION', "us-central1")
 PTO_SERVICE_NAME = os.getenv('PTO_AGENT_SERVICE_NAME', "ptoagent")
+
+os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+os.environ["GOOGLE_CLOUD_LOCATION"] = REGION
+os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 
 # Big Query
 DATASET_ID = os.getenv('TEST_DATASET_ID')
 DATASET_LOCATION = os.getenv('TEST_BQ_LOCATION')
 TABLE_ID = os.getenv('TEST_TABLE_ID')
 
-logger.info(f"Loaded config: SUPERVISOR_MODEL_ID={SUPERVISOR_MODEL_ID}, SUPERVISOR_DISPLAY_NAME={SUPERVISOR_DISPLAY_NAME}")
-logger.info(f"Loaded config: PTO_AGENT_URL={PTO_AGENT_URL}, PTO_AGENT_LOCATION={PTO_AGENT_LOCATION}")
+logger.info(f"Loaded config: SUPERVISOR_MODEL_ID={MODEL_ID}, SUPERVISOR_DISPLAY_NAME={SUPERVISOR_DISPLAY_NAME}")
+logger.info(f"Loaded config: PTO_AGENT_URL={PTO_AGENT_URL}, PTO_AGENT_LOCATION={REGION}")
 logger.info(f"Loaded config: DATASET_ID={DATASET_ID}, DATASET_LOCATION={DATASET_LOCATION}, TABLE_ID={TABLE_ID}")
 
 
@@ -45,7 +47,7 @@ def discover_pto_agent_url() -> str:
         return PTO_AGENT_URL
 
     # Fallback to Cloud Run discovery
-    region = PTO_AGENT_LOCATION
+    region = REGION
     if not project_id:
         return "http://localhost:8000" # Fallback to local if no project
 

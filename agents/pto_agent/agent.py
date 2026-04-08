@@ -34,19 +34,24 @@ env_path = os.path.join(os.path.dirname(__file__), "../../.env")
 if os.path.exists(env_path):
     load_dotenv(dotenv_path=env_path)
 _, project_id = google.auth.default()
+
+# Big Query
+DATASET_ID = os.getenv('TEST_DATASET_ID')
+DATASET_LOCATION = os.getenv('TEST_BQ_LOCATION')
+TABLE_ID = os.getenv('TEST_TABLE_ID')
+LOCATION = os.getenv('PTO_AGENT_LOCATION', "us-central1")
+MODEL_ID = os.getenv('PTO_MODEL_ID', "gemini-2.5-flash")
+
 os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+os.environ["GOOGLE_CLOUD_LOCATION"] = LOCATION
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-DATASET_ID = os.getenv('DATASET_ID', "agent_ops_demo")
-DATASET_LOCATION = os.getenv('DATASET_LOCATION', "us-central1")
-TABLE_ID = os.getenv('TABLE_ID', "agent_events")
-MODEL_ID = os.getenv('MODEL_ID', "gemini-2.5-flash")
 
 print(f"--- PTO Agent Environment Variables ---")
 print(f"DATASET_ID: {DATASET_ID}")
 print(f"DATASET_LOCATION: {DATASET_LOCATION}")
 print(f"TABLE_ID: {TABLE_ID}")
 print(f"GOOGLE_CLOUD_PROJECT: {os.environ.get('GOOGLE_CLOUD_PROJECT')}")
+print(f"GOOGLE_CLOUD_LOCATION: {os.environ.get('GOOGLE_CLOUD_LOCATION')}")
 print(f"---------------------------------------")
 
 def calculate_pto_details() -> str:
