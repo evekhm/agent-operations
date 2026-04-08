@@ -29,8 +29,10 @@ import google.auth
 
 from dotenv import load_dotenv
 
-# Load .env from project root
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+# Load .env from project root if it exists
+env_path = os.path.join(os.path.dirname(__file__), "../../.env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
 _, project_id = google.auth.default()
 os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
 os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
@@ -38,6 +40,14 @@ os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 DATASET_ID = os.getenv('DATASET_ID', "agent_ops_demo")
 DATASET_LOCATION = os.getenv('DATASET_LOCATION', "us-central1")
 TABLE_ID = os.getenv('TABLE_ID', "agent_events")
+MODEL_ID = os.getenv('MODEL_ID', "gemini-2.5-flash")
+
+print(f"--- PTO Agent Environment Variables ---")
+print(f"DATASET_ID: {DATASET_ID}")
+print(f"DATASET_LOCATION: {DATASET_LOCATION}")
+print(f"TABLE_ID: {TABLE_ID}")
+print(f"GOOGLE_CLOUD_PROJECT: {os.environ.get('GOOGLE_CLOUD_PROJECT')}")
+print(f"---------------------------------------")
 
 def calculate_pto_details() -> str:
     """Calculates remaining days in the year, work days, weekends, and US public holidays,
@@ -46,8 +56,6 @@ def calculate_pto_details() -> str:
     Returns:
         A string with the calculated details and a humorous summary.
     """
-    import datetime
-    
     # Current date is fixed to 2026-04-03 as per user environment metadata
     today = datetime.date(2026, 4, 3)
     year = today.year
@@ -112,11 +120,12 @@ def request_user_input(message: str) -> dict:
 root_agent = Agent(
     name="pto_agent",
     model=Gemini(
-        model="gemini-3-flash-preview",
+        model=MODEL_ID,
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     description="An agent that calculates remaining time off and work days.",
-    instruction="You are a humorous AI assistant designed to calculate remaining days in the year and PTO. Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
+    instruction="You are a humorous AI assistant designed to calculate remaining days in the year and PTO. "
+                "Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
     tools=[
         calculate_pto_details,
         LongRunningFunctionTool(func=request_user_input),

@@ -23,14 +23,15 @@ from config import (
     project_id,
     DATASET_ID,
     DATASET_LOCATION,
-    TABLE_ID
+    TABLE_ID,
+    SUPERVISOR_DISPLAY_NAME
 )
 from prompts import SUPERVISOR_INSTRUCTION
 
 server_url = discover_pto_agent_url()
-agent_card_path = f"{server_url}/a2a/pto_agent/.well-known/agent-card.json"
 
 class CloudRunAuth(httpx.Auth):
+
     def __init__(self, audience: str):
         self.audience = audience
         self.auth_req = google.auth.transport.requests.Request()
@@ -84,7 +85,7 @@ auth_client = CardInterceptClient(server_url=server_url, auth=auth)
 pto_remote_agent = RemoteA2aAgent(
     name="pto_agent",
     description="A remote agent that calculates remaining time off and work days.",
-    agent_card=agent_card_path,
+    agent_card=f"{server_url}/.well-known/agent-card.json",
     httpx_client=auth_client
 )
 
@@ -93,7 +94,7 @@ def request_user_input(message: str) -> dict:
     return {"status": "pending", "message": message}
 
 root_agent = Agent(
-    name="knowledge_supervisor",
+    name=SUPERVISOR_DISPLAY_NAME,
     model=Gemini(
         model=MODEL_ID,
         retry_options=types.HttpRetryOptions(attempts=3),
@@ -109,6 +110,47 @@ root_agent = Agent(
     ],
 )
 
+class ReasoningEngineApp(App):
+    def query(self, query: str) -> str:
+        import asyncio
+        import nest_asyncio
+        nest_asyncio.apply()
+        return asyncio.run(self.async_query(query))
+
+        
+    async def async_query(self, query: str, session_id: str = "uid", user_id: str = "suerid") -> str:
+        from google.adk.runners import Runner
+        from google.adk.sessions.in_memory_session_service import InMemorySessionService
+        
+        session_service = InMemorySessionService()
+        runner = Runner(app=self, session_service=session_service, auto_create_session=True)
+
+        
+        new_message = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=query)]
+        )
+        
+        final_response = ""
+        partial_responses = []
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=session_id,
+            new_message=new_message
+        ):
+            if event.author != "user" and event.content:
+                if event.partial:
+                     for part in event.content.parts:
+                         if part.text:
+                             partial_responses.append(part.text)
+                else:
+                     text = "".join([p.text for p in event.content.parts if p.text])
+                     if text:
+                         final_response = text
+                             
+        return final_response or "".join(partial_responses) or "No response from agent."
+
+
 bq_config = BigQueryLoggerConfig(
     enabled=True,
     max_content_length=500 * 1024,
@@ -123,8 +165,9 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     location=DATASET_LOCATION
 )
 
-app = App(
+app = ReasoningEngineApp(
     root_agent=root_agent,
-    name="knowledge_supervisor",
+    name=SUPERVISOR_DISPLAY_NAME,
     plugins=[bq_logging_plugin, LoggingPlugin()]
 )
+adk_app = app

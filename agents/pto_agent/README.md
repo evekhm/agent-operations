@@ -7,9 +7,14 @@ This agent calculates remaining days in the year, work days, weekends, and US pu
 To deploy this agent to Google Cloud Run, follow these steps:
 
 1. Ensure you have established your environment variables in a `.env` file at the root of the project.
+
+    ```shell
+    cp .env.sample .env
+    ```
+
 2. Run the deployment script from this directory:
     ```bash
-    ./deploy_to_cloudrun.sh
+    ./deploy.sh
     ```
     This script will set up necessary IAM permissions and use `adk deploy cloud_run` to deploy the agent.
 
@@ -22,9 +27,43 @@ PTO_AGENT_URL=$(gcloud run services describe ptoagent --platform managed --regio
 ```
 *(Replace `us-central1` with the appropriate region if different).*
 
-## Testing Deployment
+## Testing
+
+We provide several scripts to test the agent both locally and after deployment. All test files are located in the `tests/` directory.
+
+### Local Testing
+
+To test the agent's logic and tool execution locally without deploying:
+
+```bash
+python3 tests/test_local_agent.py
+```
+
+### Remote Testing
 
 Since the agent is deployed with authentication required (`--no-allow-unauthenticated`), you must use an identity token to access it.
+
+#### Using Python Script
+To test the deployed agent via Python (using `RemoteA2aAgent`), which verifies full A2A communication and tool execution:
+
+```bash
+python3 tests/test_remote_agent.py
+```
+
+*Expect a response similar to:*
+```text
+Sending query to remote agent...
+
+--- Response ---
+Ha! It looks like you've got about **23.7 PTO days** left to play with this year. That's 10% of your remaining work days, plus a bonus 5 days just for surviving the daily grind...
+```
+
+#### Using Bash Script
+You can also use the bash script to automate the `curl` steps described below:
+
+```bash
+./tests/test_remote_card.sh
+```
 
 ### 1. Generate an Identity Token
 
@@ -49,3 +88,22 @@ To test if the endpoint handles JSON-RPC traffic:
 curl -i -X POST -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {}}' $PTO_AGENT_URL/a2a/pto_agent
 ```
 *(Expect a `200 OK` with a "Method not found" error, indicating the server is alive and communicating).*
+
+### Generating `agent_card.json` Locally
+
+To generate or update the `agent_card.json` file locally, follow these steps:
+
+1. **Enable A2A mode**: Open `pto_agent/agent.py` and uncomment the line:
+   ```python
+   app = to_a2a(root_agent)
+   ```
+2. **Run Uvicorn**: From the `agents` directory, run:
+   ```shell
+   uvicorn pto_agent.agent:app --host localhost --port 8000
+   ```
+3. **Fetch the Card**: In another terminal, fetch the generated card and save it:
+   ```shell
+   curl -s http://localhost:8000/.well-known/agent-card.json -o pto_agent/agent_card.json
+   ```
+   *(Note: Locally the card is served at the root `/.well-known/agent-card.json` rather than the prefixed path used in deployment).*
+4. **Restore File**: Stop the `uvicorn` server and comment the line back out in `agent.py` to restore standard ADK app functionality.

@@ -138,6 +138,41 @@ export DATASET_LOCATION="<YOUR_DATASET_LOCATION>"  # e.g. "us-central1"
 > Test Data generated using [test_scenarios_demo.txt](agents/my_test_app/test_scenarios_demo.txt)
 > `./agents/my_test_app/generate_data.sh -n 10 -f agents/my_test_app/test_scenarios_demo.txt`
 
+## Deployment
+
+> [!NOTE]
+> The agents being deployed here (`pto_agent` and `knowledge-supervisor`) are used to generate test data for analysis (data produced by the BigQuery Agent Analytics plugin). The **Observability Agent** itself is not yet deployed anywhere and currently runs only locally.
+
+To deploy the agents to Google Cloud, run the deployment script from the root directory:
+
+```bash
+./deploy.sh
+```
+
+**Explanation:**
+*   **PTO Agent**: Deployed to Cloud Run with A2A (Agent-to-Agent) communication enabled.
+*   **Knowledge Supervisor**: Deployed to Vertex AI Agent Engine (Reasoning Engine). The script automatically discovers the `pto_agent` URL and configures the supervisor to use it.
+*   **IAM Permissions**: The script sets up necessary IAM bindings for the default compute service account and the Reasoning Engine service account to access BigQuery and invoke Cloud Run services.
+
+## Remote Testing
+
+You can test the deployed agents using the `test_remote.sh` scripts located in their respective directories.
+
+### PTO Agent
+To test the `pto_agent` and verify its A2A card endpoint:
+```bash
+cd agents/pto_agent
+./tests/test_remote_card.sh
+```
+
+### Knowledge Supervisor Agent
+To test the `knowledge-supervisor` agent with sample queries:
+```bash
+cd agents/knowledge-supervisor
+./tests/test_remote.sh
+```
+This script will send queries to the deployed Reasoning Engine to verify delegation to the `pto_agent` and local tool execution.
+
 ## Command Line Usage
 You can provide CLI arguments when running the analyst script to dynamically overwrite the configurations:
 
@@ -185,6 +220,14 @@ For evaluating long-term structural degradation or improvement. Dissects large t
 [Conversational Analytics — setup & IAM](https://docs.cloud.google.com/bigquery/docs/conversational-analytics) - — lets you query that same table using natural language, with the CA Data Agent writing SQL, returning results, and generating insights for you.
 
 [Create a Conversational Analytics Data Agent](https://docs.cloud.google.com/bigquery/docs/create-data-agents) - Instead of writing all our analysis queries by hand, we create a CA Data Agent that understands our event log table and can answer questions in natural language.
+
+## Knowledge Supervisor Agent
+
+The `knowledge_supervisor` agent is a coordinator agent that can delegate tasks to other agents.
+
+### Features
+*   **PTO Tracking**: Can calculate remaining time off by delegating to the remote `pto_agent`.
+*   **Candidate Tracking**: Can list hiring contexts and candidates by delegating to the local `candidate_tracker` agent (simulated free tier operations).
 
 ## Release Notes
 

@@ -2,16 +2,25 @@ import os
 import google.auth
 from dotenv import load_dotenv
 import subprocess
+import logging
 
-# Load .env from project root
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=True)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+env_path = os.path.join(os.path.dirname(__file__), "../../../.env")
+if os.path.exists(env_path):
+    logger.info(f"Loading .env from {env_path}")
+    load_dotenv(dotenv_path=env_path, override=True)
+else:
+    logger.info(f".env not found at {env_path}, relying on environment variables.")
 
 _, project_id = google.auth.default()
 os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
 os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 
-MODEL_ID = os.getenv('SUPERVISOR_MODEL_ID', 'gemini-2.5-pro')
+SUPERVISOR_MODEL_ID = os.getenv('SUPERVISOR_MODEL_ID', 'gemini-2.5-pro')
 SUPERVISOR_DISPLAY_NAME = os.getenv('SUPERVISOR_DISPLAY_NAME', "knowledge_supervisor")
 
 # A2A PTO Agent
@@ -23,6 +32,10 @@ PTO_SERVICE_NAME = os.getenv('PTO_AGENT_SERVICE_NAME', "ptoagent")
 DATASET_ID = os.getenv('TEST_DATASET_ID')
 DATASET_LOCATION = os.getenv('TEST_BQ_LOCATION')
 TABLE_ID = os.getenv('TEST_TABLE_ID')
+
+logger.info(f"Loaded config: SUPERVISOR_MODEL_ID={SUPERVISOR_MODEL_ID}, SUPERVISOR_DISPLAY_NAME={SUPERVISOR_DISPLAY_NAME}")
+logger.info(f"Loaded config: PTO_AGENT_URL={PTO_AGENT_URL}, PTO_AGENT_LOCATION={PTO_AGENT_LOCATION}")
+logger.info(f"Loaded config: DATASET_ID={DATASET_ID}, DATASET_LOCATION={DATASET_LOCATION}, TABLE_ID={TABLE_ID}")
 
 
 def discover_pto_agent_url() -> str:
@@ -53,4 +66,3 @@ def discover_pto_agent_url() -> str:
         pass
 
     return "http://localhost:8000"
-
