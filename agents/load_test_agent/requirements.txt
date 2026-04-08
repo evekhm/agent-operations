@@ -1,0 +1,5 @@
+google-adk>=1.27.0
+google-genai
+httpx
+google-auth
+google-cloud-aiplatform
