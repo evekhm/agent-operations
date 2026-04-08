@@ -1,7 +1,0 @@
-google-adk>=1.28.0
-google-genai
-httpx
-google-auth
-google-cloud-aiplatform[agent_engines,a2a]
-a2a-sdk
-nest_asyncio
