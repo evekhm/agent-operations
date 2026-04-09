@@ -13,8 +13,12 @@ from dotenv import load_dotenv
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("load_generator")
 
 env_path = os.path.join(os.path.dirname(__file__), "../../.env")
 if os.path.exists(env_path):
