@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-env_path = os.path.join(os.path.dirname(__file__), "../../../.env")
+env_path = os.path.join(os.path.dirname(__file__), "../../.env")
 if os.path.exists(env_path):
     logger.info(f"Loading .env from {env_path}")
     load_dotenv(dotenv_path=env_path, override=True)
@@ -66,6 +66,9 @@ async def generate_questions(client: Client, topic: str, count: int) -> list[str
 async def main():
     # Read configuration from environment variables
     topics_config_str = os.getenv("TOPICS_CONFIG")
+    if topics_config_str is None:
+        logger.info("TOPICS_CONFIG is not set. Using default.")
+        topics_config_str = '{"pto": 3, "hiring candidates": 2}'
     concurrency = int(os.getenv("CONCURRENCY", "1"))
     duration_minutes = float(os.getenv("DURATION_MINUTES", "1.0"))
     
@@ -76,20 +79,16 @@ async def main():
     logger.info(f"--------------------------------")
 
     topics_config = {}
+    logger.info("Parsing TOPICS_CONFIG as string format 'topic:count'...")
     try:
-        logger.info("Attempting to parse TOPICS_CONFIG as JSON...")
-        topics_config = json.loads(topics_config_str)
-    except json.JSONDecodeError:
-        logger.info("Failed to parse as JSON, attempting to parse as string format 'topic:count'...")
-        try:
-            for item in topics_config_str.split(","):
-                if ":" in item:
-                    topic, count = item.split(":")
-                    topics_config[topic.strip()] = int(count.strip())
-        except Exception as e:
-            logger.info(f"Failed to parse TOPICS_CONFIG as string format: {e}")
-            logger.info("Using default fallback topic.")
-            topics_config = {"general knowledge": 3}
+        for item in topics_config_str.split(","):
+            if ":" in item:
+                topic, count = item.split(":")
+                topics_config[topic.strip()] = int(count.strip())
+    except Exception as e:
+        logger.info(f"Failed to parse TOPICS_CONFIG: {e}")
+        logger.info("Using default fallback topic.")
+        topics_config = {"general knowledge": 3}
 
     # Resolve Project ID and Region
     project_id = os.getenv("PROJECT_ID")
@@ -117,10 +116,16 @@ async def main():
     logger.info("Searching for Reasoning Engine 'knowledge-supervisor'...")
     engines = reasoning_engines.ReasoningEngine.list(filter='display_name="knowledge-supervisor"')
     if not engines:
-        logger.info("ERROR: Reasoning Engine 'knowledge-supervisor' not found!")
+        logger.error("ERROR: Reasoning Engine 'knowledge-supervisor' not found!")
         return
-    engine = engines[0]
-    logger.info(f"Using Reasoning Engine: {engine.resource_name}")
+    engine_resource = engines[0]
+    engine_resource_name = engine_resource.resource_name
+    logger.info(f"Using Reasoning Engine: {engine_resource_name}")
+    
+    from google.cloud import aiplatform_v1
+    gapic_client = aiplatform_v1.ReasoningEngineExecutionServiceClient(
+        client_options={"api_endpoint": f"{region}-aiplatform.googleapis.com"}
+    )
 
     sem = asyncio.Semaphore(concurrency)
     start_time = time.time()
@@ -132,27 +137,28 @@ async def main():
         async with sem:
             current_query_num = query_count + 1
             query_count += 1
-            logger.info(f"\n=== Starting Query {current_query_num}: {q} ===")
+            logger.info(f"[Query {current_query_num}] Sending request: {q}")
             
+            start_query_time = time.time()
             try:
-                logger.info(f"[{current_query_num}] Sending request...")
-                # engine.query is synchronous, so run it in a thread
-                response = await asyncio.to_thread(engine.query, input={"message": q})
-                logger.info(f"[{current_query_num}] Received response.")
+                from google.protobuf import struct_pb2
+                input_struct = struct_pb2.Struct()
+                input_struct.update({"query": q})
                 
-                # Extract answer, assume response might be a dict or string
-                if isinstance(response, dict):
-                    final_answer = response.get("output", str(response))
-                else:
-                    final_answer = str(response)
+                request = aiplatform_v1.QueryReasoningEngineRequest(
+                    name=engine_resource_name,
+                    input=input_struct,
+                    class_method="query"
+                )
+                
+                response = await asyncio.to_thread(gapic_client.query_reasoning_engine, request=request)
+                final_answer = response.output
             except Exception as e:
-                logger.info(f"Error running query '{q}': {e}")
+                logger.info(f"[Query {current_query_num}] Error: {e}")
                 final_answer = f"Error: {e}"
             
-            logger.info(f"\n=== Finished Query {current_query_num} ===")
-            logger.info(f"Question: {q}")
-            logger.info(f"Answer: {final_answer}")
-            logger.info("=" * 50)
+            latency = time.time() - start_query_time
+            logger.info(f"[Query {current_query_num}] Finished in {latency:.2f}s. Answer: {final_answer}")
 
     logger.info(f"Starting continuous load test for {duration_minutes} minutes...")
     

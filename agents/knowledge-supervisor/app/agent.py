@@ -123,8 +123,8 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     location=DATASET_LOCATION
 )
 
-root_agent = Agent(
-    name="root_agent", # Keeping original name
+supervisor_agent = Agent(
+    name="knowledge_supervisor",
     model=Gemini(
         model=MODEL_ID,
         retry_options=types.HttpRetryOptions(attempts=5),
@@ -143,10 +143,16 @@ class ReasoningEngineApp(App):
         import asyncio
         import nest_asyncio
         nest_asyncio.apply()
-        return asyncio.run(self.async_query(query))
+        return asyncio.run(self._async_query(query))
 
 
-    async def async_query(self, query: str, session_id: str = "uid", user_id: str = "suerid") -> str:
+    async def _async_query(self, query: str, session_id: str = None, user_id: str = None) -> str:
+        import uuid
+        if not session_id:
+            session_id = f"{uuid.uuid4()}"
+        if not user_id:
+            user_id = f"userid_{uuid.uuid4()}"
+            
         from google.adk.runners import Runner
         from google.adk.sessions.in_memory_session_service import InMemorySessionService
         
@@ -179,7 +185,7 @@ class ReasoningEngineApp(App):
         return final_response or "".join(partial_responses) or "No response from agent."
 
 app = ReasoningEngineApp(
-    root_agent=root_agent,
+    root_agent=supervisor_agent,
     name=SUPERVISOR_DISPLAY_NAME,
     plugins=[bq_logging_plugin, LoggingPlugin()]
 )

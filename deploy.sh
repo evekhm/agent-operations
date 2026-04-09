@@ -17,3 +17,7 @@ echo "Deploying pto_agent..."
 # Deploy knowledge-supervisor to Agent Engine
 echo "Deploying knowledge-supervisor..."
 (cd "$SCRIPT_DIR/agents/knowledge-supervisor" && ./deploy.sh)
+
+# Deploy Load Tester as Cloud Run Job
+echo "Load Tester..."
+(cd "$SCRIPT_DIR/agents/load_test_agent" && ./deploy.sh)

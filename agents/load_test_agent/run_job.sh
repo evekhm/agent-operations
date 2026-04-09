@@ -14,5 +14,5 @@ fi
 
 gcloud run jobs execute knowledge-supervisor-test \
   --project=$PROJECT_ID \
-  --region=$REGION
- #  --update-env-vars="CONCURRENCY=5,DURATION_MINUTES=10,TOPICS_CONFIG=\"general knowledge:10\""
+  --region=$REGION \
+  --update-env-vars="^|^CONCURRENCY=10|DURATION_MINUTES=60|TOPICS_CONFIG=paid time off calculations:50,new hiring and onboarding:10"
