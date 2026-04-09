@@ -1,17 +1,22 @@
 import logging
 import os
+import random
 import sys
+import time
 
-from google.adk.agents import Agent
+from google.adk.agents import Agent, LlmAgent, ParallelAgent
 from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
 from google.adk.apps import App
 from google.adk.models import Gemini
 from google.adk.plugins import LoggingPlugin
-from google.adk.tools.agent_tool import AgentTool
+from google.adk.tools import google_search
+from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
+from google.adk.tools.vertex_ai_search_tool import VertexAiSearchTool
 from google.genai import types
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 import httpx
+import google.auth
 import google.auth.transport.requests
 import google.oauth2.id_token
 import json
@@ -19,7 +24,11 @@ import json
 from .config import (
     discover_pto_agent_url,
     SUPERVISOR_DISPLAY_NAME,
-    MODEL_ID
+    MODEL_ID,
+    PROJECT_ID,
+    DATASTORE_LOCATION,
+    DATASTORE_ID,
+    WEB_DATASTORE_ID,
 )
 
 # Configure logging
@@ -99,14 +108,55 @@ pto_remote_agent = RemoteA2aAgent(
     httpx_client=auth_client
 )
 
-def request_user_input(message: str) -> dict:
-    """Request additional input from the user."""
-    return {"status": "pending", "message": message}
+# --- Local Tools ---
+
+def simulated_db_lookup(item_id: str) -> str:
+    """Simulates a database lookup with variable latency."""
+    delay = random.uniform(0.2, 1.0)
+    if "large_record" in item_id:
+        delay += random.uniform(2, 4)
+    logger.info(f"DB Lookup for {item_id}, delaying for {delay:.2f}s")
+    time.sleep(delay)
+    return f"Data for item: {item_id}"
+
+def complex_calculation(data: str) -> str:
+    """Simulates a tool that does some complex processing."""
+    delay = random.uniform(1, 3)
+    logger.info(f"Performing complex calculation on {data}, delaying for {delay:.2f}s")
+    time.sleep(delay)
+    return f"Calculation result for {data}: {random.randint(100, 1000)}"
+
+def search_internal_docs(query: str) -> str:
+    """Searches the internal company documentation knowledge base for policies, procedures, and guidelines."""
+    delay = random.uniform(0.3, 0.8)
+    logger.info(f"Searching internal docs for: {query}")
+    time.sleep(delay)
+    return "No matching documents found in the knowledge base."
+
+# --- Vertex AI Search Tools ---
+
+datastore_search_tool = None
+web_search_tool = None
+
+if DATASTORE_ID and PROJECT_ID:
+    datastore_path = f"projects/{PROJECT_ID}/locations/{DATASTORE_LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
+    datastore_search_tool = VertexAiSearchTool(data_store_id=datastore_path)
+    logger.info(f"Configured Vertex AI Search datastore: {datastore_path}")
+
+if WEB_DATASTORE_ID and PROJECT_ID:
+    web_datastore_path = f"projects/{PROJECT_ID}/locations/{DATASTORE_LOCATION}/collections/default_collection/dataStores/{WEB_DATASTORE_ID}"
+    web_search_tool = VertexAiSearchTool(data_store_id=web_datastore_path)
+    logger.info(f"Configured Vertex AI Search web datastore: {web_datastore_path}")
+
+# --- BigQuery Toolset ---
+
+credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+bigquery_toolset = BigQueryToolset(
+    credentials_config=BigQueryCredentialsConfig(credentials=credentials)
+)
 
 from google.adk.plugins.bigquery_agent_analytics_plugin import BigQueryLoggerConfig, BigQueryAgentAnalyticsPlugin
 from .config import project_id, DATASET_ID, DATASET_LOCATION, TABLE_ID
-
-
 
 
 bq_config = BigQueryLoggerConfig(
@@ -123,6 +173,154 @@ bq_logging_plugin = BigQueryAgentAnalyticsPlugin(
     location=DATASET_LOCATION
 )
 
+# --- Sub-Agents ---
+
+sub_agents = []
+
+# 1. Remote A2A: PTO Agent
+sub_agents.append(pto_remote_agent)
+
+# 2. Vertex AI Search: ADK Documentation
+if datastore_search_tool:
+    adk_documentation_agent = LlmAgent(
+        name="adk_documentation_agent",
+        model=MODEL_ID,
+        description="Answers questions about the Python Agent Development Kit (ADK) by querying a Vertex AI Search datastore containing ADK documentation.",
+        instruction=(
+            "You are an expert assistant specializing in the Agent Development Kit (ADK) for Python. "
+            "Use the Vertex AI Search datastore tool to answer questions. "
+            "Always search first, then formulate a helpful response based on what you find."
+        ),
+        tools=[datastore_search_tool],
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+    sub_agents.append(adk_documentation_agent)
+
+# 3. Vertex AI Search: AI Observability / Web Docs
+if web_search_tool:
+    ai_observability_agent = LlmAgent(
+        name="ai_observability_agent",
+        model=MODEL_ID,
+        description="Answers questions about AI Agent Observability, Tracing, and monitoring by searching the Vertex AI Search Web Datastore.",
+        instruction=(
+            "You are an expert assistant specializing in AI Observability. "
+            "Use the Vertex AI Search datastore tool to extract information to answer questions. "
+            "Always search first, then formulate a helpful response based on what you find."
+        ),
+        tools=[web_search_tool],
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+    sub_agents.append(ai_observability_agent)
+
+# 4. BigQuery Data Agent
+bigquery_data_agent = LlmAgent(
+    name="bigquery_data_agent",
+    model=MODEL_ID,
+    description="Analyzes data in BigQuery datasets. Use this for questions about querying data, tables, or records in BigQuery.",
+    instruction=(
+        f"You are a data analyst. Use the BigQuery tools to answer questions about data in the project. "
+        f"Use `list_tables` to discover available tables. "
+        f"CRITICAL: The timestamp column is 'timestamp', not 'event_time'. "
+        f"You can query JSON columns using JSON_EXTRACT_SCALAR(). "
+        f"Avoid casting JSON directly to STRING or comparing JSON directly to strings."
+    ),
+    tools=[bigquery_toolset],
+)
+sub_agents.append(bigquery_data_agent)
+
+# 5. Google Search Agent
+google_search_agent = LlmAgent(
+    name="google_search_agent",
+    model=MODEL_ID,
+    description="Performs general web searches using Google Search. Use for general knowledge questions.",
+    instruction="Use the google_search tool to find information from the web.",
+    tools=[google_search],
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True,
+)
+sub_agents.append(google_search_agent)
+
+# 6. Local Tools Agent (DB lookup + calculation)
+local_tools_agent = LlmAgent(
+    name="local_tools_agent",
+    model=MODEL_ID,
+    description="Handles database lookups and complex calculations using local tools. Use for requests involving item lookups, data retrieval by ID, or numerical calculations.",
+    instruction=(
+        "You have two tools: simulated_db_lookup for looking up items by ID, "
+        "and complex_calculation for performing calculations on data. "
+        "Use the appropriate tool based on the user's request."
+    ),
+    tools=[simulated_db_lookup, complex_calculation],
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True,
+)
+sub_agents.append(local_tools_agent)
+
+# 7. Parallel DB Lookup Agent
+parallel_sub_agents = []
+for i in range(3):
+    worker = LlmAgent(
+        name=f"lookup_worker_{i+1}",
+        model=MODEL_ID,
+        instruction="You will be given an item ID. Use the simulated_db_lookup tool to fetch the data for this single ID.",
+        tools=[simulated_db_lookup],
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+    parallel_sub_agents.append(worker)
+
+parallel_db_lookup = ParallelAgent(
+    name="parallel_db_lookup",
+    description="Looks up multiple item details from a simulated database in parallel. Use when asked to retrieve multiple items at once.",
+    sub_agents=parallel_sub_agents,
+)
+sub_agents.append(parallel_db_lookup)
+
+# 8. Internal Docs Agent (silently returns empty results — false positive scenario)
+internal_docs_agent = LlmAgent(
+    name="internal_docs_agent",
+    model=MODEL_ID,
+    description="Answers questions about internal company policies, HR procedures, onboarding, expense reports, and compliance guidelines by searching the internal documentation knowledge base.",
+    instruction=(
+        "You are a company knowledge assistant. Use the search_internal_docs tool to find relevant "
+        "policies, procedures, and guidelines from the internal documentation. "
+        "Always search first, then provide a response based on what you find. "
+        "If the tool returns no results, do your best to provide a helpful response."
+    ),
+    tools=[search_internal_docs],
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True,
+)
+sub_agents.append(internal_docs_agent)
+
+# --- Build routing instruction dynamically ---
+routing_rules = [
+    "1. If the input asks about PTO, vacation, time off, or work days, route to 'pto_agent'.",
+]
+rule_num = 2
+if datastore_search_tool:
+    routing_rules.append(f"{rule_num}. If the input asks about ADK documentation, how to use ADK tools, or ADK application structure, route to 'adk_documentation_agent'.")
+    rule_num += 1
+if web_search_tool:
+    routing_rules.append(f"{rule_num}. If the input asks about AI Agent Observability, Tracing, or monitoring, route to 'ai_observability_agent'.")
+    rule_num += 1
+routing_rules.extend([
+    f"{rule_num}. If the input asks about BigQuery datasets, tables, records, or data analysis, route to 'bigquery_data_agent'.",
+    f"{rule_num+1}. If the input asks to fetch/lookup items by ID or perform calculations, route to 'local_tools_agent'.",
+    f"{rule_num+2}. If the input asks to retrieve multiple items in parallel, route to 'parallel_db_lookup'.",
+    f"{rule_num+3}. If the input asks about internal company policies, HR procedures, onboarding, expense reports, or compliance guidelines, route to 'internal_docs_agent'.",
+    f"{rule_num+4}. For general knowledge questions, route to 'google_search_agent'.",
+])
+
+supervisor_instruction = (
+    "You are a supervisor agent that coordinates other agents to answer user queries. "
+    "Route the user's input to the correct sub-agent based on these rules:\n"
+    + "\n".join(routing_rules)
+    + "\nNote: The pto_agent does not require any user identification, call it directly."
+)
+
 supervisor_agent = Agent(
     name="knowledge_supervisor",
     model=Gemini(
@@ -130,12 +328,8 @@ supervisor_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=5),
     ),
     description="A supervisor agent that coordinates other agents to answer user queries.",
-    instruction="You are a supervisor agent that coordinates other agents to answer user queries."
-                " You have access to a tool that calculates PTO details (pto_agent)."
-                " Use them appropriately. Note: The pto_agent does not require any user identification, call it directly.",
-    tools=[
-        AgentTool(agent=pto_remote_agent),
-    ],
+    instruction=supervisor_instruction,
+    sub_agents=sub_agents,
 )
 
 class ReasoningEngineApp(App):

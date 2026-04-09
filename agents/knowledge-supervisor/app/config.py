@@ -30,14 +30,20 @@ os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
 os.environ["GOOGLE_CLOUD_LOCATION"] = REGION
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 
-# Big Query
+# Big Query (for BQ Analytics Plugin logging)
 DATASET_ID = os.getenv('TEST_DATASET_ID')
 DATASET_LOCATION = os.getenv('TEST_BQ_LOCATION')
 TABLE_ID = os.getenv('TEST_TABLE_ID')
 
+# Vertex AI Search Datastores
+DATASTORE_LOCATION = os.getenv('TEST_DATASTORE_LOCATION', 'global')
+DATASTORE_ID = os.getenv('TEST_DATASTORE_ID')
+WEB_DATASTORE_ID = os.getenv('TEST_WEB_DATASTORE_ID')
+
 logger.info(f"Loaded config: SUPERVISOR_MODEL_ID={MODEL_ID}, SUPERVISOR_DISPLAY_NAME={SUPERVISOR_DISPLAY_NAME}")
 logger.info(f"Loaded config: PTO_AGENT_URL={PTO_AGENT_URL}, PTO_AGENT_LOCATION={REGION}")
 logger.info(f"Loaded config: DATASET_ID={DATASET_ID}, DATASET_LOCATION={DATASET_LOCATION}, TABLE_ID={TABLE_ID}")
+logger.info(f"Loaded config: DATASTORE_ID={DATASTORE_ID}, WEB_DATASTORE_ID={WEB_DATASTORE_ID}")
 
 
 def discover_pto_agent_url() -> str:

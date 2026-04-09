@@ -13,7 +13,7 @@ else
 fi
 
 # Set default env vars if not provided
-export TOPICS_CONFIG=${TOPICS_CONFIG:-'{"pto": 3, "hiring candidates": 2}'}
+export TOPICS_CONFIG=${TOPICS_CONFIG:-'paid time off calculations:3,ADK documentation and tools:2,BigQuery data analysis:2,general knowledge search:2,database lookups:1'}
 export CONCURRENCY=${CONCURRENCY:-3}
 export DURATION_MINUTES=${DURATION_MINUTES:-5}
 export PYTHONPATH="${SCRIPT_DIR}/../..:${PYTHONPATH}"

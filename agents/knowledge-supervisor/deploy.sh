@@ -92,6 +92,18 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --role="roles/bigquery.jobUser" \
     --quiet
 
+echo "Granting Discovery Engine Viewer role to ${SERVICE_ACCOUNT}..."
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/discoveryengine.viewer" \
+    --quiet
+
+echo "Granting Discovery Engine Viewer role to ${REASONING_SA}..."
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${REASONING_SA}" \
+    --role="roles/discoveryengine.viewer" \
+    --quiet
+
 echo "Granting Cloud Run Invoker role to ${REASONING_SA} for ${PTO_AGENT_SERVICE_NAME}..."
 gcloud run services add-iam-policy-binding "${PTO_AGENT_SERVICE_NAME}" \
     --member="serviceAccount:${REASONING_SA}" \

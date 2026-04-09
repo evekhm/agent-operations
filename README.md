@@ -223,31 +223,90 @@ For evaluating long-term structural degradation or improvement. Dissects large t
 
 ## Knowledge Supervisor Agent
 
-The `knowledge_supervisor` agent is a coordinator agent that can delegate tasks to other agents.
+The `knowledge_supervisor` agent is a coordinator agent deployed to **Vertex AI Agent Engine** that demonstrates multiple data retrieval patterns by delegating to specialized sub-agents.
 
-### Features
-*   **PTO Tracking**: Can calculate remaining time off by delegating to the remote `pto_agent`.
-*   **Candidate Tracking**: Can list hiring contexts and candidates by delegating to the local `candidate_tracker` agent (simulated free tier operations).
+### Data Source Patterns
+
+| Sub-Agent | Data Source | Description |
+| :--- | :--- | :--- |
+| `pto_agent` | **Remote A2A** | Calculates PTO via a remote Cloud Run agent using the A2A protocol |
+| `adk_documentation_agent` | **Vertex AI Search (Datastore)** | Answers ADK questions using a Vertex AI Search datastore with ingested PDF documents |
+| `ai_observability_agent` | **Vertex AI Search (Web)** | Answers observability questions using a Vertex AI Search web datastore |
+| `bigquery_data_agent` | **BigQuery Connector** | Analyzes data in BigQuery using the ADK BigQuery toolset |
+| `google_search_agent` | **Google Search** | Answers general knowledge questions using the Google Search tool |
+| `local_tools_agent` | **Local Tools** | Performs database lookups and calculations using locally defined Python functions |
+| `parallel_db_lookup` | **Parallel Agent** | Retrieves multiple items in parallel using a ParallelAgent with worker sub-agents |
+
+### Prerequisites
+
+The Vertex AI Search datastores must be created before deploying:
+```bash
+./setup.sh
+```
+Wait ~5 minutes for the datastores to become available.
+
+### Deploying the Knowledge Supervisor
+
+Deploy all agents (pto_agent → knowledge-supervisor → load_test_agent):
+```bash
+./deploy.sh
+```
+
+Or deploy the knowledge-supervisor individually:
+```bash
+cd agents/knowledge-supervisor
+./deploy.sh
+```
+
+The deploy script:
+1. Discovers the `pto_agent` Cloud Run URL
+2. Stages application files
+3. Grants IAM permissions (BigQuery, Discovery Engine, Cloud Run Invoker)
+4. Deploys to Vertex AI Agent Engine using `adk deploy agent_engine`
+
+### Testing the Deployed Agent
+
+```bash
+cd agents/knowledge-supervisor
+./tests/test_remote.sh
+```
 
 ### Stress Testing with Cloud Run Job
 
-We provide a stress testing infrastructure for the Knowledge Supervisor agent in `agents/load_test_agent/`. This runs as a Cloud Run Job and simulates concurrent user queries.
+A load generator is provided in `agents/load_test_agent/` that runs as a Cloud Run Job and sends concurrent queries across all topic areas.
 
-#### Deployment
-To deploy the stress test job:
+#### Deploy the Load Test Job
 ```bash
-./agents/load_test_agent/deploy_job.sh
+cd agents/load_test_agent
+./deploy.sh
 ```
 
-#### Execution
-To run the job with default parameters:
+#### Run with Default Topics
 ```bash
-gcloud run jobs execute knowledge-supervisor-test --project=$PROJECT_ID --region=$REGION
+./agents/load_test_agent/run_job.sh
 ```
 
-To run with custom concurrency and number of questions:
+#### Run with Custom Parameters
 ```bash
-gcloud run jobs execute knowledge-supervisor-test --project=$PROJECT_ID --region=$REGION --args="--num-questions=10","--concurrency=5","--topic=vacation and hiring"
+gcloud run jobs execute knowledge-supervisor-test \
+  --project=$PROJECT_ID \
+  --region=$REGION \
+  --update-env-vars="^|^CONCURRENCY=5|DURATION_MINUTES=30|TOPICS_CONFIG=paid time off calculations:10,ADK documentation and tools:10,BigQuery data analysis:5"
+```
+
+#### Available Topics
+Topics map to the sub-agents and can be combined in `TOPICS_CONFIG` (format: `topic:count,...`):
+- `paid time off calculations` → pto_agent
+- `ADK documentation and tools` → adk_documentation_agent
+- `AI observability and tracing` → ai_observability_agent
+- `BigQuery data analysis` → bigquery_data_agent
+- `general knowledge search` → google_search_agent
+- `database lookups and item retrieval` → local_tools_agent
+- `complex calculations` → local_tools_agent
+
+#### Local Smoke Test
+```bash
+./agents/load_test_agent/run_local_test.sh
 ```
 
 ## Release Notes

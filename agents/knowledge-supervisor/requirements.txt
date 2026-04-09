@@ -3,5 +3,6 @@ google-genai
 httpx
 google-auth
 google-cloud-aiplatform[agent_engines,a2a]
+google-cloud-bigquery
 a2a-sdk
 nest_asyncio
