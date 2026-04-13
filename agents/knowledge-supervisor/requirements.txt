@@ -1,4 +1,4 @@
-google-adk>=1.28.0
+google-adk>=1.29.0
 google-genai
 httpx
 google-auth

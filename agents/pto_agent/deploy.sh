@@ -36,4 +36,4 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 adk deploy cloud_run --project=${PROJECT_ID} --region=${DATASET_LOCATION} \
     --service_name=${PTO_AGENT_SERVICE_NAME} \
     --a2a --with_ui "${SCRIPT_DIR}"/ \
-    -- --no-allow-unauthenticated --set-env-vars="DATASET_LOCATION=${DATASET_LOCATION},DATASET_ID=${DATASET_ID},TABLE_ID=${TABLE_ID},MODEL_ID=${PTO_MODEL_ID}"
+    -- --no-allow-unauthenticated --set-env-vars="TEST_DATASET_LOCATION=${TEST_DATASET_LOCATION},TEST_DATASET_ID=${TEST_DATASET_ID},TEST_TABLE_ID=${TEST_TABLE_ID},PTO_MODEL_ID=${PTO_MODEL_ID},PTO_AGENT_LOCATION=${PTO_AGENT_LOCATION}"

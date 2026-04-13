@@ -1,4 +1,4 @@
-google-adk
+google-adk>=1.29.0
 google-cloud-aiplatform[agent_engines,a2a]
 google-genai
 requests
