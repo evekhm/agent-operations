@@ -57,6 +57,7 @@ cp requirements.txt "${STAGE_DIR}/requirements.txt"
 
 # Create temporary env file in staging
 cp "${ENV_PATH}" "${STAGE_DIR}/.env.tmp"
+echo "" >> "${STAGE_DIR}/.env.tmp"
 echo "PTO_AGENT_URL=\"$DISCOVERED_URL\"" >> "${STAGE_DIR}/.env.tmp"
 
 # Get project number to construct service account email

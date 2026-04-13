@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import signal
+import sys
 import time
 import google.auth
 from google.cloud import aiplatform
@@ -67,7 +69,18 @@ async def generate_questions(client: Client, topic: str, count: int) -> list[str
             f"What is the best way to handle {topic}?"
         ][:count]
 
+shutdown_requested = False
+
+def handle_sigterm(signum, frame):
+    global shutdown_requested
+    logger.info("Received SIGTERM — finishing current batch and shutting down gracefully...")
+    shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_sigterm)
+signal.signal(signal.SIGINT, handle_sigterm)
+
 async def main():
+    global shutdown_requested
     # Read configuration from environment variables
     topics_config_str = os.getenv("TOPICS_CONFIG")
     if topics_config_str is None:
@@ -165,19 +178,26 @@ async def main():
             logger.info(f"[Query {current_query_num}] Finished in {latency:.2f}s. Answer: {final_answer}")
 
     logger.info(f"Starting continuous load test for {duration_minutes} minutes...")
-    
-    while time.time() - start_time < max_duration_seconds:
+
+    while time.time() - start_time < max_duration_seconds and not shutdown_requested:
         logger.info(f"\n--- Starting new batch of {len(all_questions)} queries ---")
         tasks = [run_single_query(q) for q in all_questions]
         await asyncio.gather(*tasks)
-        
+
+        if shutdown_requested:
+            logger.info("Shutdown requested — stopping after current batch.")
+            break
+
         # Check if time is up before starting next batch
         if time.time() - start_time >= max_duration_seconds:
             break
-            
+
         logger.info("\nBatch completed. Repeating...")
-        
-    logger.info(f"\nLoad test completed. Total queries executed: {query_count}")
+
+    elapsed = time.time() - start_time
+    logger.info(f"\nLoad test completed. Total queries executed: {query_count} in {elapsed/60:.1f} minutes")
+    logger.info("Exiting with code 0 (success).")
+    sys.exit(0)
 
 if __name__ == "__main__":
     asyncio.run(main())

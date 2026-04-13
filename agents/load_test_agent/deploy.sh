@@ -36,10 +36,15 @@ DURATION_MINUTES: "${DURATION_MINUTES}"
 TOPICS_CONFIG: "${TOPICS_CONFIG}"
 EOF
 
+# Timeout = DURATION_MINUTES + 10min buffer (for question generation + in-flight queries)
+TIMEOUT_SECONDS=$(( (${DURATION_MINUTES:-60} + 10) * 60 ))
+
 gcloud run jobs deploy "$JOB_NAME" \
   --image "$IMAGE_NAME" \
   --project="$PROJECT_ID" \
   --region="$REGION" \
+  --task-timeout="${TIMEOUT_SECONDS}s" \
+  --max-retries=0 \
   --env-vars-file=resolved_env.yaml
 
 rm resolved_env.yaml

@@ -11,7 +11,7 @@
 /logs/
 agent_output*
 debug_*
-
+stage_tmp*
 
 /BigQuery-Agent-Analytics-SDK/
 /project_context/old/
