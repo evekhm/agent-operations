@@ -99,17 +99,6 @@ A2A sessions are tagged with `[A2A]` in the output. The summary shows how many w
 
 Output is logged to `logs/quality_eval_<timestamp>.log`.
 
-### 4. Test Quality Evaluation
-
-Standalone test for the quality evaluation module used by the report agent. Much faster than a full report cycle (~1-2 min vs ~8 min).
-
-```bash
-bash test_quality_evaluation.sh                    # default: last 24h
-bash test_quality_evaluation.sh --time_period 7d   # last 7 days
-bash test_quality_evaluation.sh --time_period all  # all data
-bash test_quality_evaluation.sh --json             # raw JSON output
-```
-
 ## A2A Trace Correlation Gap
 
 When the supervisor agent (`knowledge_supervisor`) calls a remote A2A agent (e.g. `pto_agent` on Cloud Run), the remote agent logs its events under a **different `session_id`**. The supervisor's trace only records `AGENT_STARTING` / `AGENT_COMPLETED` with `content: null` for the remote agent -- the actual response is lost from the supervisor's perspective.
