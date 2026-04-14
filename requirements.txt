@@ -30,3 +30,4 @@ requests
 uvicorn
 a2a-sdk
 google-cloud-aiplatform
+bigquery-agent-analytics @ git+https://github.com/haiyuan-eng-google/BigQuery-Agent-Analytics-SDK.git
