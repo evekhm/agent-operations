@@ -30,7 +30,15 @@ from agents.observability_agent.agent_tools.analytics.correlation import fetch_c
 from agents.observability_agent.agent_tools.analytics.latency import get_raw_invocation_events, get_raw_agent_events
 from agents.observability_agent.config import (
     AGENT_EVENTS_VIEW_ID,
-    INVOCATION_EVENTS_VIEW_ID
+    INVOCATION_EVENTS_VIEW_ID,
+    PROJECT_ID,
+    DATASET_ID,
+    TABLE_ID,
+    DATASET_LOCATION,
+)
+from agents.observability_agent.agent_tools.report_generation.quality_evaluation import (
+    evaluate_response_quality,
+    generate_quality_ai_summary,
 )
 
 # Load Environment from root
@@ -41,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 # Resolve FutureWarning
 pd.set_option('future.no_silent_downcasting', True)
+
 
 class ReportDataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -110,6 +119,64 @@ class ReportDataManager:
         except Exception as e:
             logger.error(f"Failed to fetch raw LLM data: {e}")
             return pd.DataFrame()
+
+    async def _fetch_execution_trees(self, root_bottlenecks: pd.DataFrame, max_traces: int = 5) -> dict:
+        """Fetches execution tree spans (agents + tools) for the slowest invocations."""
+        if not isinstance(root_bottlenecks, pd.DataFrame) or root_bottlenecks.empty:
+            return {}
+        if 'trace_id' not in root_bottlenecks.columns:
+            return {}
+
+        trace_ids = root_bottlenecks['trace_id'].dropna().unique()[:max_traces].tolist()
+        if not trace_ids:
+            return {}
+
+        try:
+            from agents.observability_agent.utils.bq import execute_bigquery
+            placeholders = ", ".join([f"'{tid}'" for tid in trace_ids])
+
+            query = f"""
+                SELECT
+                    'agent' AS span_type,
+                    trace_id,
+                    span_id,
+                    parent_span_id,
+                    agent_name AS name,
+                    duration_ms,
+                    status,
+                    timestamp,
+                    CAST(NULL AS STRING) AS tool_result
+                FROM `{PROJECT_ID}.{DATASET_ID}.{AGENT_EVENTS_VIEW_ID}`
+                WHERE trace_id IN ({placeholders})
+                UNION ALL
+                SELECT
+                    'tool' AS span_type,
+                    trace_id,
+                    span_id,
+                    parent_span_id,
+                    tool_name AS name,
+                    duration_ms,
+                    status,
+                    timestamp,
+                    SUBSTR(COALESCE(TO_JSON_STRING(tool_result), ''), 0, 200) AS tool_result
+                FROM `{PROJECT_ID}.{DATASET_ID}.{TOOL_EVENTS_VIEW_ID}`
+                WHERE trace_id IN ({placeholders})
+                ORDER BY trace_id, timestamp ASC
+            """
+
+            df = await execute_bigquery(query)
+            if df.empty:
+                return {}
+
+            # Group by trace_id
+            trees = {}
+            for trace_id, group in df.groupby('trace_id'):
+                spans = group.to_dict('records')
+                trees[trace_id] = spans
+            return trees
+        except Exception as e:
+            logger.warning(f"Failed to fetch execution trees: {e}")
+            return {}
 
     async def fetch_raw_invocation_data(self, time_range: str = "24h", limit: int = MAX_RAW_RECORDS_LIMIT):
         """Fetches raw E2E invocation event data from BigQuery using the standard agent tool."""
@@ -217,20 +284,33 @@ class ReportDataManager:
         task_raw_llm = self.trace_task("RawLLM", self.fetch_raw_llm_data(time_range=self.time_range_desc))
         task_raw_invocations = self.trace_task("RawInvocations", self.fetch_raw_invocation_data(time_range=self.time_range_desc))
         task_raw_agents = self.trace_task("RawAgents", self.fetch_raw_agent_data(time_range=self.time_range_desc))
+        quality_eval_limit = self.data_config.get("quality_eval_limit", 1000)
+        async def _safe_quality_evaluation():
+            try:
+                return await evaluate_response_quality(
+                    time_range=self.time_range_desc,
+                    limit=quality_eval_limit,
+                )
+            except Exception as e:
+                logger.warning(f"Quality evaluation skipped: {e}")
+                return {}
+        task_quality_eval = self.trace_task("QualityEvaluation", _safe_quality_evaluation())
 
         results = await asyncio.gather(
             task_agents, task_roots, task_tools, task_models, task_agent_models_e2e,
             task_agent_models_llm,
             task_e2e_slow, task_agent_slow, task_tool_slow, task_llm_slow,
             task_root_errors, task_agent_errors, task_tool_errors, task_llm_errors,
-            task_empty, task_loops, task_correlation, task_raw_llm, task_raw_invocations, task_raw_agents
+            task_empty, task_loops, task_correlation, task_raw_llm, task_raw_invocations, task_raw_agents,
+            task_quality_eval
         )
 
         (
             raw_agents, raw_roots, raw_tools, raw_models, raw_agent_models_e2e, raw_agent_models_llm,
             raw_e2e_slow, raw_agent_slow, raw_tool_slow, raw_llm_slow,
             raw_root_errors, raw_agent_errors, raw_tool_errors, raw_llm_errors,
-            raw_empty, raw_loops, raw_correlation, df_raw_llm_data, df_raw_invocations, df_raw_agents
+            raw_empty, raw_loops, raw_correlation, df_raw_llm_data, df_raw_invocations, df_raw_agents,
+            raw_quality_eval
         ) = results
 
         # Process Results
@@ -283,6 +363,9 @@ class ReportDataManager:
         data['tool_bottlenecks'] = process_bottlenecks(raw_tool_slow)
         data['llm_bottlenecks'] = process_bottlenecks(raw_llm_slow)
 
+        # Fetch execution trees for slow invocations
+        data['execution_trees'] = await self._fetch_execution_trees(data['root_bottlenecks'])
+
         # Errors processing (similar logic, get_failed_* returns JSON like requests)
         data['root_errors'] = process_bottlenecks(raw_root_errors)
         data['agent_errors'] = process_bottlenecks(raw_agent_errors)
@@ -296,7 +379,22 @@ class ReportDataManager:
 
         data['empty_responses'] = json.loads(raw_empty) if isinstance(raw_empty, str) else raw_empty
         data['hallucination_loops'] = json.loads(raw_loops) if isinstance(raw_loops, str) else raw_loops
+        data['quality_eval_results'] = raw_quality_eval if isinstance(raw_quality_eval, dict) else {}
         data['outliers'] = {} # Placeholder
+
+        # Generate AI summary for quality evaluation
+        if data['quality_eval_results']:
+            try:
+                logger.info("   [START] Task: QualityAISummary")
+                data['quality_ai_summary'] = await generate_quality_ai_summary(
+                    data['quality_eval_results']
+                )
+                logger.info("   [DONE] Task: QualityAISummary")
+            except Exception as e:
+                logger.warning(f"Quality AI summary generation failed: {e}")
+                data['quality_ai_summary'] = ""
+        else:
+            data['quality_ai_summary'] = ""
 
         # Apply root cause analysis using limit from config
         rca_limit = self.data_config.get("num_queries_to_analyze_rca", 5)

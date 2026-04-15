@@ -256,14 +256,14 @@ def _fetch_session_context(client, session_ids):
 
 
 def _category_label(category):
-    """Human-readable label for a category."""
+    """Human-readable label with emoji for a category."""
     labels = {
-        "meaningful": "MEANINGFUL",
-        "false_positive": "UNHELPFUL",
-        "partial": "PARTIAL",
-        "grounded": "GROUNDED",
-        "ungrounded": "UNGROUNDED",
-        "no_tool_needed": "NO TOOL NEEDED",
+        "meaningful": "✅ HELPFUL",
+        "false_positive": "❌ NOT HELPFUL",
+        "partial": "⚠️  PARTIAL",
+        "grounded": "✅ GROUNDED",
+        "ungrounded": "❌ NOT GROUNDED",
+        "no_tool_needed": "➖ NO TOOL NEEDED",
     }
     return labels.get(category, (category or "?").upper())
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYDANTIC_DISABLE_PLUGINS=1
-export PYTHONPATH="${SCRIPT_DIR}/../../"
+export PYTHONPATH="${SCRIPT_DIR}/../../src/src:${SCRIPT_DIR}/../../"
 
 # Colors for output
 GREEN='\033[0;32m'

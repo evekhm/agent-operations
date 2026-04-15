@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Query user questions and agent responses using the BigQuery Agent Analytics SDK.
+"""Query agent responses and evaluate quality using the BigQuery Agent Analytics SDK.
 
+Combines browsing Q&A pairs with full categorical quality evaluation.
 Handles both local sub-agents and remote A2A agents by detecting
-transfer_to_agent tool calls and resolving the remote agent's response
-via time-window matching.
+transfer_to_agent tool calls (using tool_origin) and resolving remote
+agent responses via A2A_INTERACTION events or time-window matching.
+
+Core evaluation logic lives in eval_common.py; this script provides
+the CLI interface and display formatting.
 
 Usage:
-    python query_responses.py                # last 100 sessions
-    python query_responses.py --limit 50
-    python query_responses.py --eval         # include per-session quality evaluation
+    python query_responses.py                        # evaluate last 100 sessions
+    python query_responses.py --limit 50             # evaluate last 50
+    python query_responses.py --session <id>         # single-session deep dive
+    python query_responses.py --no-eval              # browse Q&A only (skip evaluation)
+    python query_responses.py --persist              # evaluate + persist to BQ
+    python query_responses.py --limit 500            # evaluate up to 500 sessions
+    python query_responses.py --time_period 7d       # evaluate last 7 days
 """
 import argparse
 import logging
@@ -31,260 +39,62 @@ logging.basicConfig(
 )
 logger = logging.getLogger("query_responses")
 
-from agents.observability_agent.config import PROJECT_ID, DATASET_ID, TABLE_ID, DATASET_LOCATION
+from agents.observability_agent.config import PROJECT_ID, DATASET_ID, TABLE_ID
+from agents.observability_agent.eval_common import (
+    get_client,
+    resolve_trace_responses,
+    run_evaluation,
+)
 
 
-def get_client():
-    from bigquery_agent_analytics import Client
-    return Client(
-        project_id=PROJECT_ID,
-        dataset_id=DATASET_ID,
-        table_id=TABLE_ID,
-        location=DATASET_LOCATION,
-    )
+# ---------------------------------------------------------------------------
+# Category labels with emoji
+# ---------------------------------------------------------------------------
+
+def _category_label(category):
+    """Human-readable label with emoji for a category."""
+    labels = {
+        "meaningful": "\u2705 HELPFUL",
+        "false_positive": "\u274c NOT HELPFUL",
+        "partial": "\u26a0\ufe0f  PARTIAL",
+        "grounded": "\u2705 GROUNDED",
+        "ungrounded": "\u274c NOT GROUNDED",
+        "no_tool_needed": "\u2796 NO TOOL NEEDED",
+        "good": "\u2705 GOOD",
+        "bad": "\u274c BAD",
+    }
+    return labels.get(category, (category or "?").upper())
 
 
-def get_user_input(trace) -> str:
-    """Extract the user's question from a trace."""
-    for span in trace.spans:
-        if span.event_type == "USER_MESSAGE_RECEIVED":
-            c = span.content
-            if isinstance(c, dict):
-                return c.get("text_summary") or c.get("text") or ""
-            elif c:
-                return str(c)
-    return ""
+# ---------------------------------------------------------------------------
+# Browse mode (--no-eval)
+# ---------------------------------------------------------------------------
 
-
-def get_transfer_info(trace) -> dict:
-    """Detect if the trace transferred to a remote A2A agent.
-
-    Returns dict with remote_agent, agent_start, agent_end times,
-    or empty dict if no transfer.
-
-    Uses two strategies:
-    1. Explicit: look for a transfer_to_agent tool call.
-    2. Fallback: find AGENT_STARTING/COMPLETED pairs for non-supervisor
-       agents that have no LLM_RESPONSE in this trace (i.e. the response
-       lives in a separate session — the A2A trace gap).
-    """
-    # --- Strategy 1: explicit transfer_to_agent tool call ---
-    for span in trace.spans:
-        if span.event_type == "TOOL_STARTING":
-            c = span.content
-            if isinstance(c, dict) and c.get("tool") == "transfer_to_agent":
-                remote_agent = c.get("args", {}).get("agent_name")
-                if remote_agent:
-                    agent_start, agent_end = _find_agent_window(trace, remote_agent)
-                    if agent_start and agent_end:
-                        return {
-                            "remote_agent": remote_agent,
-                            "agent_start": agent_start,
-                            "agent_end": agent_end,
-                        }
-
-    # --- Strategy 2: fallback — detect remote agents with no LLM_RESPONSE ---
-    # Collect agents that have LLM_RESPONSE spans in this trace
-    agents_with_response = set()
-    for span in trace.spans:
-        if span.event_type == "LLM_RESPONSE" and span.agent:
-            c = span.content
-            if isinstance(c, dict):
-                resp = c.get("response", "")
-                if resp and not resp.startswith("call:"):
-                    agents_with_response.add(span.agent)
-
-    # Find AGENT_STARTING/COMPLETED pairs for agents without a response
-    seen_agents = {}
-    for span in trace.spans:
-        if span.event_type in ("AGENT_STARTING", "AGENT_COMPLETED") and span.agent:
-            seen_agents.setdefault(span.agent, {})[span.event_type] = span.timestamp
-
-    for agent_name, events in seen_agents.items():
-        if agent_name in agents_with_response:
-            continue
-        agent_start = events.get("AGENT_STARTING")
-        agent_end = events.get("AGENT_COMPLETED")
-        if agent_start and agent_end:
-            logger.debug(f"Fallback A2A detection: {agent_name} "
-                         f"({agent_start} - {agent_end})")
-            return {
-                "remote_agent": agent_name,
-                "agent_start": agent_start,
-                "agent_end": agent_end,
-            }
-
-    return {}
-
-
-def _find_agent_window(trace, agent_name):
-    """Find AGENT_STARTING/COMPLETED timestamps for a given agent."""
-    agent_start = None
-    agent_end = None
-    for s in trace.spans:
-        if s.agent == agent_name:
-            if s.event_type == "AGENT_STARTING":
-                agent_start = s.timestamp
-            elif s.event_type == "AGENT_COMPLETED":
-                agent_end = s.timestamp
-    return agent_start, agent_end
-
-
-def resolve_remote_response(client, transfer_info) -> str:
-    """Find the remote A2A agent's response using a time-window query.
-
-    The remote agent logs its LLM events under a different session_id.
-    We find them by matching agent name + timestamp within the supervisor's
-    AGENT_STARTING/COMPLETED window.
-    """
-    from google.cloud import bigquery as bq
-
-    query = f"""
-        SELECT JSON_VALUE(content, '$.response') AS response
-        FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
-        WHERE agent = @remote_agent
-          AND event_type = 'LLM_RESPONSE'
-          AND JSON_VALUE(content, '$.response') IS NOT NULL
-          AND JSON_VALUE(content, '$.response') NOT LIKE 'call:%'
-          AND timestamp BETWEEN @start_time AND @end_time
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """
-    params = [
-        bq.ScalarQueryParameter("remote_agent", "STRING", transfer_info["remote_agent"]),
-        bq.ScalarQueryParameter("start_time", "TIMESTAMP", transfer_info["agent_start"]),
-        bq.ScalarQueryParameter("end_time", "TIMESTAMP", transfer_info["agent_end"]),
-    ]
-    job_config = bq.QueryJobConfig(query_parameters=params)
-    rows = list(client.bq_client.query(query, job_config=job_config).result())
-    if rows:
-        return rows[0].get("response", "")
-    return ""
-
-
-def get_responding_agent(trace) -> str:
-    """Determine which agent produced the final response."""
-    for span in reversed(trace.spans):
-        if span.event_type == "LLM_RESPONSE":
-            c = span.content
-            if isinstance(c, dict):
-                resp = c.get("response", "")
-                if resp and not resp.startswith("call:"):
-                    return span.agent or "unknown"
-    return "no_response"
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Query agent responses")
-    parser.add_argument("--limit", type=int, default=100, help="Number of sessions (default: 100)")
-    parser.add_argument("--eval", action="store_true", help="Run per-session quality evaluation")
-    args = parser.parse_args()
-
+def run_browse(args):
+    """Browse Q&A pairs without evaluation."""
     client = get_client()
     logger.info(f"Project: {PROJECT_ID}, Dataset: {DATASET_ID}, Table: {TABLE_ID}")
 
-    # Fetch recent traces using the SDK
     from bigquery_agent_analytics import TraceFilter
-    traces = client.list_traces(
-        filter_criteria=TraceFilter(limit=args.limit)
-    )
-    logger.info(f"Fetched {len(traces)} sessions")
 
-    # Process each trace
-    results = []
-    remote_lookups = 0
-    for trace in traces:
-        question = get_user_input(trace)
-        if not question:
-            continue
-
-        response = trace.final_response
-        answered_by = get_responding_agent(trace)
-
-        # If no response found, check for A2A transfer and resolve
-        if not response:
-            transfer = get_transfer_info(trace)
-            if transfer:
-                response = resolve_remote_response(client, transfer)
-                if response:
-                    answered_by = transfer["remote_agent"]
-                    remote_lookups += 1
-
-        latency_s = None
-        if trace.total_latency_ms is not None:
-            latency_s = round(trace.total_latency_ms / 1000, 1)
-
-        results.append({
-            "session_id": trace.session_id,
-            "time": trace.start_time.strftime("%Y-%m-%d %H:%M:%S") if trace.start_time else "?",
-            "question": question[:120],
-            "answered_by": answered_by,
-            "response": (response or "")[:300],
-            "latency_s": latency_s,
-        })
-
-    if remote_lookups:
-        logger.info(f"Resolved {remote_lookups} remote A2A responses via time-window lookup")
-
-    # Optional: run per-session evaluation
-    if args.eval and results:
-        logger.info("Running per-session quality evaluation...")
-        _evaluate_results(client, results)
-
-    # Print results
-    _print_results(results)
-
-
-def _evaluate_results(client, results):
-    """Add per-session quality evaluation using the SDK's evaluate_categorical."""
-    try:
-        from bigquery_agent_analytics import (
-            CategoricalEvaluationConfig,
-            CategoricalMetricCategory,
-            CategoricalMetricDefinition,
-            TraceFilter,
+    if args.session:
+        traces = client.list_traces(
+            filter_criteria=TraceFilter(session_ids=[args.session])
         )
-
-        session_ids = [r["session_id"] for r in results if r["response"]]
-        if not session_ids:
-            return
-
-        metric = CategoricalMetricDefinition(
-            name="quality",
-            definition="Whether the agent's response is useful and answers the question.",
-            categories=[
-                CategoricalMetricCategory(name="good", definition="Directly answers with specific, actionable information."),
-                CategoricalMetricCategory(name="partial", definition="Related but incomplete or not exactly what was asked."),
-                CategoricalMetricCategory(name="bad", definition="Cannot help, no data, generic filler, or wrong topic."),
-            ],
+        logger.info(f"Fetched session {args.session}")
+    else:
+        traces = client.list_traces(
+            filter_criteria=TraceFilter(limit=args.limit)
         )
-        config = CategoricalEvaluationConfig(
-            metrics=[metric],
-            endpoint=os.getenv("EVAL_MODEL_ID", "gemini-2.5-flash"),
-            temperature=0.0,
-            include_justification=True,
-        )
-        report = client.evaluate_categorical(
-            config=config,
-            filters=TraceFilter(session_ids=session_ids),
-        )
+        logger.info(f"Fetched {len(traces)} sessions")
 
-        # Map results back
-        eval_map = {}
-        for sr in report.session_results:
-            for mr in sr.metrics:
-                if mr.metric_name == "quality":
-                    eval_map[sr.session_id] = f"{mr.category.upper()}: {mr.justification or ''}"[:200]
+    results = resolve_trace_responses(client, traces)
 
-        for r in results:
-            r["evaluation"] = eval_map.get(r["session_id"], "")
-
-    except Exception as e:
-        logger.warning(f"Evaluation failed: {e}")
+    _print_browse_results(results)
 
 
-def _print_results(results):
-    """Print results in a readable format."""
+def _print_browse_results(results):
+    """Print browsed results in a readable format."""
     if not results:
         print("\n  No sessions found.")
         return
@@ -292,18 +102,23 @@ def _print_results(results):
     total = len(results)
     with_response = sum(1 for r in results if r["response"])
     no_response = total - with_response
+    a2a_count = sum(1 for r in results if r.get("is_a2a"))
 
     print(f"\n{'=' * 90}")
-    print(f"  {total} sessions  |  {with_response} with response  |  {no_response} no response")
+    summary = f"  {total} sessions  |  {with_response} with response  |  {no_response} no response"
+    if a2a_count:
+        summary += f"  |  {a2a_count} A2A"
+    print(summary)
     print(f"{'=' * 90}")
 
     for r in results:
-        print(f"\n  [{r['time']}] {r['session_id'][:16]}...")
+        a2a_tag = "  [A2A]" if r.get("is_a2a") else ""
+        print(f"\n  [{r['time']}] {r['session_id']}{a2a_tag}")
         print(f"    Question:  {r['question']}")
         print(f"    Agent:     {r['answered_by']}")
         if r["response"]:
-            resp = r["response"].replace("text: '", "").rstrip("'")
-            print(f"    Response:  {resp[:250]}")
+            resp = " ".join(r["response"].split())
+            print(f"    Response:  \"{resp}\"")
         else:
             print(f"    Response:  (none)")
         if r.get("latency_s") is not None:
@@ -312,6 +127,223 @@ def _print_results(results):
             print(f"    Eval:      {r['evaluation']}")
 
     print(f"\n{'=' * 90}\n")
+
+
+# ---------------------------------------------------------------------------
+# Eval mode (default)
+# ---------------------------------------------------------------------------
+
+def run_eval(args):
+    """Full categorical quality evaluation with A2A response resolution."""
+    model = args.model or os.getenv("EVAL_MODEL_ID", "gemini-2.5-flash")
+    logger.info(f"Project: {PROJECT_ID}, Dataset: {DATASET_ID}, Table: {TABLE_ID}")
+    logger.info(f"Evaluation model: {model}")
+    logger.info(f"Filter: {args.time_period or 'all'}, limit {args.limit}")
+
+    try:
+        result = run_evaluation(
+            time_range=args.time_period,
+            limit=args.limit,
+            model=model,
+            persist=args.persist,
+        )
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        sys.exit(1)
+
+    _print_eval_results(result["report"], result["resolved_map"])
+
+
+def _print_eval_results(report, resolved_map):
+    """Print full evaluation results with per-session details and summary."""
+    hr = "\u2500" * 70  # horizontal rule
+
+    # Group sessions by usefulness category
+    by_category = {"false_positive": [], "partial": [], "meaningful": []}
+    for sr in report.session_results:
+        for mr in sr.metrics:
+            if mr.metric_name == "response_usefulness":
+                cat = mr.category or "unknown"
+                by_category.setdefault(cat, []).append(sr)
+                break
+
+    a2a_session_ids = {sid for sid, ctx in resolved_map.items() if ctx.get("is_a2a")}
+
+    # --- Per-session details ---
+    for cat, cat_label, limit in [
+        ("false_positive", "UNHELPFUL", 10),
+        ("partial", "PARTIAL", 5),
+        ("meaningful", "MEANINGFUL", 3),
+        ("unknown", "UNCLASSIFIED (parse errors)", 3),
+    ]:
+        sessions = by_category.get(cat, [])
+        if not sessions:
+            continue
+
+        print(f"\n{hr}")
+        print(f"  {cat_label} Sessions (showing {min(len(sessions), limit)} of {len(sessions)})")
+        print(hr)
+
+        for sr in sessions[:limit]:
+            sid = sr.session_id
+            ctx = resolved_map.get(sid, {})
+            question = ctx.get("question", "")
+            response = ctx.get("response", "")
+            answered_by = ctx.get("answered_by", "")
+
+            a2a_tag = "  [A2A]" if sid in a2a_session_ids else ""
+            agent_tag = f"  \u2192 {answered_by}" if answered_by else ""
+            print(f"\n  Session:     {sid}{a2a_tag}{agent_tag}")
+            q = " ".join(question.split()) if question else "(none)"
+            r = " ".join(response.split()) if response else "(none)"
+            print(f"  Question:    {q}")
+            print(f"  Response:    \"{r}\"")
+
+            metric_labels = {
+                "response_usefulness": "Usefulness",
+                "task_grounding": "Grounding",
+            }
+            for mr in sr.metrics:
+                mr_label = _category_label(mr.category)
+                if mr.parse_error:
+                    mr_label += "  [parse error]"
+                display_name = metric_labels.get(mr.metric_name, mr.metric_name)
+                print(f"  {display_name + ':':<15}{mr_label}")
+                if mr.justification:
+                    print(f"  {'Reason:':<15}{mr.justification}")
+
+    # --- Per-agent breakdown ---
+    agent_stats = {}
+    for sr in report.session_results:
+        ctx = resolved_map.get(sr.session_id, {})
+        agent = ctx.get("answered_by") or "unknown"
+        if agent not in agent_stats:
+            agent_stats[agent] = {"total": 0, "meaningful": 0, "unhelpful": 0,
+                                  "partial": 0, "unclassified": 0,
+                                  "is_a2a": ctx.get("is_a2a", False)}
+        agent_stats[agent]["total"] += 1
+        found_usefulness = False
+        for mr in sr.metrics:
+            if mr.metric_name == "response_usefulness":
+                found_usefulness = True
+                if mr.category == "meaningful":
+                    agent_stats[agent]["meaningful"] += 1
+                elif mr.category == "false_positive":
+                    agent_stats[agent]["unhelpful"] += 1
+                elif mr.category == "partial":
+                    agent_stats[agent]["partial"] += 1
+                else:
+                    agent_stats[agent]["unclassified"] += 1
+                break
+        if not found_usefulness:
+            agent_stats[agent]["unclassified"] += 1
+
+    if agent_stats:
+        print(f"\n{hr}")
+        print(f"  PER-AGENT QUALITY")
+        print(hr)
+        for agent, stats in sorted(agent_stats.items(), key=lambda x: -x[1]["total"]):
+            total = stats["total"]
+            classified = stats["meaningful"] + stats["unhelpful"] + stats["partial"]
+            helpful_pct = (stats["meaningful"] / classified * 100) if classified > 0 else 0
+            unhelpful_pct = (stats["unhelpful"] / classified * 100) if classified > 0 else 0
+            a2a_tag = " [A2A]" if stats["is_a2a"] else ""
+            status = "\U0001f7e2" if helpful_pct >= 80 else ("\U0001f7e1" if helpful_pct >= 60 else "\U0001f534")
+            line = (f"  {status} {agent}{a2a_tag}: {total} sessions \u2014 "
+                    f"helpful={stats['meaningful']} ({helpful_pct:.0f}%), "
+                    f"unhelpful={stats['unhelpful']} ({unhelpful_pct:.0f}%), "
+                    f"partial={stats['partial']}")
+            if stats["unclassified"]:
+                line += f", unclassified={stats['unclassified']}"
+            print(line)
+
+    # --- Summary ---
+    fp_count = len(by_category.get("false_positive", []))
+    partial_count = len(by_category.get("partial", []))
+    meaningful_count = len(by_category.get("meaningful", []))
+    total = report.total_sessions
+    fp_rate = (fp_count / total * 100) if total > 0 else 0.0
+
+    print(f"\n{'=' * 70}")
+    print(f"QUALITY SUMMARY")
+    print(f"{'=' * 70}")
+    print(f"  Total sessions evaluated : {total}")
+    print(f"  Meaningful               : {meaningful_count}")
+    print(f"  Partial                  : {partial_count}")
+    print(f"  Unhelpful                : {fp_count}")
+    print(f"  Unhelpful rate           : {fp_rate:.1f}%")
+    if a2a_session_ids:
+        print(f"  A2A sessions detected    : {len(a2a_session_ids)}")
+
+    # Category distributions
+    print(f"\n  Category Distributions:")
+    for metric_name, dist in report.category_distributions.items():
+        print(f"\n  [{metric_name}]")
+        dist_total = sum(dist.values())
+        for category, count in sorted(dist.items(), key=lambda x: -x[1]):
+            pct = (count / dist_total * 100) if dist_total > 0 else 0.0
+            bar = "#" * int(pct / 2)
+            print(f"    {_category_label(category):18s}: {count:4d}  ({pct:5.1f}%) {bar}")
+
+    # Execution details
+    print(f"\n  Execution Details:")
+    for key, value in report.details.items():
+        v = str(value)[:120]
+        print(f"    {key}: {v}")
+    print(f"    created_at: {report.created_at.isoformat()}")
+
+    print(f"{'=' * 70}")
+
+    if fp_rate > 10:
+        print(f"\n  WARNING: Unhelpful rate ({fp_rate:.1f}%) exceeds 10% threshold!")
+    elif fp_rate > 0:
+        print(f"\n  Unhelpful responses detected but within acceptable range.")
+    else:
+        print(f"\n  All responses were meaningful.")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Query agent responses and evaluate quality",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                           Evaluate last 100 sessions (default)
+  %(prog)s --limit 50                Evaluate last 50 sessions
+  %(prog)s --session <session_id>    Deep dive into a single session
+  %(prog)s --no-eval                 Browse Q&A pairs without evaluation
+  %(prog)s --persist                 Evaluate and persist results to BQ
+  %(prog)s --time_period 7d          Evaluate last 7 days
+  %(prog)s --limit 500               Evaluate up to 500 sessions
+        """,
+    )
+    parser.add_argument("--limit", type=int, default=100,
+                        help="Number of sessions (default: 100)")
+    parser.add_argument("--session", type=str, default=None,
+                        help="Analyze a specific session ID")
+
+    # Eval mode (on by default; use --no-eval to browse only)
+    parser.add_argument("--eval", action="store_true", default=True,
+                        help="Run full quality evaluation (default: on)")
+    parser.add_argument("--no-eval", dest="eval", action="store_false",
+                        help="Browse Q&A pairs without evaluation")
+    parser.add_argument("--time_period", type=str, default="all",
+                        help="Time range for eval: 24h, 7d, or 'all' (default: all)")
+    parser.add_argument("--persist", action="store_true",
+                        help="Persist evaluation results to BigQuery")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Model for evaluation (default: EVAL_MODEL_ID or gemini-2.5-flash)")
+
+    args = parser.parse_args()
+
+    if args.eval:
+        run_eval(args)
+    else:
+        run_browse(args)
 
 
 if __name__ == "__main__":

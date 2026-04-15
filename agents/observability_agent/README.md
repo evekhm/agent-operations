@@ -99,6 +99,22 @@ A2A sessions are tagged with `[A2A]` in the output. The summary shows how many w
 
 Output is logged to `logs/quality_eval_<timestamp>.log`.
 
+### 4. Test Report Quality Module
+
+Standalone test for the `evaluate_response_quality()` function used by the report agent (in `agent_tools/report_generation/quality_evaluation.py`). Runs the same evaluation with A2A workaround that the full report uses, but without the full report cycle (~1-2 min vs ~8 min).
+
+```bash
+bash test_quality_evaluation.sh                          # all time
+bash test_quality_evaluation.sh --time_period 7d         # last 7 days
+bash test_quality_evaluation.sh --model gemini-2.5-pro   # custom model
+bash test_quality_evaluation.sh --json                   # raw JSON output
+```
+
+Options:
+- `--time_period` - Time range (e.g. `24h`, `7d`) or `all` for no time filter (default: `all`)
+- `--model` - Model for evaluation (default: `gemini-2.5-flash`)
+- `--json` - Output raw JSON instead of formatted report
+
 ## A2A Trace Correlation Gap
 
 When the supervisor agent (`knowledge_supervisor`) calls a remote A2A agent (e.g. `pto_agent` on Cloud Run), the remote agent logs its events under a **different `session_id`**. The supervisor's trace only records `AGENT_STARTING` / `AGENT_COMPLETED` with `content: null` for the remote agent -- the actual response is lost from the supervisor's perspective.

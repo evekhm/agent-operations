@@ -141,7 +141,7 @@ export DATASET_LOCATION="<YOUR_DATASET_LOCATION>"  # e.g. "us-central1"
 ## Deployment
 
 > [!NOTE]
-> The agents being deployed here (`pto_agent` and `knowledge-supervisor`) are used to generate test data for analysis (data produced by the BigQuery Agent Analytics plugin). The **Observability Agent** itself is not yet deployed anywhere and currently runs only locally.
+> The agents being deployed here (`pto_agent` and `knowledge_supervisor`) are used to generate test data for analysis (data produced by the BigQuery Agent Analytics plugin). The **Observability Agent** itself is not yet deployed anywhere and currently runs only locally.
 
 To deploy the agents to Google Cloud, run the deployment script from the root directory:
 
@@ -168,7 +168,7 @@ cd agents/pto_agent
 ### Knowledge Supervisor Agent
 To test the `knowledge-supervisor` agent with sample queries:
 ```bash
-cd agents/knowledge-supervisor
+cd agents/knowledge_supervisor
 ./tests/test_remote.sh
 ```
 This script will send queries to the deployed Reasoning Engine to verify delegation to the `pto_agent` and local tool execution.
@@ -254,7 +254,7 @@ Deploy all agents (pto_agent → knowledge-supervisor → load_test_agent):
 
 Or deploy the knowledge-supervisor individually:
 ```bash
-cd agents/knowledge-supervisor
+cd agents/knowledge_supervisor
 ./deploy.sh
 ```
 
@@ -267,7 +267,7 @@ The deploy script:
 ### Testing the Deployed Agent
 
 ```bash
-cd agents/knowledge-supervisor
+cd agents/knowledge_supervisor
 ./tests/test_remote.sh
 ```
 

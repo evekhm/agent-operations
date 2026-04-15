@@ -18,7 +18,9 @@
             "hallucination_loop_duration_ms_threshold": 120000,
             "_desc_hallucination_loop_duration_ms_threshold": "Latency durations exceeding this threshold combined with token threshold are definitively pathological generation loops.",
             "num_queries_to_analyze_rca": 5,
-            "_desc_num_queries_to_analyze_rca": "Only generate LLM RCA for what you actually display! Matches data_presentation limits to avoid wasted wait time and API costs."
+            "_desc_num_queries_to_analyze_rca": "Only generate LLM RCA for what you actually display! Matches data_presentation limits to avoid wasted wait time and API costs.",
+            "quality_eval_limit": 1000,
+            "_desc_quality_eval_limit": "Maximum number of sessions to evaluate for response quality (usefulness and grounding). Higher values give more accurate quality metrics but increase evaluation time and API cost."
         },
         "_desc_data_presentation": "Settings limiting the actual rows rendered in the final markdown report",
         "data_presentation": {
@@ -33,7 +35,9 @@
             "num_empty_llm_responses": 5,
             "_desc_num_empty_llm_responses": "Displays the top 5 empty LLM response traces in the markdown tables.",
             "num_hallucination_loops": 5,
-            "_desc_num_hallucination_loops": "Displays top instances where the LLM generated massive token outputs (>8000), typically symptomatic of internal cognitive runaway or repetition loops."
+            "_desc_num_hallucination_loops": "Displays top instances where the LLM generated massive token outputs (>8000), typically symptomatic of internal cognitive runaway or repetition loops.",
+            "num_quality_examples": 10,
+            "_desc_num_quality_examples": "Number of example sessions to show per quality category (unhelpful, meaningful, partial) in the Response Quality Analysis section."
         },
         "_desc_kpis": "Key Performance Indicators defining the health thresholds for different execution layers. Targets are compared against actual metrics to calculate Service Level Objectives (SLOs).",
         "_desc_kpi_targets": "latency_target: The maximum acceptable time in seconds. percentile_target: Evaluates what % of requests meet the latency_target (e.g. 95.5%). error_target: The max acceptable error rate %.",

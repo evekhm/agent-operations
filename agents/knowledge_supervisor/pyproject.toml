@@ -83,6 +83,11 @@ ignore-words-list = "rouge"
 skip = "./locust_env/*,uv.lock,.venv,./frontend,**/*.ipynb,**/package-lock.json"
 
 
+[tool.uv.sources]
+# Temporary: use ADK PR #5325 branch for A2A_INTERACTION event support
+# Revert to released version once PR is merged
+google-adk = { git = "https://github.com/google/adk-python.git", branch = "refs/pull/5325/merge" }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

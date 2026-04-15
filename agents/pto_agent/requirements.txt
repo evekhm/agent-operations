@@ -1,4 +1,4 @@
-google-adk>=1.29.0
+google-adk @ git+https://github.com/google/adk-python.git@refs/pull/5325/merge
 google-cloud-aiplatform[agent_engines,a2a]
 google-genai
 requests

@@ -25,7 +25,7 @@ from agents.observability_agent.config import (
     AGENT_TABLE_ID,
     AGENT_DATASET_LOCATION
 )
-from agents.observability_agent.agent import root_agent
+from agents.observability_agent.agent import root_agent, set_playbook_config
 
 # Load Environment
 load_dotenv(os.path.join(dir_path, "../../.env"), override=True)
@@ -85,11 +85,20 @@ async def main():
     bucket_size = config.get("bucket_size", "1d")
     playbook_name = config.get("playbook", "overview")
     
+    kpis = config.get("kpis", DEFAULT_KPIS)
+    set_playbook_config(
+        time_period=time_period,
+        baseline_period=baseline_period,
+        bucket_size=bucket_size,
+        kpis=kpis,
+        config=config,
+    )
+
     print(f"🚀 Starting Autonomous {playbook_name.capitalize()} Report Generation...")
-    
+
     try:
         start_time = time.time()
-        
+
         session_id = f"session_{uuid.uuid4().hex[:8]}"
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         
