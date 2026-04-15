@@ -55,10 +55,36 @@ cp -r app/* "${STAGE_DIR}/app/"
 # Copy requirements.txt to staging root
 cp requirements.txt "${STAGE_DIR}/requirements.txt"
 
-# Create temporary env file in staging
-cp "${ENV_PATH}" "${STAGE_DIR}/.env.tmp"
-echo "" >> "${STAGE_DIR}/.env.tmp"
-echo "PTO_AGENT_URL=\"$DISCOVERED_URL\"" >> "${STAGE_DIR}/.env.tmp"
+# Create temporary env file in staging with resolved values
+# (Agent Engine doesn't resolve ${VAR} references, so we write plain values)
+echo "Resolving environment variables for deployment..."
+cat > "${STAGE_DIR}/.env.tmp" <<ENVEOF
+PROJECT_ID="${PROJECT_ID}"
+SUPERVISOR_MODEL_ID="${SUPERVISOR_MODEL_ID:-gemini-2.5-pro}"
+SUPERVISOR_REGION="${SUPERVISOR_REGION:-us-central1}"
+SUPERVISOR_DISPLAY_NAME="${SUPERVISOR_DISPLAY_NAME:-knowledge_supervisor}"
+
+# A2A PTO Agent
+PTO_AGENT_URL="${DISCOVERED_URL}"
+PTO_AGENT_SERVICE_NAME="${PTO_AGENT_SERVICE_NAME:-ptoagent}"
+PTO_AGENT_LOCATION="${PTO_AGENT_LOCATION:-us-central1}"
+
+# BigQuery Analytics Plugin
+TEST_DATASET_ID="${DATASET_ID}"
+TEST_BQ_LOCATION="${DATASET_LOCATION}"
+TEST_TABLE_ID="${TABLE_ID}"
+
+# Vertex AI Search Datastores
+TEST_DATASTORE_ID="${TEST_DATASTORE_ID}"
+TEST_WEB_DATASTORE_ID="${TEST_WEB_DATASTORE_ID}"
+TEST_DATASTORE_LOCATION="${TEST_DATASTORE_LOCATION:-global}"
+
+# Agent telemetry
+DATASET_LOCATION="${DATASET_LOCATION}"
+ENVEOF
+
+echo "Resolved .env.tmp contents:"
+cat "${STAGE_DIR}/.env.tmp"
 
 # Get project number to construct service account email
 PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')

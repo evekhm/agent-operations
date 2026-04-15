@@ -14,9 +14,9 @@ fi
 echo "Deploying pto_agent..."
 (cd "$SCRIPT_DIR/agents/pto_agent" && ./deploy.sh)
 
-# Deploy knowledge-supervisor to Agent Engine
-echo "Deploying knowledge-supervisor..."
-(cd "$SCRIPT_DIR/agents/knowledge-supervisor" && ./deploy.sh)
+# Deploy knowledge_supervisor to Agent Engine
+echo "Deploying knowledge_supervisor..."
+(cd "$SCRIPT_DIR/agents/knowledge_supervisor" && ./deploy.sh)
 
 # Deploy Load Tester as Cloud Run Job
 echo "Load Tester..."

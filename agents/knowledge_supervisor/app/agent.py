@@ -385,3 +385,6 @@ app = ReasoningEngineApp(
 )
 
 adk_app = app
+
+# Export for `adk web` (needs a root_agent at module level)
+root_agent = supervisor_agent
