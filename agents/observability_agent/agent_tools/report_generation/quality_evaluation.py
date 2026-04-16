@@ -140,13 +140,20 @@ async def generate_quality_ai_summary(quality_data: dict) -> str:
         for metric, dist in distributions.items():
             prompt_parts.append(f"  {metric}: {dist}")
 
+        # Compute totals for contribution percentages
+        total_helpful_all = sum(s["meaningful"] for s in agent_stats.values())
+        total_unhelpful_all = sum(s["unhelpful"] for s in agent_stats.values())
+
         prompt_parts.append("")
-        prompt_parts.append("Per-agent breakdown:")
+        prompt_parts.append("Per-agent breakdown (with % contribution to overall totals):")
         for agent, stats in sorted(agent_stats.items(), key=lambda x: -x[1]["total"]):
             a2a_tag = " [A2A remote]" if stats["is_a2a"] else ""
+            helpful_contrib = (stats["meaningful"] / total_helpful_all * 100) if total_helpful_all > 0 else 0
+            unhelpful_contrib = (stats["unhelpful"] / total_unhelpful_all * 100) if total_unhelpful_all > 0 else 0
             prompt_parts.append(
                 f"  {agent}{a2a_tag}: {stats['total']} sessions \u2014 "
-                f"meaningful={stats['meaningful']}, unhelpful={stats['unhelpful']}, "
+                f"meaningful={stats['meaningful']} ({helpful_contrib:.0f}% of all helpful), "
+                f"unhelpful={stats['unhelpful']} ({unhelpful_contrib:.0f}% of all unhelpful), "
                 f"partial={stats['partial']} | "
                 f"grounded={stats['grounded']}, ungrounded={stats['ungrounded']}, "
                 f"no_tool_needed={stats['no_tool_needed']}"

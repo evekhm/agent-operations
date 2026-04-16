@@ -239,23 +239,58 @@ def _print_eval_results(report, resolved_map):
             agent_stats[agent]["unclassified"] += 1
 
     if agent_stats:
+        # Compute totals for contribution percentages
+        total_helpful_all = sum(s["meaningful"] for s in agent_stats.values())
+        total_unhelpful_all = sum(s["unhelpful"] for s in agent_stats.values())
+        total_partial_all = sum(s["partial"] for s in agent_stats.values())
+
         print(f"\n{hr}")
         print(f"  PER-AGENT QUALITY")
         print(hr)
+
+        # Table header
+        hdr = (f"  {'Agent':<30s} {'Sess':>4s}  {'Status':>6s}  "
+               f"{'Helpful':>12s}  {'Unhelpful':>12s}  {'Partial':>7s}  "
+               f"{'% of All':>8s}  {'% of All':>8s}")
+        hdr2 = (f"  {'':<30s} {'':>4s}  {'':>6s}  "
+                f"{'':>12s}  {'':>12s}  {'':>7s}  "
+                f"{'Helpful':>8s}  {'Unhelpful':>8s}")
+        print(hdr)
+        print(hdr2)
+        print(f"  {'─' * 98}")
+
         for agent, stats in sorted(agent_stats.items(), key=lambda x: -x[1]["total"]):
             total = stats["total"]
             classified = stats["meaningful"] + stats["unhelpful"] + stats["partial"]
             helpful_pct = (stats["meaningful"] / classified * 100) if classified > 0 else 0
             unhelpful_pct = (stats["unhelpful"] / classified * 100) if classified > 0 else 0
+            helpful_contrib = (stats["meaningful"] / total_helpful_all * 100) if total_helpful_all > 0 else 0
+            unhelpful_contrib = (stats["unhelpful"] / total_unhelpful_all * 100) if total_unhelpful_all > 0 else 0
             a2a_tag = " [A2A]" if stats["is_a2a"] else ""
             status = "\U0001f7e2" if helpful_pct >= 80 else ("\U0001f7e1" if helpful_pct >= 60 else "\U0001f534")
-            line = (f"  {status} {agent}{a2a_tag}: {total} sessions \u2014 "
-                    f"helpful={stats['meaningful']} ({helpful_pct:.0f}%), "
-                    f"unhelpful={stats['unhelpful']} ({unhelpful_pct:.0f}%), "
-                    f"partial={stats['partial']}")
-            if stats["unclassified"]:
-                line += f", unclassified={stats['unclassified']}"
+            agent_name = f"{agent}{a2a_tag}"
+            helpful_str = f"{stats['meaningful']} ({helpful_pct:.0f}%)"
+            unhelpful_str = f"{stats['unhelpful']} ({unhelpful_pct:.0f}%)"
+            partial_str = str(stats["partial"])
+            if stats.get("unclassified"):
+                partial_str += f"+{stats['unclassified']}"
+
+            line = (f"  {agent_name:<30s} {total:>4d}  {status:>6s}  "
+                    f"{helpful_str:>12s}  {unhelpful_str:>12s}  {partial_str:>7s}  "
+                    f"{helpful_contrib:>7.0f}%  {unhelpful_contrib:>7.0f}%")
             print(line)
+
+        # Unhelpful contribution ranking (only agents with unhelpful > 0)
+        unhelpful_agents = [(a, s) for a, s in agent_stats.items() if s["unhelpful"] > 0]
+        if unhelpful_agents:
+            print(f"\n  {'─' * 50}")
+            print(f"  UNHELPFUL CONTRIBUTION RANKING (worst first):")
+            print(f"  {'─' * 50}")
+            for agent, stats in sorted(unhelpful_agents, key=lambda x: -x[1]["unhelpful"]):
+                contrib = (stats["unhelpful"] / total_unhelpful_all * 100) if total_unhelpful_all > 0 else 0
+                bar = "\u2588" * int(contrib / 2)
+                a2a_tag = " [A2A]" if stats["is_a2a"] else ""
+                print(f"  {agent}{a2a_tag:<25s} {stats['unhelpful']:>3d} ({contrib:>5.1f}%)  {bar}")
 
     # --- Summary ---
     fp_count = len(by_category.get("false_positive", []))

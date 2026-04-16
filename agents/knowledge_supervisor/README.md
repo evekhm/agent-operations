@@ -1,23 +1,31 @@
 # knowledge-supervisor
 
-Simple ReAct agent
-Agent generated with [`googleCloudPlatform/agent-starter-pack`](https://github.com/GoogleCloudPlatform/agent-starter-pack) version `0.40.1`
+Multi-agent supervisor that coordinates specialized sub-agents to answer user queries. Deployed as a Reasoning Engine on Vertex AI.
+
+## Sub-Agents
+
+| # | Agent | Description |
+|---|-------|-------------|
+| 1 | `pto_agent` | Remote A2A agent for PTO/sick leave balances, vacation planning, and working day calculations |
+| 2 | `adk_documentation_agent` | Vertex AI Search datastore for ADK documentation |
+| 3 | `bigquery_data_agent` | Queries BigQuery datasets using BigQuery toolset |
+| 4 | `google_search_agent` | General web search via Google Search |
+| 5 | `local_tools_agent` | Simulated DB lookups and numerical calculations |
+| 6 | `parallel_db_lookup` | Parallel agent for multi-item DB lookups |
+| 7 | `internal_docs_agent` | Company policy knowledge base (PTO, sick leave, hiring process, expenses, benefits, compliance, etc.) |
+| 8 | `developer_docs_agent` | Google Developer Knowledge MCP server (GCP, Firebase, Android docs) - requires `DEVELOPER_KNOWLEDGE_API_KEY` |
 
 ## Project Structure
 
 ```
 knowledge-supervisor/
-├── app/         # Core agent code
-│   ├── agent.py               # Main agent logic
-│   ├── agent_engine_app.py    # Agent Engine application logic
+├── app/
+│   ├── agent.py               # Main supervisor + sub-agent definitions
+│   ├── config.py              # Configuration and PTO agent URL discovery
 │   └── app_utils/             # App utilities and helpers
-├── .cloudbuild/               # CI/CD pipeline configurations for Google Cloud Build
-├── deployment/                # Infrastructure and deployment scripts
-├── notebooks/                 # Jupyter notebooks for prototyping and evaluation
-├── tests/                     # Unit, integration, and load tests
-├── GEMINI.md                  # AI-assisted development guide
-├── Makefile                   # Development commands
-└── pyproject.toml             # Project dependencies
+├── deploy.sh                  # Deployment script (Agent Engine)
+├── requirements.txt           # Python dependencies
+└── tests/                     # Unit and integration tests
 ```
 
 > 💡 **Tip:** Use [Gemini CLI](https://github.com/google-gemini/gemini-cli) for AI-assisted development - project context is pre-configured in `GEMINI.md`.
@@ -69,16 +77,29 @@ Edit your agent logic in `app/agent.py` and test with `make playground` - it aut
 Use notebooks in `notebooks/` for prototyping and Vertex AI Evaluation.
 See the [development guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/development-guide) for the full workflow.
 
+## Environment Variables
+
+Key environment variables (set in `.env` at project root):
+
+| Variable | Description |
+|----------|-------------|
+| `PROJECT_ID` | GCP project ID |
+| `SUPERVISOR_MODEL_ID` | Model for supervisor and sub-agents (default: `gemini-2.5-pro`) |
+| `SUPERVISOR_REGION` | Deployment region (default: `us-central1`) |
+| `PTO_AGENT_URL` | URL of deployed PTO agent (auto-discovered if not set) |
+| `TEST_DATASTORE_ID` | Vertex AI Search datastore ID for ADK docs |
+| `DEVELOPER_KNOWLEDGE_API_KEY` | API key for Google Developer Knowledge MCP server (optional) |
+
 ## Deployment
 
+Deploy using the provided script:
+
 ```bash
-gcloud config set project <your-project-id>
-make deploy
+./deploy.sh
 ```
-To set up your production infrastructure, run `uvx agent-starter-pack setup-cicd`.
-See the [deployment guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/deployment) for details.
+
+This script discovers the PTO agent URL, stages files, resolves environment variables, grants IAM permissions, and deploys to Agent Engine as a Reasoning Engine.
 
 ## Observability
 
-Built-in telemetry exports to Cloud Trace, BigQuery, and Cloud Logging.
-See the [observability guide](https://googlecloudplatform.github.io/agent-starter-pack/guide/observability) for queries and dashboards.
+Built-in telemetry via `BigQueryAgentAnalyticsPlugin` exports to BigQuery for analysis by the observability agent.

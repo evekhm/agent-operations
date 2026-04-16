@@ -41,12 +41,87 @@ os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 class QuestionList(BaseModel):
     questions: list[str]
 
+TOPIC_CAPABILITIES = {
+    "pto": (
+        "The agent can calculate: current PTO balance, sick leave balance, "
+        "working days for specific date ranges (e.g., July 15 to July 26), "
+        "remaining working days in the current month/quarter/year, "
+        "how many PTO days a planned vacation would use, and general leave policy information."
+    ),
+    "company policies": (
+        "The agent can answer questions about: PTO policy, sick leave policy, remote work policy, "
+        "expense report procedures, onboarding process, performance review process, "
+        "hiring process and policy, compliance and ethics guidelines, and employee benefits."
+    ),
+    "adk": (
+        "The agent can answer questions about the Python Agent Development Kit (ADK): "
+        "how to create agents, use tools, configure models, deploy agents, "
+        "agent orchestration patterns, and ADK best practices."
+    ),
+    "bigquery": (
+        "The agent can query BigQuery datasets, list tables, run SQL queries, "
+        "and analyze data stored in BigQuery."
+    ),
+    "general": (
+        "The agent can answer general knowledge questions by searching the web, "
+        "including questions about technology, current events, and factual lookups."
+    ),
+    "database": (
+        "The agent can look up items by ID from a simulated database "
+        "and perform numerical calculations on data."
+    ),
+    "google cloud": (
+        "The agent can search Google Developer documentation covering "
+        "Google Cloud Platform (GCP), Firebase, Android, Google Maps, and other Google APIs. "
+        "It can find technical guides, code snippets, API references, and best practices "
+        "from the official Google developer documentation."
+    ),
+}
+
+def _get_capability_description(topic: str) -> str:
+    """Match topic to known capability descriptions."""
+    topic_lower = topic.lower()
+    for key, desc in TOPIC_CAPABILITIES.items():
+        if key in topic_lower:
+            return desc
+    # Check for keyword matches
+    keyword_map = {
+        "paid time off": "pto", "vacation": "pto", "sick leave": "pto",
+        "leave": "pto", "working days": "pto", "time off": "pto",
+        "policy": "company policies", "hr": "company policies", "onboarding": "company policies",
+        "expense": "company policies", "compliance": "company policies", "benefits": "company policies",
+        "hiring process": "company policies", "remote work": "company policies",
+        "documentation": "adk", "agent development": "adk", "tools": "adk",
+        "tracing": "google cloud", "monitoring": "google cloud", "telemetry": "google cloud",
+        "data analysis": "bigquery", "sql": "bigquery", "query": "bigquery",
+        "knowledge": "general", "search": "general", "technology": "general",
+        "lookup": "database", "calculation": "database", "item": "database",
+        "gcp": "google cloud", "firebase": "google cloud", "android": "google cloud",
+        "google api": "google cloud", "cloud run": "google cloud", "vertex ai": "google cloud",
+        "developer docs": "google cloud", "google developer": "google cloud",
+    }
+    for keyword, cap_key in keyword_map.items():
+        if keyword in topic_lower:
+            return TOPIC_CAPABILITIES[cap_key]
+    return TOPIC_CAPABILITIES["general"]
+
+
 async def generate_questions(client: Client, topic: str, count: int) -> list[str]:
     """Uses Gemini to generate realistic test questions."""
     logger.info(f"Generating {count} questions about topic: '{topic}'...")
-    
-    prompt = f"Generate {count} diverse and realistic questions that a user might ask an AI assistant about the topic: '{topic}'. The questions should be answerable by the agent based on its capabilities: it can calculate remaining PTO and work days, and it can track hiring contexts and candidates. Do not generate questions it cannot answer using these capabilities."
-    
+
+    capability = _get_capability_description(topic)
+
+    prompt = (
+        f"Generate {count} diverse and realistic questions that a user might ask an AI assistant "
+        f"about the topic: '{topic}'.\n\n"
+        f"The agent has these specific capabilities for this topic:\n{capability}\n\n"
+        f"IMPORTANT: Only generate questions that the agent CAN answer using these capabilities. "
+        f"Do NOT generate questions about real-time candidate tracking, specific employee records, "
+        f"or information that would require access to external systems the agent doesn't have.\n\n"
+        f"Generate practical, answerable questions."
+    )
+
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -57,7 +132,7 @@ async def generate_questions(client: Client, topic: str, count: int) -> list[str
                 temperature=0.7,
             ),
         )
-        
+
         data = json.loads(response.text)
         questions = data.get("questions", [])
         return questions[:count]
@@ -65,8 +140,8 @@ async def generate_questions(client: Client, topic: str, count: int) -> list[str
         logger.info(f"Error generating questions: {e}")
         return [
             f"Tell me about {topic}",
-            f"How do I use {topic}?",
-            f"What is the best way to handle {topic}?"
+            f"What information can you provide about {topic}?",
+            f"What is the company policy on {topic}?"
         ][:count]
 
 shutdown_requested = False

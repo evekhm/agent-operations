@@ -1,6 +1,12 @@
 # PTO Agent
 
-This agent calculates remaining days in the year, work days, weekends, and US public holidays, and applies a funny logic for calculating remaining PTO days.
+This agent calculates PTO balances, sick leave balances, working days for specific date ranges, and remaining work days in a month/quarter/year. It supports vacation planning by telling users how many PTO days a planned trip would cost.
+
+## Capabilities
+
+- **PTO & Sick Leave Balances** (`calculate_pto_details`): Reports current PTO balance, sick leave balance, accrued/used days, and remaining holidays based on company policy (20 PTO + 10 sick days/year, accrued monthly).
+- **Vacation Planning** (`calculate_working_days_for_period`): Given a start and end date, calculates working days, weekends, and holidays in the range, plus how many PTO days the vacation would consume.
+- **Remaining Working Days** (`get_remaining_working_days`): Calculates remaining working days until end of the current month, quarter, or year.
 
 ## Deployment
 
@@ -50,13 +56,7 @@ To test the deployed agent via Python (using `RemoteA2aAgent`), which verifies f
 python3 tests/test_remote_agent.py
 ```
 
-*Expect a response similar to:*
-```text
-Sending query to remote agent...
-
---- Response ---
-Ha! It looks like you've got about **23.7 PTO days** left to play with this year. That's 10% of your remaining work days, plus a bonus 5 days just for surviving the daily grind...
-```
+*Expect a response with PTO balance, sick leave balance, and remaining work days information.*
 
 #### Using Bash Script
 You can also use the bash script to automate the `curl` steps described below:

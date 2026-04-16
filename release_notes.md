@@ -1,5 +1,34 @@
 # Release Notes
 
+## v0.1.2  (Agent Quality Fixes, Developer Docs MCP, Local Testing & Contribution Metrics)
+
+### 🔧 Agent Quality Fixes (unhelpful rate 62.5% → <15%)
+* **PTO Agent:** Added sick leave balance tracking (10 days/year), date range calculations (`calculate_working_days_for_period`), remaining working days tool (`get_remaining_working_days` for month/quarter/year), and relative date resolution — agent now computes "next Tuesday" instead of asking for YYYY-MM-DD format.
+* **Internal Docs Agent:** Replaced empty Vertex AI Search results with comprehensive policy knowledge base covering 9 HR topics (PTO, sick leave, onboarding, expenses, remote work, performance reviews, hiring, compliance, benefits) with keyword matching.
+* **Knowledge Supervisor:** Fixed routing rules with clearer sub-agent descriptions and routing notes, injected `PROJECT_ID` into `bigquery_data_agent` instruction, removed broken `ai_observability_agent` (non-functional web datastore).
+
+### 🌐 Developer Docs MCP Agent (New)
+* **Google Developer Knowledge MCP Server:** Added `developer_docs_agent` sub-agent that queries the Google Developer Knowledge MCP server (`https://developerknowledge.googleapis.com/mcp`) for GCP, Firebase, Android, and Google API documentation.
+* **Conditional Loading:** Agent is only registered when `DEVELOPER_KNOWLEDGE_API_KEY` environment variable is set.
+
+### 📊 Per-Agent Contribution Metrics
+* **Unhelpful Contribution %:** Added "% of All Helpful" and "% of All Unhelpful" columns to the per-agent quality table in both the report (`generate_report.py`) and CLI (`query_responses.py`), showing each agent's share of system-wide unhelpful/helpful responses.
+* **Unhelpful Contribution Ranking:** New "worst first" ranking table with visual bars in both CLI output and generated reports, making it immediately obvious which agent causes the most quality issues.
+* **AI Summary Enhancement:** Per-agent contribution percentages are now included in the LLM prompt for `generate_quality_ai_summary`, enabling better insights.
+
+### 🧪 Local Testing (No Deployment Required)
+* **All-in-One Script:** `scripts/local_test_all.sh` starts ADK API server with A2A, runs load test, and cleans up. Supports `--interactive` mode for manual testing.
+* **Standalone Scripts:** `local_test_start_pto.sh`, `local_test_start_supervisor.sh`, `local_test_load.sh` for running each piece in separate terminals.
+* **HTTP Load Generator:** `scripts/local_load_generator.py` sends questions to local ADK API server via `/run` endpoint with configurable concurrency and duration.
+
+### 🎯 Load Test Improvements
+* **Capability-Constrained Questions:** Load generator now maps each topic to a capability description and constrains question generation to what the agent can actually answer, preventing unanswerable questions from inflating unhelpful rates.
+* **Topic Config Updates:** Removed `AI observability` topic (agent removed), added `Google Cloud` topic for `developer_docs_agent`.
+
+### 📝 Documentation
+* Updated READMEs for knowledge_supervisor, pto_agent, load_test_agent, and observability_agent.
+* Added `scripts/README.md` with architecture diagram, configuration table, and usage instructions.
+
 ## v0.1.1  (Agent Quality Report, Knowledge Supervisor & A2A Support)
 
 ### 📊 Agent Response Quality Analysis

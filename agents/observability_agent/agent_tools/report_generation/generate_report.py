@@ -2574,12 +2574,22 @@ For engineers investigating specific traces, token usage, or resource exhaustion
 
         self.report_content.append("### Per-Agent Quality\n\n")
 
+        # Compute totals across all agents for contribution percentages
+        total_helpful_all = sum(s["meaningful"] for s in agent_stats.values())
+        total_unhelpful_all = sum(s["unhelpful"] for s in agent_stats.values())
+        total_partial_all = sum(s["partial"] for s in agent_stats.values())
+
         rows = []
         for agent, stats in sorted(agent_stats.items(), key=lambda x: -x[1]["total"]):
             total = stats["total"]
             helpful_rate = (stats["meaningful"] / total * 100) if total > 0 else 0
             unhelpful_rate = (stats["unhelpful"] / total * 100) if total > 0 else 0
             grounded_rate = (stats["grounded"] / total * 100) if total > 0 else 0
+
+            # Contribution: what % of ALL unhelpful/helpful does this agent account for
+            helpful_contrib = (stats["meaningful"] / total_helpful_all * 100) if total_helpful_all > 0 else 0
+            unhelpful_contrib = (stats["unhelpful"] / total_unhelpful_all * 100) if total_unhelpful_all > 0 else 0
+            partial_contrib = (stats["partial"] / total_partial_all * 100) if total_partial_all > 0 else 0
 
             quality_emoji = "🟢" if helpful_rate >= 80 else ("🟡" if helpful_rate >= 60 else "🔴")
             a2a_tag = " `[A2A]`" if stats["is_a2a"] else ""
@@ -2589,8 +2599,10 @@ For engineers investigating specific traces, token usage, or resource exhaustion
                 "Sessions": total,
                 "Status": quality_emoji,
                 "Helpful": f"{stats['meaningful']} ({helpful_rate:.0f}%)",
+                "% of All Helpful": f"{helpful_contrib:.0f}%",
                 "Unhelpful": f"{stats['unhelpful']} ({unhelpful_rate:.0f}%)",
-                "Partial": str(stats["partial"]),
+                "% of All Unhelpful": f"{unhelpful_contrib:.0f}%",
+                "Partial": f"{stats['partial']} ({partial_contrib:.0f}%)" if stats["partial"] > 0 else "0",
                 "Grounded": f"{stats['grounded']} ({grounded_rate:.0f}%)",
                 "Ungrounded": str(stats["ungrounded"]),
             })
@@ -2599,6 +2611,29 @@ For engineers investigating specific traces, token usage, or resource exhaustion
         df = self.formatter.standardize_table_formatting(df)
         self.report_content.append(df.to_markdown(index=False))
         self.report_content.append("\n\n")
+
+        # Unhelpful contribution ranking (only agents with unhelpful > 0)
+        unhelpful_agents = [
+            (agent, stats) for agent, stats in agent_stats.items()
+            if stats["unhelpful"] > 0
+        ]
+        if unhelpful_agents:
+            self.report_content.append("#### Unhelpful Contribution Ranking (worst first)\n\n")
+            rank_rows = []
+            for agent, stats in sorted(unhelpful_agents, key=lambda x: -x[1]["unhelpful"]):
+                contrib = (stats["unhelpful"] / total_unhelpful_all * 100) if total_unhelpful_all > 0 else 0
+                bar = "\u2588" * int(contrib / 2)
+                a2a_tag = " `[A2A]`" if stats["is_a2a"] else ""
+                rank_rows.append({
+                    "Agent": f"{agent}{a2a_tag}",
+                    "Unhelpful": stats["unhelpful"],
+                    "% of Total": f"{contrib:.1f}%",
+                    "": bar,
+                })
+            rank_df = pd.DataFrame(rank_rows)
+            rank_df = self.formatter.standardize_table_formatting(rank_df)
+            self.report_content.append(rank_df.to_markdown(index=False))
+            self.report_content.append("\n\n")
 
     def _render_quality_analysis(self):
         self.add_section("Response Quality Analysis")

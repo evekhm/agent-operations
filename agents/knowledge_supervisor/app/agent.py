@@ -28,7 +28,6 @@ from .config import (
     PROJECT_ID,
     DATASTORE_LOCATION,
     DATASTORE_ID,
-    WEB_DATASTORE_ID,
 )
 
 # Configure logging
@@ -103,7 +102,7 @@ auth_client = CardInterceptClient(server_url=server_url, auth=auth, timeout=60.0
 logger.info(f"Creating RemoteA2aAgent pointing to {server_url}/.well-known/agent-card.json")
 pto_remote_agent = RemoteA2aAgent(
     name="pto_agent",
-    description="A remote agent that calculates remaining time off and work days.",
+    description="A remote agent that calculates PTO balances, sick leave balances, working days for specific date ranges, and remaining work days in a month/quarter/year.",
     agent_card=f"{server_url}/a2a/pto_agent/.well-known/agent-card.json",
     httpx_client=auth_client
 )
@@ -127,26 +126,197 @@ def complex_calculation(data: str) -> str:
     return f"Calculation result for {data}: {random.randint(100, 1000)}"
 
 def search_internal_docs(query: str) -> str:
-    """Searches the internal company documentation knowledge base for policies, procedures, and guidelines."""
-    delay = random.uniform(0.3, 0.8)
+    """Searches the internal company documentation knowledge base for policies, procedures, and guidelines.
+
+    Args:
+        query: The search query about company policies, HR procedures, or guidelines.
+
+    Returns:
+        Matching company policy documents and guidelines.
+    """
+    delay = random.uniform(0.1, 0.3)
     logger.info(f"Searching internal docs for: {query}")
     time.sleep(delay)
-    return "No matching documents found in the knowledge base."
+    query_lower = query.lower()
+
+    # Company policy knowledge base
+    policies = {
+        "pto": (
+            "**PTO Policy (Updated 2026)**\n"
+            "- All full-time employees receive 20 PTO days per year, accrued monthly (1.67 days/month).\n"
+            "- PTO requests must be submitted at least 2 weeks in advance for periods > 3 days.\n"
+            "- Unused PTO carries over up to 5 days into the next year.\n"
+            "- PTO blackout periods: Last 2 weeks of fiscal quarter-end for Finance team."
+        ),
+        "sick": (
+            "**Sick Leave Policy**\n"
+            "- All employees receive 10 sick days per year, accrued monthly (0.83 days/month).\n"
+            "- Sick leave can be used for personal illness, medical appointments, or caring for a sick family member.\n"
+            "- A doctor's note is required for absences exceeding 3 consecutive days.\n"
+            "- Unused sick leave carries over fully to the next year, up to a maximum of 30 days."
+        ),
+        "onboarding": (
+            "**Onboarding Process**\n"
+            "- Week 1: IT setup, security training, HR orientation, team introductions.\n"
+            "- Week 2: Product overview, codebase walkthrough, buddy system assignment.\n"
+            "- Week 3-4: First project assignment, 30-day check-in with manager.\n"
+            "- Required trainings: Security Awareness, Code of Conduct, Data Privacy (complete within 30 days).\n"
+            "- All new hires receive a welcome kit and access to the employee handbook on the intranet."
+        ),
+        "expense": (
+            "**Expense Report Policy**\n"
+            "- Expense reports must be submitted within 30 days of the expense.\n"
+            "- Receipts required for all expenses over $25.\n"
+            "- Travel: Economy class for flights under 6 hours. Hotel cap: $250/night (domestic), $350/night (international).\n"
+            "- Meals: $75/day domestic, $100/day international.\n"
+            "- Manager approval required for expenses over $500. VP approval for over $5,000.\n"
+            "- Submit via the Concur expense management system."
+        ),
+        "remote": (
+            "**Remote Work Policy**\n"
+            "- Hybrid model: minimum 3 days in-office per week (Tue, Wed, Thu recommended).\n"
+            "- Fully remote positions available with VP approval.\n"
+            "- Remote workers must maintain a dedicated workspace and reliable internet.\n"
+            "- Equipment stipend: $1,500 one-time for home office setup.\n"
+            "- Monthly internet reimbursement: up to $75."
+        ),
+        "performance": (
+            "**Performance Review Process**\n"
+            "- Annual performance reviews conducted in Q4 (October-November).\n"
+            "- Mid-year check-ins in Q2 (April-May).\n"
+            "- Rating scale: Exceeds Expectations, Meets Expectations, Needs Improvement.\n"
+            "- Self-assessment due 2 weeks before review meeting.\n"
+            "- 360-degree feedback collected from peers, direct reports, and cross-functional partners.\n"
+            "- Compensation adjustments effective January 1 following review cycle."
+        ),
+        "hiring": (
+            "**Hiring Process & Policy**\n"
+            "- All open positions must be posted on the internal job board for 5 business days before external posting.\n"
+            "- Standard interview process: Phone screen -> Technical/Skills assessment -> On-site/Virtual panel -> Final round with hiring manager.\n"
+            "- Hiring committee approval required for all offers.\n"
+            "- Background checks conducted after verbal offer acceptance.\n"
+            "- Referral bonus: $5,000 for engineering roles, $3,000 for non-engineering roles, paid after 90 days.\n"
+            "- For specific candidate status or real-time hiring pipeline updates, please check the ATS (Greenhouse) or contact the recruiting team."
+        ),
+        "compliance": (
+            "**Compliance & Ethics Guidelines**\n"
+            "- Annual compliance training required for all employees (due by March 31).\n"
+            "- Conflicts of interest must be disclosed to Legal within 30 days.\n"
+            "- Gift policy: Employees may not accept gifts valued over $100 from vendors or clients.\n"
+            "- Whistleblower hotline: Available 24/7 for anonymous reporting.\n"
+            "- Data handling: All customer data classified as Confidential. PII requires encryption at rest and in transit."
+        ),
+        "benefits": (
+            "**Employee Benefits Summary**\n"
+            "- Health insurance: Medical, dental, vision (company covers 90% of premiums).\n"
+            "- 401(k): Company matches 50% up to 6% of salary.\n"
+            "- Life insurance: 2x annual salary at no cost.\n"
+            "- Parental leave: 16 weeks paid for primary caregiver, 8 weeks for secondary.\n"
+            "- Education reimbursement: Up to $5,250/year for job-related courses.\n"
+            "- Wellness stipend: $100/month for gym, mental health apps, etc."
+        ),
+    }
+
+    results = []
+    for key, content in policies.items():
+        if key in query_lower or any(word in query_lower for word in key.split()):
+            results.append(content)
+
+    # Broader keyword matching
+    keyword_map = {
+        "vacation": "pto", "time off": "pto", "leave": "pto", "day off": "pto",
+        "medical": "sick", "illness": "sick", "doctor": "sick",
+        "new hire": "onboarding", "orientation": "onboarding", "first day": "onboarding",
+        "travel": "expense", "reimbursement": "expense", "receipt": "expense", "concur": "expense",
+        "work from home": "remote", "wfh": "remote", "hybrid": "remote", "telecommute": "remote",
+        "review": "performance", "promotion": "performance", "rating": "performance", "raise": "performance",
+        "interview": "hiring", "recruit": "hiring", "candidate": "hiring", "job posting": "hiring", "offer": "hiring",
+        "ethics": "compliance", "training": "compliance", "data privacy": "compliance",
+        "health": "benefits", "insurance": "benefits", "401k": "benefits", "parental": "benefits", "wellness": "benefits",
+    }
+    for keyword, policy_key in keyword_map.items():
+        if keyword in query_lower and policies[policy_key] not in results:
+            results.append(policies[policy_key])
+
+    if results:
+        return "\n\n---\n\n".join(results)
+
+    # Default: return a general overview
+    return (
+        "**Company Policy Overview**\n"
+        "Available policy topics: PTO & Leave, Sick Leave, Onboarding, Expense Reports, "
+        "Remote Work, Performance Reviews, Hiring Process, Compliance & Ethics, Employee Benefits.\n"
+        "Please refine your query to one of these topics for detailed information.\n\n"
+        "For real-time information about specific candidates, hiring pipeline status, or "
+        "individual employee records, please contact HR or check the appropriate system (Greenhouse for recruiting, Workday for HR)."
+    )
+
+# --- Developer Knowledge MCP Tools ---
+
+DEVELOPER_KNOWLEDGE_API_KEY = os.getenv('DEVELOPER_KNOWLEDGE_API_KEY', '')
+MCP_URL = "https://developerknowledge.googleapis.com/mcp"
+
+def search_developer_docs(query: str) -> str:
+    """Searches Google Developer documentation (Cloud, Firebase, Android, Maps, etc.) for technical guides, code snippets, and best practices.
+
+    Args:
+        query: The search query about Google developer technologies.
+
+    Returns:
+        Relevant documentation snippets and references.
+    """
+    import requests as req
+    if not DEVELOPER_KNOWLEDGE_API_KEY:
+        return "Developer Knowledge API key not configured. Please set DEVELOPER_KNOWLEDGE_API_KEY environment variable."
+
+    headers = {
+        "X-Goog-Api-Key": DEVELOPER_KNOWLEDGE_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "search_documents",
+            "arguments": {"query": query}
+        }
+    }
+    try:
+        response = req.post(MCP_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if "result" in data and "content" in data["result"]:
+            content = data["result"]["content"]
+            if isinstance(content, list) and len(content) > 0:
+                first_block = content[0]
+                if isinstance(first_block, dict) and "text" in first_block:
+                    text = first_block["text"]
+                    if text.startswith("```json"):
+                        text = text.strip("```json").strip("```")
+                    try:
+                        inner_data = json.loads(text)
+                        if isinstance(inner_data, dict) and "results" in inner_data:
+                            results = inner_data["results"]
+                            formatted = []
+                            for r in results:
+                                formatted.append(f"Source: {r.get('parent')}\nContent: {r.get('content')}\n---")
+                            return "\n".join(formatted)
+                    except (json.JSONDecodeError, ValueError):
+                        return text
+        return f"No results found for: {query}"
+    except Exception as e:
+        logger.warning(f"Developer Knowledge MCP error: {e}")
+        return f"Error searching developer docs: {e}"
 
 # --- Vertex AI Search Tools ---
 
 datastore_search_tool = None
-web_search_tool = None
 
 if DATASTORE_ID and PROJECT_ID:
     datastore_path = f"projects/{PROJECT_ID}/locations/{DATASTORE_LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
     datastore_search_tool = VertexAiSearchTool(data_store_id=datastore_path)
     logger.info(f"Configured Vertex AI Search datastore: {datastore_path}")
-
-if WEB_DATASTORE_ID and PROJECT_ID:
-    web_datastore_path = f"projects/{PROJECT_ID}/locations/{DATASTORE_LOCATION}/collections/default_collection/dataStores/{WEB_DATASTORE_ID}"
-    web_search_tool = VertexAiSearchTool(data_store_id=web_datastore_path)
-    logger.info(f"Configured Vertex AI Search web datastore: {web_datastore_path}")
 
 # --- BigQuery Toolset ---
 
@@ -197,34 +367,21 @@ if datastore_search_tool:
     )
     sub_agents.append(adk_documentation_agent)
 
-# 3. Vertex AI Search: AI Observability / Web Docs
-if web_search_tool:
-    ai_observability_agent = LlmAgent(
-        name="ai_observability_agent",
-        model=MODEL_ID,
-        description="Answers questions about AI Agent Observability, Tracing, and monitoring by searching the Vertex AI Search Web Datastore.",
-        instruction=(
-            "You are an expert assistant specializing in AI Observability. "
-            "Use the Vertex AI Search datastore tool to extract information to answer questions. "
-            "Always search first, then formulate a helpful response based on what you find."
-        ),
-        tools=[web_search_tool],
-        disallow_transfer_to_parent=True,
-        disallow_transfer_to_peers=True,
-    )
-    sub_agents.append(ai_observability_agent)
-
-# 4. BigQuery Data Agent
+# 3. BigQuery Data Agent
 bigquery_data_agent = LlmAgent(
     name="bigquery_data_agent",
     model=MODEL_ID,
-    description="Analyzes data in BigQuery datasets. Use this for questions about querying data, tables, or records in BigQuery.",
+    description="Analyzes data in BigQuery datasets. Use this for questions about querying data, tables, records, data analysis, or reporting from BigQuery.",
     instruction=(
-        f"You are a data analyst. Use the BigQuery tools to answer questions about data in the project. "
-        f"Use `list_tables` to discover available tables. "
-        f"CRITICAL: The timestamp column is 'timestamp', not 'event_time'. "
-        f"You can query JSON columns using JSON_EXTRACT_SCALAR(). "
-        f"Avoid casting JSON directly to STRING or comparing JSON directly to strings."
+        f"You are a data analyst. Use the BigQuery tools to answer questions about data.\n"
+        f"IMPORTANT: The default project ID is '{PROJECT_ID}'. Always use this project when querying.\n"
+        f"Start by using `list_dataset_ids` for project '{PROJECT_ID}' to discover available datasets, "
+        f"then use `list_tables` to find tables within datasets.\n"
+        f"CRITICAL: The timestamp column is 'timestamp', not 'event_time'.\n"
+        f"You can query JSON columns using JSON_EXTRACT_SCALAR().\n"
+        f"Avoid casting JSON directly to STRING or comparing JSON directly to strings.\n"
+        f"When asked about data analysis, reports, or metrics, always attempt to query the available "
+        f"data and provide a substantive answer based on what you find."
     ),
     tools=[bigquery_toolset],
 )
@@ -278,16 +435,27 @@ parallel_db_lookup = ParallelAgent(
 )
 sub_agents.append(parallel_db_lookup)
 
-# 8. Internal Docs Agent (silently returns empty results — false positive scenario)
+# 8. Internal Docs Agent
 internal_docs_agent = LlmAgent(
     name="internal_docs_agent",
     model=MODEL_ID,
-    description="Answers questions about internal company policies, HR procedures, onboarding, expense reports, and compliance guidelines by searching the internal documentation knowledge base.",
+    description=(
+        "Answers questions about internal company policies, HR procedures, onboarding, expense reports, "
+        "remote work policy, performance reviews, hiring process policies, compliance guidelines, "
+        "employee benefits, sick leave policy, and PTO policy documentation."
+    ),
     instruction=(
-        "You are a company knowledge assistant. Use the search_internal_docs tool to find relevant "
-        "policies, procedures, and guidelines from the internal documentation. "
-        "Always search first, then provide a response based on what you find. "
-        "If the tool returns no results, do your best to provide a helpful response."
+        "You are a company knowledge assistant specializing in company policies and procedures. "
+        "Use the search_internal_docs tool to find relevant policies, procedures, and guidelines.\n\n"
+        "You CAN answer questions about:\n"
+        "- Company policies (PTO, sick leave, remote work, expenses, benefits)\n"
+        "- HR procedures (onboarding, performance reviews, hiring process)\n"
+        "- Compliance and ethics guidelines\n"
+        "- General information about how processes work at the company\n\n"
+        "For questions about specific candidate statuses, real-time hiring pipeline data, "
+        "or individual employee records, explain that this information is available in the "
+        "company's ATS (Greenhouse) or HRIS (Workday), and provide the relevant policy context instead.\n\n"
+        "Always search first using the tool, then provide a comprehensive response based on what you find."
     ),
     tools=[search_internal_docs],
     disallow_transfer_to_parent=True,
@@ -295,30 +463,60 @@ internal_docs_agent = LlmAgent(
 )
 sub_agents.append(internal_docs_agent)
 
+# 9. Google Developer Knowledge Agent (MCP-powered)
+if DEVELOPER_KNOWLEDGE_API_KEY:
+    developer_docs_agent = LlmAgent(
+        name="developer_docs_agent",
+        model=MODEL_ID,
+        description=(
+            "Searches Google Developer documentation (GCP, Firebase, Android, Maps, etc.) "
+            "for technical guides, code snippets, API references, and best practices."
+        ),
+        instruction=(
+            "You are a Google Developer documentation expert. Use the search_developer_docs tool "
+            "to find relevant technical documentation from Google's developer knowledge base.\n"
+            "This covers: Google Cloud Platform, Firebase, Android, Google Maps, and other Google developer products.\n"
+            "Always search first, then provide a comprehensive answer based on the documentation found."
+        ),
+        tools=[search_developer_docs],
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+    sub_agents.append(developer_docs_agent)
+    logger.info("Added developer_docs_agent with MCP-powered Google Developer Knowledge")
+else:
+    logger.info("DEVELOPER_KNOWLEDGE_API_KEY not set, skipping developer_docs_agent")
+
 # --- Build routing instruction dynamically ---
 routing_rules = [
-    "1. If the input asks about PTO, vacation, time off, or work days, route to 'pto_agent'.",
+    "1. **PTO, vacation, time off, sick leave, working days, leave balance** -> route to 'pto_agent'. This agent can calculate PTO balances, sick leave balances, working days for specific date ranges, and remaining working days in a month/quarter/year.",
 ]
 rule_num = 2
 if datastore_search_tool:
-    routing_rules.append(f"{rule_num}. If the input asks about ADK documentation, how to use ADK tools, or ADK application structure, route to 'adk_documentation_agent'.")
-    rule_num += 1
-if web_search_tool:
-    routing_rules.append(f"{rule_num}. If the input asks about AI Agent Observability, Tracing, or monitoring, route to 'ai_observability_agent'.")
+    routing_rules.append(f"{rule_num}. **ADK documentation, ADK tools, ADK application structure, Agent Development Kit** -> route to 'adk_documentation_agent'.")
     rule_num += 1
 routing_rules.extend([
-    f"{rule_num}. If the input asks about BigQuery datasets, tables, records, or data analysis, route to 'bigquery_data_agent'.",
-    f"{rule_num+1}. If the input asks to fetch/lookup items by ID or perform calculations, route to 'local_tools_agent'.",
-    f"{rule_num+2}. If the input asks to retrieve multiple items in parallel, route to 'parallel_db_lookup'.",
-    f"{rule_num+3}. If the input asks about internal company policies, HR procedures, onboarding, expense reports, or compliance guidelines, route to 'internal_docs_agent'.",
-    f"{rule_num+4}. For general knowledge questions, route to 'google_search_agent'.",
+    f"{rule_num}. **BigQuery datasets, tables, records, data analysis, SQL queries, data reports** -> route to 'bigquery_data_agent'. This agent has access to project '{PROJECT_ID}'.",
+    f"{rule_num+1}. **Item lookups by ID, database lookups, numerical calculations** -> route to 'local_tools_agent'.",
+    f"{rule_num+2}. **Multiple items to retrieve in parallel** -> route to 'parallel_db_lookup'.",
+    f"{rule_num+3}. **Company policies, HR procedures, onboarding, expense reports, compliance, benefits, remote work policy, performance reviews, hiring PROCESS/POLICY questions** -> route to 'internal_docs_agent'. Note: this agent handles policy questions, not real-time candidate tracking.",
 ])
+if DEVELOPER_KNOWLEDGE_API_KEY:
+    routing_rules.append(f"{rule_num+4}. **Google Cloud documentation, GCP services, Firebase, Android development, Google APIs, Google developer best practices** -> route to 'developer_docs_agent'.")
+    routing_rules.append(f"{rule_num+5}. **General knowledge, current events, other technology questions, factual lookups** -> route to 'google_search_agent'.")
+else:
+    routing_rules.append(f"{rule_num+4}. **General knowledge, current events, technology questions, factual lookups** -> route to 'google_search_agent'.")
 
 supervisor_instruction = (
-    "You are a supervisor agent that coordinates other agents to answer user queries. "
-    "Route the user's input to the correct sub-agent based on these rules:\n"
+    "You are a supervisor agent that coordinates specialized sub-agents to answer user queries.\n\n"
+    "ROUTING RULES (follow strictly):\n"
     + "\n".join(routing_rules)
-    + "\nNote: The pto_agent does not require any user identification, call it directly."
+    + "\n\nIMPORTANT ROUTING NOTES:\n"
+    "- The pto_agent does not require any user identification, call it directly.\n"
+    "- For questions about PTO balances, sick leave balances, or working days in specific periods, ALWAYS use pto_agent.\n"
+    "- For company policy questions (how hiring works, what the PTO policy is, expense rules, etc.), use internal_docs_agent.\n"
+    "- If a question doesn't clearly match any specific agent, use google_search_agent as the fallback.\n"
+    "- Always route to exactly one agent. Do not ask the user to clarify which agent to use."
 )
 
 supervisor_agent = Agent(

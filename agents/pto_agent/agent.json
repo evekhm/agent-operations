@@ -6,13 +6,13 @@
   "defaultOutputModes": [
     "text/plain"
   ],
-  "description": "An agent that calculates remaining time off and work days.",
+  "description": "An agent that calculates PTO balances, sick leave balances, working days for date ranges, and remaining work days in a period.",
   "name": "pto_agent",
   "preferredTransport": "JSONRPC",
   "protocolVersion": "0.3.0",
   "skills": [
     {
-      "description": "An agent that calculates remaining time off and work days. I am a humorous AI assistant designed to calculate remaining days in the year and PTO. Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
+      "description": "An agent that calculates PTO balances, sick leave balances, working days for specific date ranges, and remaining work days in a month/quarter/year.",
       "examples": [],
       "id": "pto_agent",
       "name": "model",
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "description": "Calculates remaining days in the year, work days, weekends, and US public holidays,\nand calculates remaining PTO days based on a funny logic.\n\nReturns:\n    A string with the calculated details and a humorous summary.",
+      "description": "Calculates remaining days in the year, work days, weekends, US public holidays, and current PTO and sick leave balances.",
       "id": "pto_agent-calculate_pto_details",
       "name": "calculate_pto_details",
       "tags": [

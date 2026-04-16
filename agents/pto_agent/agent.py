@@ -54,57 +54,200 @@ print(f"GOOGLE_CLOUD_PROJECT: {os.environ.get('GOOGLE_CLOUD_PROJECT')}")
 print(f"GOOGLE_CLOUD_LOCATION: {os.environ.get('GOOGLE_CLOUD_LOCATION')}")
 print(f"---------------------------------------")
 
+def _get_us_holidays(year: int) -> list[datetime.date]:
+    """Returns US public holidays for a given year."""
+    holidays = {
+        2025: [
+            datetime.date(2025, 1, 1),   # New Year's Day
+            datetime.date(2025, 1, 20),  # MLK Day
+            datetime.date(2025, 2, 17),  # Presidents' Day
+            datetime.date(2025, 5, 26),  # Memorial Day
+            datetime.date(2025, 6, 19),  # Juneteenth
+            datetime.date(2025, 7, 4),   # Independence Day
+            datetime.date(2025, 9, 1),   # Labor Day
+            datetime.date(2025, 10, 13), # Columbus Day
+            datetime.date(2025, 11, 11), # Veterans Day
+            datetime.date(2025, 11, 27), # Thanksgiving
+            datetime.date(2025, 12, 25), # Christmas
+        ],
+        2026: [
+            datetime.date(2026, 1, 1),   # New Year's Day
+            datetime.date(2026, 1, 19),  # MLK Day
+            datetime.date(2026, 2, 16),  # Presidents' Day
+            datetime.date(2026, 5, 25),  # Memorial Day
+            datetime.date(2026, 6, 19),  # Juneteenth
+            datetime.date(2026, 7, 4),   # Independence Day (Saturday, observed July 3)
+            datetime.date(2026, 9, 7),   # Labor Day
+            datetime.date(2026, 10, 12), # Columbus Day
+            datetime.date(2026, 11, 11), # Veterans Day
+            datetime.date(2026, 11, 26), # Thanksgiving
+            datetime.date(2026, 12, 25), # Christmas
+        ],
+    }
+    return holidays.get(year, holidays[2026])
+
+
+def _count_working_days(start: datetime.date, end: datetime.date) -> tuple[int, int, int]:
+    """Count working days, weekends, and holidays between two dates (inclusive)."""
+    holidays = _get_us_holidays(start.year)
+    if end.year != start.year:
+        holidays += _get_us_holidays(end.year)
+
+    weekends = 0
+    holiday_count = 0
+    total_days = (end - start).days + 1
+    current = start
+    while current <= end:
+        if current.weekday() in [5, 6]:
+            weekends += 1
+        elif current in holidays:
+            holiday_count += 1
+        current += datetime.timedelta(days=1)
+    work_days = total_days - weekends - holiday_count
+    return work_days, weekends, holiday_count
+
+
 def calculate_pto_details() -> str:
     """Calculates remaining days in the year, work days, weekends, and US public holidays,
-    and calculates remaining PTO days based on a funny logic.
+    and calculates remaining PTO and sick leave balances.
 
     Returns:
-        A string with the calculated details and a humorous summary.
+        A string with the calculated details including PTO balance, sick leave balance,
+        and a summary of remaining work days.
     """
-    # Current date is fixed to 2026-04-03 as per user environment metadata
-    today = datetime.date(2026, 4, 3)
+    today = datetime.date.today()
     year = today.year
     end_of_year = datetime.date(year, 12, 31)
-    
-    total_remaining_days = (end_of_year - today).days + 1
-    
-    weekends = 0
-    current_date = today
-    while current_date <= end_of_year:
-        if current_date.weekday() in [5, 6]: # 5 is Saturday, 6 is Sunday
-            weekends += 1
-        current_date += datetime.timedelta(days=1)
-        
-    # US Public Holidays 2026
-    holidays = [
-        datetime.date(2026, 5, 25),  # Memorial Day
-        datetime.date(2026, 6, 19),  # Juneteenth
-        datetime.date(2026, 7, 4),   # Independence Day
-        datetime.date(2026, 9, 7),   # Labor Day
-        datetime.date(2026, 10, 12), # Columbus Day
-        datetime.date(2026, 11, 11), # Veterans Day
-        datetime.date(2026, 11, 26), # Thanksgiving
-        datetime.date(2026, 12, 25), # Christmas
-    ]
-    
-    remaining_holidays = [h for h in holidays if h >= today]
-    num_holidays = len(remaining_holidays)
-    
-    work_days = total_remaining_days - weekends - num_holidays
-    
-    pto_base = work_days / 10
-    pto_bonus = 5 if work_days > 100 else 0
-    remaining_pto = pto_base + pto_bonus
-    
+
+    work_days, weekends, num_holidays = _count_working_days(today, end_of_year)
+
+    # Company policy: 20 PTO days/year, accrued monthly (~1.67/month)
+    # Sick leave: 10 days/year, accrued monthly (~0.83/month)
+    months_elapsed = today.month - 1 + (today.day / 30.0)
+    total_pto_accrued = round(months_elapsed * (20 / 12), 1)
+    total_sick_accrued = round(months_elapsed * (10 / 12), 1)
+
+    # Simulate some used days (assume ~30% used so far)
+    pto_used = round(total_pto_accrued * 0.3, 1)
+    sick_used = round(total_sick_accrued * 0.15, 1)
+
+    remaining_pto = round(total_pto_accrued - pto_used, 1)
+    remaining_sick = round(total_sick_accrued - sick_used, 1)
+
+    # Future accrual for the rest of the year
+    months_remaining = 12 - today.month + 1
+    future_pto = round(months_remaining * (20 / 12), 1)
+    future_sick = round(months_remaining * (10 / 12), 1)
+
     result = (
         f"As of today, {today.strftime('%Y-%m-%d')}:\n"
-        f"- Total days remaining in the year: {total_remaining_days}\n"
+        f"- Total calendar days remaining in {year}: {(end_of_year - today).days + 1}\n"
         f"- Weekends remaining: {weekends}\n"
         f"- Public holidays remaining: {num_holidays}\n"
         f"- Work days remaining: {work_days}\n\n"
-        f"Based on our highly scientific and non-negotiable funny logic:\n"
-        f"You have approximately {remaining_pto:.1f} PTO days remaining to use or lose!\n"
-        f"(Formula: 10% of work days + a bonus of {pto_bonus} days for surviving the grind.)"
+        f"Leave Balances:\n"
+        f"- PTO accrued so far: {total_pto_accrued} days (used: {pto_used})\n"
+        f"- Current PTO balance: {remaining_pto} days\n"
+        f"- Sick leave accrued so far: {total_sick_accrued} days (used: {sick_used})\n"
+        f"- Current sick leave balance: {remaining_sick} days\n"
+        f"- Additional PTO to accrue this year: {future_pto} days\n"
+        f"- Additional sick leave to accrue this year: {future_sick} days\n\n"
+        f"Company Policy: 20 PTO days/year + 10 sick days/year, accrued monthly."
+    )
+    return result
+
+
+def calculate_working_days_for_period(start_date: str, end_date: str) -> str:
+    """Calculates working days, weekends, and holidays for a specific date range.
+    Useful for planning vacations or understanding how many work days fall in a period.
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format.
+        end_date: End date in YYYY-MM-DD format.
+
+    Returns:
+        A string with the breakdown of working days, weekends, and holidays in the period.
+    """
+    try:
+        start = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return "Error: Please provide dates in YYYY-MM-DD format (e.g., 2026-07-15)."
+
+    if end < start:
+        return "Error: End date must be on or after start date."
+
+    total_days = (end - start).days + 1
+    work_days, weekends, holidays = _count_working_days(start, end)
+
+    # Calculate PTO impact
+    result = (
+        f"Period: {start_date} to {end_date}\n"
+        f"- Total calendar days: {total_days}\n"
+        f"- Working days: {work_days}\n"
+        f"- Weekend days: {weekends}\n"
+        f"- Public holidays: {holidays}\n\n"
+        f"If you take vacation for this entire period, you would use {work_days} PTO days.\n"
+    )
+
+    # Add month-specific info
+    if start.month == end.month:
+        month_start = datetime.date(start.year, start.month, 1)
+        if start.month == 12:
+            month_end = datetime.date(start.year, 12, 31)
+        else:
+            month_end = datetime.date(start.year, start.month + 1, 1) - datetime.timedelta(days=1)
+        total_work_in_month, _, _ = _count_working_days(month_start, month_end)
+        remaining_work = total_work_in_month - work_days
+        result += f"- Total working days in {start.strftime('%B %Y')}: {total_work_in_month}\n"
+        result += f"- Working days remaining after this vacation: {remaining_work}\n"
+
+    return result
+
+
+def get_remaining_working_days(period: str = "month") -> str:
+    """Calculates remaining working days until the end of the current month, quarter, or year.
+
+    Args:
+        period: One of 'month', 'quarter', or 'year'. Defaults to 'month'.
+
+    Returns:
+        A string with the number of remaining working days for the specified period.
+    """
+    today = datetime.date.today()
+    year = today.year
+
+    if period == "month":
+        if today.month == 12:
+            end = datetime.date(year, 12, 31)
+        else:
+            end = datetime.date(year, today.month + 1, 1) - datetime.timedelta(days=1)
+        period_name = today.strftime("%B %Y")
+    elif period == "quarter":
+        quarter = (today.month - 1) // 3 + 1
+        quarter_end_month = quarter * 3
+        if quarter_end_month == 12:
+            end = datetime.date(year, 12, 31)
+        else:
+            end = datetime.date(year, quarter_end_month + 1, 1) - datetime.timedelta(days=1)
+        period_name = f"Q{quarter} {year}"
+        # Fiscal quarter info
+        fiscal_quarter = quarter  # Assuming calendar year = fiscal year
+    elif period == "year":
+        end = datetime.date(year, 12, 31)
+        period_name = str(year)
+    else:
+        return f"Error: Unknown period '{period}'. Use 'month', 'quarter', or 'year'."
+
+    work_days, weekends, holidays = _count_working_days(today, end)
+
+    result = (
+        f"Remaining working days until end of {period_name}:\n"
+        f"- Working days: {work_days}\n"
+        f"- Weekend days: {weekends}\n"
+        f"- Public holidays: {holidays}\n"
+        f"- Calendar days: {(end - today).days + 1}\n"
+        f"- Period ends: {end.strftime('%Y-%m-%d')}"
     )
     return result
 
@@ -128,11 +271,29 @@ root_agent = Agent(
         model=MODEL_ID,
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
-    description="An agent that calculates remaining time off and work days.",
-    instruction="You are a humorous AI assistant designed to calculate remaining days in the year and PTO. "
-                "Use the calculate_pto_details tool to get the data and report it to the user in a fun way.",
+    description="An agent that calculates PTO balances, sick leave balances, working days for date ranges, and remaining work days in a period.",
+    instruction=(
+        "You are a friendly and helpful PTO & Leave assistant. You can help with:\n"
+        "1. **PTO and sick leave balances** - Use calculate_pto_details to get current balances.\n"
+        "2. **Vacation planning** - Use calculate_working_days_for_period with start_date and end_date "
+        "to calculate how many PTO days a vacation would cost and how many working days remain.\n"
+        "3. **Remaining working days** - Use get_remaining_working_days with period='month', 'quarter', or 'year' "
+        "to find out how many working days are left.\n\n"
+        "IMPORTANT: Resolve relative dates yourself. You know today's date from calculate_pto_details output. "
+        "When a user says 'next Tuesday', 'this Friday', 'next week', etc., compute the actual YYYY-MM-DD date "
+        "and call the tool directly. Do NOT ask the user to provide dates in a specific format — figure it out. "
+        "For 'a week off starting next Tuesday', calculate start_date = next Tuesday, end_date = following Monday "
+        "(or Friday if they mean a work week), then call calculate_working_days_for_period.\n\n"
+        "Always use the appropriate tool to get data before answering. "
+        "Present the information clearly and in a friendly tone. "
+        "When users ask about sick leave, use calculate_pto_details which includes sick leave balances. "
+        "When users ask about specific date ranges or vacation periods, use calculate_working_days_for_period. "
+        "When users ask about remaining days in the month, quarter, or fiscal quarter, use get_remaining_working_days."
+    ),
     tools=[
         calculate_pto_details,
+        calculate_working_days_for_period,
+        get_remaining_working_days,
         LongRunningFunctionTool(func=request_user_input),
     ],
 )

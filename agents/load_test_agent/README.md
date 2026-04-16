@@ -1,33 +1,47 @@
 # Load Test Agent
 
 This directory contains the load testing framework for the knowledge supervisor agent.
-It simulates load by sending concurrent requests to the deployed Reasoning Engine.
+It generates realistic questions using Gemini and sends concurrent requests to the deployed Reasoning Engine.
+
+## How It Works
+
+1. Reads topic configuration (`TOPICS_CONFIG`)
+2. Uses Gemini to generate realistic questions for each topic, constrained to what the agents can actually answer
+3. Discovers the deployed `knowledge-supervisor` Reasoning Engine
+4. Sends questions concurrently (controlled by `CONCURRENCY` semaphore)
+5. Repeats batches until `DURATION_MINUTES` expires
+
+Each topic is mapped to a capability description so the question generator only produces answerable questions.
 
 ## Files
 
-*   `load_generator.py`: The main script that generates load by calling the Reasoning Engine.
-*   `deploy.sh`: Script to build the container image and deploy it as a Cloud Run Job.
-*   `local_smoke_test.py`: Script to run a local smoke test against the remote Reasoning Engine.
-*   `run_local_test.sh`: Script to run `load_generator.py` locally (requires proper environment setup).
-*   `SKILL.md`: Documents the skills and rules for this agent.
+*   `load_generator.py`: Main script with question generation and load execution.
+*   `deploy.sh`: Builds container image and deploys as a Cloud Run Job.
+*   `run_job.sh`: Executes the deployed Cloud Run Job with full topic configuration.
+*   `run_local_test.sh`: Runs `load_generator.py` locally.
+*   `local_smoke_test.py`: Quick smoke test against the remote Reasoning Engine.
 
 ## Configuration
 
-The load generator relies on the following environment variables:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TOPICS_CONFIG` | Comma-separated `topic:count` pairs | `pto and sick leave balances:3,...` |
+| `CONCURRENCY` | Number of concurrent requests | `1` |
+| `DURATION_MINUTES` | Test duration in minutes | `1.0` |
 
-*   `TOPICS_CONFIG`: A comma-separated list of topic:count pairs. Example: `"pto and hiring:5,general knowledge:3"`.
-*   `CONCURRENCY`: Number of concurrent requests to make (default: `1`).
-*   `DURATION_MINUTES`: Duration of the load test in minutes (default: `1.0`).
+### Supported Topics
 
-### Default Configuration
+Topics are mapped to agent capabilities for accurate question generation:
 
-Default values are stored in the `.env` file at the project root:
-
-```env
-TOPICS_CONFIG="pto and hiring:5"
-CONCURRENCY=2
-DURATION_MINUTES=5
-```
+| Topic keyword | Routed to | Example questions |
+|---------------|-----------|-------------------|
+| `pto`, `sick leave`, `vacation` | `pto_agent` | PTO balance, sick leave, date range calculations |
+| `company policies`, `hr` | `internal_docs_agent` | PTO policy, expense rules, hiring process |
+| `adk`, `documentation` | `adk_documentation_agent` | ADK tools, agent creation |
+| `bigquery`, `data analysis` | `bigquery_data_agent` | SQL queries, data reports |
+| `gcp`, `google cloud`, `firebase` | `developer_docs_agent` | Google Cloud docs, best practices |
+| `general`, `knowledge` | `google_search_agent` | Technology, factual lookups |
+| `database`, `lookup` | `local_tools_agent` | Item lookups, calculations |
 
 ## How to Trigger the Job
 
