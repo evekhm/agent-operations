@@ -1,34 +1,84 @@
 {
   "eval_set_id": "basic_eval",
-  "name": "Basic Agent Evaluation",
-  "description": "Sample evaluation set for testing core agent functionality. Customize these cases based on your DESIGN_SPEC.md.",
+  "name": "Knowledge Supervisor Basic Evaluation",
+  "description": "Smoke tests for core knowledge_supervisor capabilities across local sub-agents.",
   "eval_cases": [
     {
-      "eval_id": "greeting",
+      "eval_id": "company_policy_simple",
       "conversation": [
         {
           "user_content": {
-            "parts": [{"text": "Hello, what can you help me with?"}]
+            "parts": [{"text": "What is the company remote work policy?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
           }
         }
       ],
       "session_input": {
-        "app_name": "app",
+        "app_name": "knowledge_supervisor",
         "user_id": "eval_user",
         "state": {}
       }
     },
     {
-      "eval_id": "weather_query",
+      "eval_id": "expense_policy",
       "conversation": [
         {
           "user_content": {
-            "parts": [{"text": "What's the weather like in San Francisco?"}]
+            "parts": [{"text": "What are the expense report rules for business travel?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
           }
         }
       ],
       "session_input": {
-        "app_name": "app",
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "benefits_query",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What employee benefits does the company offer?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "db_lookup_simple",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Look up item ID order-5678 in the database."}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "local_tools_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
         "user_id": "eval_user",
         "state": {}
       }

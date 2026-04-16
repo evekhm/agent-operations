@@ -1,0 +1,167 @@
+{
+  "eval_set_id": "routing_eval",
+  "name": "Knowledge Supervisor Routing Evaluation",
+  "description": "Tests that the supervisor routes queries to the correct sub-agent. Covers locally-available routing paths with trajectory matching.",
+  "eval_cases": [
+    {
+      "eval_id": "route_internal_docs_pto_policy",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What is the company PTO policy? How many days do we get per year?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_internal_docs_expense",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What are the expense report rules for international travel?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_internal_docs_hiring",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "How does the hiring process work at our company?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_internal_docs_benefits",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What employee benefits does the company provide?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_internal_docs_onboarding",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What does the onboarding process look like for new hires?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_local_tools_lookup",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Look up item ID product-9012 in the database."}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "local_tools_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_local_tools_calculation",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Perform a calculation on this data: revenue_q1=50000, revenue_q2=62000"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "local_tools_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "route_google_search_fallback",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What is the speed of light in a vacuum?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "google_search_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

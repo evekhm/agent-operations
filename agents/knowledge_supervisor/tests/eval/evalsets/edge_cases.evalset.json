@@ -1,0 +1,147 @@
+{
+  "eval_set_id": "edge_cases_eval",
+  "name": "Knowledge Supervisor Edge Cases",
+  "description": "Tests ambiguous queries where the supervisor must distinguish between similar sub-agents. Focuses on policy disambiguation and routing edge cases.",
+  "eval_cases": [
+    {
+      "eval_id": "edge_sick_policy_not_balance",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What is the company sick leave policy? Do I need a doctor's note?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_pto_policy_not_balance",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Does unused PTO carry over to next year?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_single_vs_parallel_lookup",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Can you look up item record-42 for me?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "local_tools_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_referral_bonus_is_hiring",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What is the employee referral bonus amount?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_401k_is_benefits",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Does the company match 401k contributions?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_compliance_training_deadline",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "When is the annual compliance training due?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "internal_docs_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "edge_unrelated_question_fallback",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "How far is the Moon from the Earth?"}]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {"name": "transfer_to_agent", "args": {"agent_name": "google_search_agent"}}
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "knowledge_supervisor",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

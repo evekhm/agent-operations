@@ -3,17 +3,27 @@
     "rubric_based_final_response_quality_v1": {
       "threshold": 0.8,
       "judgeModelOptions": {
-        "judgeModel": "gemini-3-flash-preview",
+        "judgeModel": "gemini-2.0-flash",
         "numSamples": 1
       },
       "rubrics": [
         {
           "rubricId": "relevance",
-          "rubricContent": { "textProperty": "The response directly addresses the user's query." }
+          "rubricContent": {
+            "textProperty": "The response addresses the user's query with information specific to what was asked. It does not provide unrelated or off-topic information."
+          }
         },
         {
-          "rubricId": "helpfulness",
-          "rubricContent": { "textProperty": "The response is helpful and provides useful information." }
+          "rubricId": "completeness",
+          "rubricContent": {
+            "textProperty": "The response provides a substantive answer rather than just acknowledging the query. It includes specific details, data points, or policy information when available."
+          }
+        },
+        {
+          "rubricId": "clarity",
+          "rubricContent": {
+            "textProperty": "The response is clearly written, well-organized, and easy to understand. Numbers, dates, and key facts are presented in a readable format."
+          }
         }
       ]
     }
